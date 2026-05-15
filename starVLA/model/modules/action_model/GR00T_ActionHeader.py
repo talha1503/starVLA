@@ -301,6 +301,7 @@ class FlowmatchingActionHead(nn.Module):
         self.beta_dist = Beta(config.noise_beta_alpha, config.noise_beta_beta)
         self.num_timestep_buckets = config.num_timestep_buckets
         self.config = config
+        self.action_env_dim = int(config.get("action_env_dim", self.action_dim))
 
     def sample_time(self, batch_size, device, dtype):
         sample = self.beta_dist.sample([batch_size]).to(device, dtype=dtype).clamp(max=self.config.noise_s)
@@ -358,8 +359,12 @@ class FlowmatchingActionHead(nn.Module):
         pred = self.action_decoder(model_output)
         pred_actions = pred[:, -actions.shape[1] :]
 
-        # Slice out only the action portion of pred and target.
-        loss = ((pred_actions - velocity) ** 2).mean()
+        # Optional env-dim masking (RL-game parity): for padded-action models,
+        # only the first action_env_dim dims carry task signal.
+        effective_dim = min(self.action_env_dim, self.action_dim)
+        pred_loss = pred_actions[..., :effective_dim]
+        target_loss = velocity[..., :effective_dim]
+        loss = ((pred_loss - target_loss) ** 2).mean()
         return loss
 
     @torch.no_grad()
@@ -409,6 +414,9 @@ class FlowmatchingActionHead(nn.Module):
             pred = self.action_decoder(model_output)
 
             pred_velocity = pred[:, -self.action_horizon :]
+            if self.action_env_dim < self.action_dim:
+                pred_velocity = pred_velocity.clone()
+                pred_velocity[..., self.action_env_dim :] = 0.0
 
             # Update actions using euler integration.
             actions = actions + dt * pred_velocity

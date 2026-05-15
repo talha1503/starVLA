@@ -1,0 +1,6 @@
+rl_games:
+  task: cross_task
+  env_eval:
+    latency:
+      mode: mixed
+      values: [0, 1, 2, 3, 4, 5]

@@ -1,0 +1,12 @@
+rl_games:
+  model_alias: openvla
+
+framework:
+  name: QwenOFT
+  action_model:
+    action_dim: 2
+
+trainer:
+  learning_rate:
+    base: 2.0e-05
+    action_model: 1.0e-04

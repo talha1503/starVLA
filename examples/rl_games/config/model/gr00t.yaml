@@ -1,0 +1,13 @@
+rl_games:
+  model_alias: gr00t
+
+framework:
+  name: QwenGR00T
+  action_model:
+    action_dim: 32
+    action_env_dim: 2
+
+trainer:
+  learning_rate:
+    base: 2.0e-06
+    action_model: 2.0e-06

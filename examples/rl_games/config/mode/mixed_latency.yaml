@@ -1,0 +1,6 @@
+rl_games:
+  env_eval:
+    latency:
+      mode: mixed
+      values: [0, 1, 2, 3, 4, 5]
+      prompt_map_path: null

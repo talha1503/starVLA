@@ -1,0 +1,13 @@
+rl_games:
+  model_alias: pi-0
+
+framework:
+  name: QwenPI
+  action_model:
+    action_dim: 32
+    action_env_dim: 2
+
+trainer:
+  learning_rate:
+    base: 5.0e-06
+    action_model: 5.0e-06

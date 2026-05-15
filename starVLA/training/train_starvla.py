@@ -16,7 +16,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, Tuple
 
 # Third-Party Libraries
 import numpy as np
@@ -35,12 +35,9 @@ from transformers import AutoProcessor, get_scheduler
 from starVLA.dataloader import build_dataloader
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
+from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
-
-deepspeed_plugin = DeepSpeedPlugin()
-accelerator = Accelerator(deepspeed_plugin=deepspeed_plugin)
-accelerator.print(accelerator.state)
 
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -104,6 +101,17 @@ def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, to
     return optimizer, lr_scheduler
 
 
+def _build_accelerator(cfg) -> Accelerator:
+    grad_accum_steps = int(getattr(cfg.trainer, "gradient_accumulation_steps", 1))
+    deepspeed_plugin = DeepSpeedPlugin()
+    local_accelerator = Accelerator(
+        deepspeed_plugin=deepspeed_plugin,
+        gradient_accumulation_steps=grad_accum_steps,
+    )
+    local_accelerator.print(local_accelerator.state)
+    return local_accelerator
+
+
 class VLATrainer(TrainerUtils):
     def __init__(self, cfg, model, vla_train_dataloader, optimizer, lr_scheduler, accelerator):
         self.config = cfg
@@ -115,6 +123,12 @@ class VLATrainer(TrainerUtils):
 
         self.completed_steps = 0
         self.total_batch_size = self._calculate_total_batch_size()
+        self._checkpoint_sync_manager = CheckpointSyncManager(cfg=self.config)
+        self._rl_games_eval_runner = None
+        if hasattr(self.config, "rl_games") and hasattr(self.config.rl_games, "env_eval"):
+            enabled = bool(getattr(self.config.rl_games.env_eval, "enabled", False))
+            if enabled:
+                self._rl_games_eval_runner = RlGamesEvalRunner(cfg=self.config, output_dir=self.config.output_dir)
 
     def prepare_training(self):
         rank = dist.get_rank() if dist.is_initialized() else 0
@@ -238,14 +252,17 @@ class VLATrainer(TrainerUtils):
         if self.accelerator.is_main_process:
             save_format = getattr(self.config.trainer, "save_format", "pt")
             checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
+            saved_file_path = None
 
             state_dict = self.accelerator.get_state_dict(self.model)
             if save_format == "safetensors":
                 from safetensors.torch import save_file
 
-                save_file(state_dict, checkpoint_path + "_model.safetensors")
+                saved_file_path = checkpoint_path + "_model.safetensors"
+                save_file(state_dict, saved_file_path)
             elif save_format == "pt":
-                torch.save(state_dict, checkpoint_path + "_pytorch_model.pt")
+                saved_file_path = checkpoint_path + "_pytorch_model.pt"
+                torch.save(state_dict, saved_file_path)
             else:
                 raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
 
@@ -253,6 +270,8 @@ class VLATrainer(TrainerUtils):
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
                 f.write(json.dumps(summary_data) + "\n")
             self.accelerator.print(f"✅ Checkpoint saved at {checkpoint_path}")
+            if saved_file_path is not None:
+                self._checkpoint_sync_manager.register_local_checkpoint(step=self.completed_steps, path=saved_file_path)
 
             if isinstance(self.config, AccessTrackedConfig):
                 logger.info("📊 Saving accessed configuration...")
@@ -272,6 +291,22 @@ class VLATrainer(TrainerUtils):
             metrics["epoch"] = round(self.completed_steps / len(self.vla_train_dataloader), 2)
             wandb.log(metrics, step=self.completed_steps)
             logger.info(f"Step {self.completed_steps}, Loss: {metrics})")
+
+    @staticmethod
+    def _append_rl_games_eval_metrics(step_metrics: Dict[str, float], eval_result, stage: str) -> Dict[str, float]:
+        aggregate = eval_result.aggregate
+        prefix = f"rl_games_eval/{stage}"
+        step_metrics[f"{prefix}/total_episodes"] = float(aggregate.get("total_episodes", 0))
+        step_metrics[f"{prefix}/mean_reward"] = float(aggregate.get("mean_reward", 0.0))
+        step_metrics[f"{prefix}/mean_length"] = float(aggregate.get("mean_length", 0.0))
+        step_metrics[f"{prefix}/task_count"] = float(aggregate.get("task_count", 0))
+
+        for key, metrics in eval_result.per_latency.items():
+            key_slug = key.replace("/", "__")
+            step_metrics[f"{prefix}/{key_slug}/mean_reward"] = float(metrics.get("mean_reward", 0.0))
+            step_metrics[f"{prefix}/{key_slug}/mean_length"] = float(metrics.get("mean_length", 0.0))
+            step_metrics[f"{prefix}/{key_slug}/num_episodes"] = float(metrics.get("num_episodes", 0))
+        return step_metrics
 
     def _create_data_iterators(self):
         """Create data iterators."""
@@ -324,6 +359,19 @@ class VLATrainer(TrainerUtils):
 
             if self.completed_steps % self.config.trainer.eval_interval == 0:
                 step_metrics = self.eval_action_model(step_metrics)
+            if self._rl_games_eval_runner is not None:
+                eval_every = int(getattr(self.config.rl_games.env_eval, "interval_steps", self.config.trainer.eval_interval))
+                if eval_every > 0 and self.completed_steps % eval_every == 0:
+                    eval_result = self._rl_games_eval_runner.run(
+                        model=self.accelerator.unwrap_model(self.model),
+                        step=self.completed_steps,
+                        stage="mid_train",
+                    )
+                    step_metrics = self._append_rl_games_eval_metrics(
+                        step_metrics=step_metrics,
+                        eval_result=eval_result,
+                        stage="mid_train",
+                    )
 
             step_metrics["timing/data"] = t_end_data - t_start_data
             step_metrics["timing/model"] = t_end_model - t_start_model
@@ -409,6 +457,18 @@ class VLATrainer(TrainerUtils):
             else:
                 raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
             logger.info(f"Training complete. Final model saved at {final_checkpoint}")
+            if self._rl_games_eval_runner is not None:
+                eval_result = self._rl_games_eval_runner.run(
+                    model=self.accelerator.unwrap_model(self.model),
+                    step=self.completed_steps,
+                    stage="post_train",
+                )
+                final_metrics = self._append_rl_games_eval_metrics(
+                    step_metrics={},
+                    eval_result=eval_result,
+                    stage="post_train",
+                )
+                wandb.log(final_metrics, step=self.completed_steps)
 
         if self.accelerator.is_main_process:
             wandb.finish()
@@ -418,6 +478,10 @@ class VLATrainer(TrainerUtils):
 
 def main(cfg) -> None:
     logger.info("VLA Training :: Warming Up")
+    apply_model_alias(cfg)
+    apply_action_spec(cfg)
+
+    accelerator = _build_accelerator(cfg)
 
     cfg = wrap_config(cfg)
     logger.info("✅ Configuration wrapped for access tracking")

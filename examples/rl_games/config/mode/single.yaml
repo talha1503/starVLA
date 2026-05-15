@@ -1,0 +1,5 @@
+rl_games:
+  env_eval:
+    latency:
+      mode: single
+      values: [0]
