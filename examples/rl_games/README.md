@@ -4,7 +4,18 @@ Detailed guide: `examples/rl_games/USAGE.md`
 
 ## Installation
 
-Layered installer:
+One-command bootstrap (recommended):
+
+```bash
+bash examples/rl_games/install/bootstrap.sh
+```
+
+This command will:
+- create conda env `starvla_rl_games` if missing
+- install common deps + all RL-games model/env deps
+- run a validation smoke check
+
+Layered installer (manual control):
 
 ```bash
 bash examples/rl_games/install/install_stack.sh openvla flappy
