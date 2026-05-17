@@ -51,4 +51,5 @@ ROBOT_TYPE_TO_EMBODIMENT_TAG = {
 
 DATASET_NAMED_MIXTURES = {
     "flappy_train": [("flappy_train", 1.0, "rl_games_flappy")],
+    "flappy_mixed_latency_train": [("flappy_mixed_latency_train", 1.0, "rl_games_flappy")],
 }

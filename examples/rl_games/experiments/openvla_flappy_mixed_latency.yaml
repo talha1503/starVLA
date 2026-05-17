@@ -37,7 +37,7 @@ paths:
 # then converts it into the StarVLA/LeRobot layout and writes dataset statistics.
 dataset:
   source_hf: talha1503/flappy_bird_mixed_latency_parquet
-  converted_name: flappy_train
+  converted_name: flappy_mixed_latency_train
   force_download: false
   setup_force: false
   verify_rows: 200

@@ -191,7 +191,33 @@ def _ensure_flappy_dataset(args) -> dict[str, Any]:
     mixed_latency = args.mode == "mixed_latency" or str(args.latency_mode or "").lower() == "mixed"
     prompt_map = dataset_dir / "latency_prompt_map.json"
 
-    rebuild = force or not _dataset_ready(dataset_dir) or (mixed_latency and not prompt_map.exists())
+    def _manifest_source_matches() -> bool:
+        manifest_path = dataset_dir / "manifest.json"
+        if not manifest_path.exists() or not args.source_dataset_hf:
+            return True
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        return str(manifest.get("source", "")) == str(args.source_dataset_hf)
+
+    def _mixed_prompt_map_ready() -> bool:
+        if not mixed_latency:
+            return True
+        if not prompt_map.exists():
+            return False
+        try:
+            mapping = json.loads(prompt_map.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        return len(mapping) > 1
+
+    rebuild = (
+        force
+        or not _dataset_ready(dataset_dir)
+        or not _manifest_source_matches()
+        or not _mixed_prompt_map_ready()
+    )
     converted = False
     if rebuild:
         if not args.source_dataset_hf:
