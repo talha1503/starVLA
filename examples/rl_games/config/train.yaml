@@ -1,9 +1,9 @@
 defaults:
-  - base/common
-  - model/openvla
-  - env/flappy
-  - mode/single
-  - checkpoint/default
+  - base: common
+  - model: openvla
+  - env: flappy
+  - mode: single
+  - checkpoint: default
   - _self_
 
 run_id: starvla_rl_games
