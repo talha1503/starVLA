@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 STEP_FILE_RE = re.compile(r"steps_(\d+)_(?:pytorch_model\.pt|model\.safetensors)$")
+STEP_STATE_RE = re.compile(r"steps_(\d+)_state$")
 
 
 def _str2bool(value: str | bool) -> bool:
@@ -42,56 +43,83 @@ def _dataset_ready(dataset_dir: Path) -> bool:
     return all(path.exists() for path in required) and any(dataset_dir.glob("data/*/*.parquet"))
 
 
-def _find_latest_local_checkpoint(checkpoint_dir: Path) -> tuple[Path | None, int]:
+def _find_latest_local_checkpoint(checkpoint_dir: Path) -> tuple[Path | None, int, str | None]:
     if not checkpoint_dir.exists():
-        return None, 0
-    candidates: list[tuple[int, Path]] = []
+        return None, 0, None
+    candidates: list[tuple[int, int, Path, str]] = []
     for item in checkpoint_dir.iterdir():
-        if not item.is_file():
-            continue
-        match = STEP_FILE_RE.match(item.name)
-        if match:
-            candidates.append((int(match.group(1)), item))
+        if item.is_dir():
+            match = STEP_STATE_RE.match(item.name)
+            if match:
+                candidates.append((int(match.group(1)), 1, item, "state"))
+        elif item.is_file():
+            match = STEP_FILE_RE.match(item.name)
+            if match:
+                candidates.append((int(match.group(1)), 0, item, "model"))
     if not candidates:
-        return None, 0
-    candidates.sort(key=lambda item: item[0])
-    step, path = candidates[-1]
-    return path, step
+        return None, 0, None
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    step, _, path, kind = candidates[-1]
+    return path, step, kind
 
 
-def _download_latest_hf_checkpoint(repo_id: str, checkpoint_dir: Path) -> tuple[Path | None, int, str | None]:
+def _download_latest_hf_checkpoint(repo_id: str, checkpoint_dir: Path) -> tuple[Path | None, int, str | None, str | None]:
     try:
-        from huggingface_hub import HfApi, hf_hub_download
+        from huggingface_hub import HfApi, hf_hub_download, snapshot_download
     except Exception as exc:
-        return None, 0, f"huggingface_hub import failed: {exc}"
+        return None, 0, None, f"huggingface_hub import failed: {exc}"
 
     try:
         files = HfApi().list_repo_files(repo_id=repo_id, repo_type="model")
     except Exception as exc:
-        return None, 0, f"could not list HF checkpoint repo {repo_id}: {exc}"
+        return None, 0, None, f"could not list HF checkpoint repo {repo_id}: {exc}"
 
-    candidates: list[tuple[int, str]] = []
+    candidates: list[tuple[int, int, str, str]] = []
+    seen_state_dirs = set()
     for file_path in files:
-        match = STEP_FILE_RE.match(os.path.basename(file_path))
-        if match:
-            candidates.append((int(match.group(1)), file_path))
+        first_part = file_path.split("/", 1)[0]
+        state_match = STEP_STATE_RE.match(first_part)
+        if state_match:
+            if first_part not in seen_state_dirs:
+                candidates.append((int(state_match.group(1)), 1, first_part, "state"))
+                seen_state_dirs.add(first_part)
+            continue
+        file_match = STEP_FILE_RE.match(os.path.basename(file_path))
+        if file_match:
+            candidates.append((int(file_match.group(1)), 0, file_path, "model"))
     if not candidates:
-        return None, 0, None
+        return None, 0, None, None
 
-    candidates.sort(key=lambda item: item[0])
-    step, chosen = candidates[-1]
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    step, _, chosen, kind = candidates[-1]
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     try:
-        local_path = hf_hub_download(
-            repo_id=repo_id,
-            repo_type="model",
-            filename=chosen,
-            local_dir=str(checkpoint_dir),
-            local_dir_use_symlinks=False,
-        )
+        if kind == "state":
+            snapshot_download(
+                repo_id=repo_id,
+                repo_type="model",
+                allow_patterns=[f"{chosen}/**"],
+                local_dir=str(checkpoint_dir),
+                local_dir_use_symlinks=False,
+            )
+            local_path = checkpoint_dir / chosen
+        else:
+            local_path = hf_hub_download(
+                repo_id=repo_id,
+                repo_type="model",
+                filename=chosen,
+                local_dir=str(checkpoint_dir),
+                local_dir_use_symlinks=False,
+            )
     except Exception as exc:
-        return None, 0, f"could not download HF checkpoint {chosen}: {exc}"
-    return Path(local_path), step, None
+        return None, 0, None, f"could not download HF checkpoint {chosen}: {exc}"
+    return Path(local_path), step, kind, None
+
+
+def _is_missing_hf_repo_error(error: str | None) -> bool:
+    if not error:
+        return False
+    return "Repository Not Found" in error or "404 Client Error" in error
 
 
 def _ensure_base_model(model: str, base_model_dir: Path, base_model_repo_id: str | None) -> dict[str, Any]:
@@ -220,12 +248,14 @@ def setup_assets(args) -> dict[str, Any]:
     result.update(_ensure_base_model(args.model, base_model_dir, args.base_model_repo_id))
 
     checkpoint_dir = Path(args.checkpoint_local_dir).expanduser().resolve()
-    if args.checkpoint_load != "none":
-        local_ckpt, local_step = _find_latest_local_checkpoint(checkpoint_dir)
-        if local_ckpt is not None:
+    local_ckpt, local_step, local_kind = (None, 0, None)
+    if args.checkpoint_load in {"auto", "local"}:
+        local_ckpt, local_step, local_kind = _find_latest_local_checkpoint(checkpoint_dir)
+        if local_ckpt is not None and args.checkpoint_load == "local":
             result.update({
                 "resume_found": True,
                 "resume_source": "local",
+                "resume_kind": local_kind,
                 "resume_checkpoint": str(local_ckpt),
                 "resume_step": local_step,
                 "checkpoint_local_dir": str(checkpoint_dir),
@@ -234,22 +264,67 @@ def setup_assets(args) -> dict[str, Any]:
 
     hf_repo_id = args.checkpoint_hf_repo_id or args.hf_repo_id
     if args.checkpoint_load in {"auto", "hf"} and hf_repo_id:
-        hf_ckpt, hf_step, hf_error = _download_latest_hf_checkpoint(hf_repo_id, checkpoint_dir)
-        if hf_ckpt is not None:
+        hf_ckpt, hf_step, hf_kind, hf_error = _download_latest_hf_checkpoint(hf_repo_id, checkpoint_dir)
+        hf_is_better = (
+            args.checkpoint_load == "hf"
+            or local_ckpt is None
+            or hf_step > local_step
+            or (hf_step == local_step and hf_kind == "state" and local_kind != "state")
+        )
+        if hf_ckpt is not None and hf_is_better:
             result.update({
                 "resume_found": True,
                 "resume_source": "hf",
+                "resume_kind": hf_kind,
                 "resume_checkpoint": str(hf_ckpt),
                 "resume_step": hf_step,
                 "checkpoint_local_dir": str(checkpoint_dir),
             })
             return result
+        if local_ckpt is not None:
+            result.update({
+                "resume_found": True,
+                "resume_source": "local",
+                "resume_kind": local_kind,
+                "resume_checkpoint": str(local_ckpt),
+                "resume_step": local_step,
+                "checkpoint_local_dir": str(checkpoint_dir),
+            })
+            if hf_ckpt is not None:
+                result["checkpoint_hf_status"] = (
+                    f"local checkpoint step {local_step} is newer than or equal to HF step {hf_step}; using local"
+                )
+            return result
         if hf_error:
-            result["checkpoint_hf_warning"] = hf_error
+            sync_repo_id = str(getattr(args, "checkpoint_sync_repo_id", "") or "")
+            sync_enabled = _str2bool(getattr(args, "checkpoint_sync_enabled", False))
+            if (
+                args.checkpoint_load == "auto"
+                and sync_enabled
+                and sync_repo_id == hf_repo_id
+            ):
+                result["checkpoint_hf_status"] = (
+                    f"HF resume repo {hf_repo_id} was not available during auto-resume; "
+                    "starting from local/base model and using it as the checkpoint sync destination"
+                )
+            else:
+                result["checkpoint_hf_warning"] = hf_error
+
+    if local_ckpt is not None:
+        result.update({
+            "resume_found": True,
+            "resume_source": "local",
+            "resume_kind": local_kind,
+            "resume_checkpoint": str(local_ckpt),
+            "resume_step": local_step,
+            "checkpoint_local_dir": str(checkpoint_dir),
+        })
+        return result
 
     result.update({
         "resume_found": False,
         "resume_source": None,
+        "resume_kind": None,
         "resume_checkpoint": None,
         "resume_step": 0,
         "checkpoint_local_dir": str(checkpoint_dir),
@@ -276,6 +351,8 @@ def main() -> int:
     parser.add_argument("--checkpoint-local-dir", required=True)
     parser.add_argument("--checkpoint-load", choices=["auto", "none", "local", "hf"], default="auto")
     parser.add_argument("--checkpoint-hf-repo-id", default="")
+    parser.add_argument("--checkpoint-sync-enabled", default="false")
+    parser.add_argument("--checkpoint-sync-repo-id", default="")
     parser.add_argument("--hf-repo-id", default="")
     args = parser.parse_args()
     if args.dataset_cache_dir == "":

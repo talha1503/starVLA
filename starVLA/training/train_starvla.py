@@ -14,6 +14,8 @@ Conventions:
 import argparse
 import json
 import os
+import re
+import shutil
 import time
 from pathlib import Path
 from typing import Dict, Tuple
@@ -125,6 +127,7 @@ class VLATrainer(TrainerUtils):
         self.total_batch_size = self._calculate_total_batch_size()
         self._checkpoint_sync_manager = CheckpointSyncManager(cfg=self.config)
         self._rl_games_eval_runner = None
+        self._pending_full_state_resume = None
         if hasattr(self.config, "rl_games") and hasattr(self.config.rl_games, "env_eval"):
             enabled = bool(getattr(self.config.rl_games.env_eval, "enabled", False))
             if enabled:
@@ -141,7 +144,6 @@ class VLATrainer(TrainerUtils):
         self._save_initial_configs()
 
         self._init_checkpointing()
-        self._adjust_lr_scheduler_for_resume()
 
         freeze_modules = (
             self.config.trainer.freeze_modules
@@ -157,6 +159,11 @@ class VLATrainer(TrainerUtils):
             self.optimizer,
             self.vla_train_dataloader,
         )
+
+        if self._pending_full_state_resume:
+            self._load_checkpoint(self._pending_full_state_resume)
+        else:
+            self._adjust_lr_scheduler_for_resume()
 
         self._init_wandb()
 
@@ -210,13 +217,27 @@ class VLATrainer(TrainerUtils):
         self.resume_from_checkpoint = pretrained_checkpoint
 
         if is_resume:
-            resume_from_checkpoint, self.completed_steps = self._get_latest_checkpoint(self.checkpoint_dir)
+            if pretrained_checkpoint:
+                resume_from_checkpoint = str(pretrained_checkpoint)
+                self.completed_steps = int(
+                    getattr(self.config.trainer, "resume_step", None) or self._step_from_checkpoint_path(resume_from_checkpoint)
+                )
+            else:
+                resume_from_checkpoint, self.completed_steps = self._get_latest_checkpoint(self.checkpoint_dir)
             if resume_from_checkpoint:
                 self.resume_from_checkpoint = resume_from_checkpoint
-                self.model = self.load_pretrained_backbones(self.model, self.resume_from_checkpoint, reload_modules=None)
-                logger.info(
-                    f"Resuming training from checkpoint: {self.resume_from_checkpoint}, steps: {self.completed_steps}"
-                )
+                if os.path.isdir(self.resume_from_checkpoint):
+                    self._pending_full_state_resume = self.resume_from_checkpoint
+                    logger.info(
+                        f"Will resume full training state from checkpoint: "
+                        f"{self.resume_from_checkpoint}, steps: {self.completed_steps}"
+                    )
+                else:
+                    self.model = self.load_pretrained_backbones(self.model, self.resume_from_checkpoint, reload_modules=None)
+                    logger.info(
+                        f"Resuming model weights from checkpoint: "
+                        f"{self.resume_from_checkpoint}, steps: {self.completed_steps}"
+                    )
                 return
 
             logger.warning(f"No valid checkpoint found in {self.checkpoint_dir}. Starting training from scratch.")
@@ -231,6 +252,11 @@ class VLATrainer(TrainerUtils):
         else:
             logger.info("No pretrained checkpoint provided. Starting training from scratch.")
             self.completed_steps = 0
+
+    @staticmethod
+    def _step_from_checkpoint_path(checkpoint_path: str) -> int:
+        match = re.search(r"steps_(\d+)", os.path.basename(str(checkpoint_path)))
+        return int(match.group(1)) if match else 0
 
     def _adjust_lr_scheduler_for_resume(self):
         """Adjust LR scheduler state after resuming from non-zero steps."""
@@ -249,9 +275,19 @@ class VLATrainer(TrainerUtils):
 
     def _save_checkpoint(self):
         """Save current training state."""
+        save_format = getattr(self.config.trainer, "save_format", "pt")
+        checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
+        state_checkpoint_path = checkpoint_path + "_state"
+
+        if self.accelerator.is_main_process and os.path.exists(state_checkpoint_path):
+            shutil.rmtree(state_checkpoint_path)
+        self.accelerator.wait_for_everyone()
+        self.accelerator.save_state(state_checkpoint_path)
+        self.accelerator.wait_for_everyone()
         if self.accelerator.is_main_process:
-            save_format = getattr(self.config.trainer, "save_format", "pt")
-            checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
+            self.accelerator.print(f"✅ Full training state saved at {state_checkpoint_path}")
+
+        if self.accelerator.is_main_process:
             saved_file_path = None
 
             state_dict = self.accelerator.get_state_dict(self.model)
@@ -270,8 +306,11 @@ class VLATrainer(TrainerUtils):
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
                 f.write(json.dumps(summary_data) + "\n")
             self.accelerator.print(f"✅ Checkpoint saved at {checkpoint_path}")
-            if saved_file_path is not None:
-                self._checkpoint_sync_manager.register_local_checkpoint(step=self.completed_steps, path=saved_file_path)
+            self._checkpoint_sync_manager.register_local_checkpoint(
+                step=self.completed_steps,
+                state_path=state_checkpoint_path,
+                model_path=saved_file_path,
+            )
 
             if isinstance(self.config, AccessTrackedConfig):
                 logger.info("📊 Saving accessed configuration...")

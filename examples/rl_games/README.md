@@ -107,7 +107,7 @@ bash examples/rl_games/scripts/run_experiment.sh \
   trainer.eval_interval=5
 ```
 
-Checkpoint fields have separate meanings: `checkpoint.hf_repo_id` is the resume/download source, while `checkpoint.sync_repo_id` is the upload destination when `checkpoint.sync_enabled: true`. A missing `sync_repo_id` repo is created during sync if Hugging Face auth is available. `checkpoint.hf_keep_last_n: 0` keeps all uploaded HF checkpoints.
+Checkpoint fields have separate meanings: `checkpoint.hf_repo_id` is the resume/download source, while `checkpoint.sync_repo_id` is the upload destination when `checkpoint.sync_enabled: true`. The trainer saves full Accelerate training-state directories (`steps_<N>_state/`) for exact resume, including optimizer/scheduler state, and also saves lightweight model files for convenience. A missing `sync_repo_id` repo is created during sync if Hugging Face auth is available. `checkpoint.hf_keep_last_n: 0` keeps all uploaded HF checkpoints.
 
 Environment rollout eval is controlled in the `rl_games` block:
 

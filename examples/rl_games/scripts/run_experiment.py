@@ -221,6 +221,8 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         checkpoint_local_dir=checkpoint_dir,
         checkpoint_load=str(_get(cfg, "checkpoint.load", "auto")),
         checkpoint_hf_repo_id=str(_get(cfg, "checkpoint.hf_repo_id", "") or ""),
+        checkpoint_sync_enabled=str(_as_bool(_get(cfg, "checkpoint.sync_enabled", False))).lower(),
+        checkpoint_sync_repo_id=str(_get(cfg, "checkpoint.sync_repo_id", "") or ""),
         hf_repo_id="",
     )
 
@@ -244,6 +246,9 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         f"checkpoint.local.keep_last_n={_get(cfg, 'checkpoint.local_keep_last_n', 3)}",
         f"trainer.is_resume={str(bool(setup.get('resume_found'))).lower()}",
     ]
+    if setup.get("resume_checkpoint"):
+        cmd.append(f"trainer.pretrained_checkpoint={setup['resume_checkpoint']}")
+        cmd.append(f"trainer.resume_step={int(setup.get('resume_step') or 0)}")
 
     trainer_overrides = [
         "trainer.max_train_steps",

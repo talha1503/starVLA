@@ -272,7 +272,7 @@ checkpoint:
   local_keep_last_n: 3
 ```
 
-`hf_repo_id` is only used as a resume/download source when no local checkpoint exists. `sync_repo_id` is only used as the upload destination for newly saved checkpoints. If `sync_enabled: true`, the sync code creates `sync_repo_id` on Hugging Face if it does not already exist. `hf_keep_last_n: 0` means keep all uploaded HF checkpoints.
+`hf_repo_id` is used as a resume/download source when no newer local checkpoint exists. `sync_repo_id` is only used as the upload destination for newly saved checkpoints. The RL Games trainer saves full Accelerate training-state directories (`steps_<N>_state/`) for exact resume, including optimizer/scheduler state, and also saves lightweight model files for convenience. If `sync_enabled: true`, the sync code creates `sync_repo_id` on Hugging Face if it does not already exist. `hf_keep_last_n: 0` means keep all uploaded HF checkpoints.
 
 Environment rollout eval is controlled separately from trainer batch eval:
 
@@ -328,7 +328,7 @@ bash examples/rl_games/scripts/run_experiment.sh \
 - writes dataset statistics
 - downloads base model weights if missing
 - checks local checkpoints under `workspace_dir / paths.run_root_dir / run_id / checkpoints`
-- optionally pulls a checkpoint from `checkpoint.hf_repo_id`
+- optionally pulls a newer full-state checkpoint from `checkpoint.hf_repo_id`
 - launches `starVLA/training/train_starvla_hydra.py`
 
 ---
@@ -508,7 +508,7 @@ trainer:
   pretrained_checkpoint: path_to_steps_10000.pt
   reload_modules: "action_model"
 ```
-Empty `reload_modules` means full load all model. However, starVLA does not save  `optimizer state`. It requires a lot of  memory/disk and bring limited benefit.
+Empty `reload_modules` means full load all model. Most legacy training recipes save model weights only. The RL Games launcher additionally saves full Accelerate state checkpoints (`steps_<N>_state/`) so optimizer/scheduler state can be restored for exact resume.
 </details>
 
 
