@@ -70,20 +70,22 @@ def prepare_data(cfg, accelerator, output_dir) -> DataLoader:
     vla_train_dataloader = build_dataloader(cfg=cfg, dataset_py=cfg.datasets.vla_data.dataset_py)
 
     accelerator.dataloader_config.dispatch_batches = False
-    dist.barrier()
+    if dist.is_initialized():
+        dist.barrier()
     return vla_train_dataloader
 
 
 def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler._LRScheduler]:
     """Set optimizer and scheduler."""
     param_groups = build_param_lr_groups(model=model, cfg=cfg)
+    fused = bool(getattr(cfg.trainer.optimizer, "fused", False))
     optimizer = torch.optim.AdamW(
         param_groups,
         lr=cfg.trainer.learning_rate.base,
         betas=tuple(cfg.trainer.optimizer.betas),
         weight_decay=cfg.trainer.optimizer.weight_decay,
         eps=cfg.trainer.optimizer.eps,
-        fused=True,
+        fused=fused,
     )
 
     if dist.is_initialized() and dist.get_rank() == 0:
@@ -105,11 +107,11 @@ def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, to
 
 def _build_accelerator(cfg) -> Accelerator:
     grad_accum_steps = int(getattr(cfg.trainer, "gradient_accumulation_steps", 1))
-    deepspeed_plugin = DeepSpeedPlugin()
-    local_accelerator = Accelerator(
-        deepspeed_plugin=deepspeed_plugin,
-        gradient_accumulation_steps=grad_accum_steps,
-    )
+    distributed_backend = str(getattr(cfg.trainer, "distributed_backend", "deepspeed")).lower()
+    accelerator_kwargs = {"gradient_accumulation_steps": grad_accum_steps}
+    if distributed_backend == "deepspeed":
+        accelerator_kwargs["deepspeed_plugin"] = DeepSpeedPlugin()
+    local_accelerator = Accelerator(**accelerator_kwargs)
     local_accelerator.print(local_accelerator.state)
     return local_accelerator
 
@@ -322,7 +324,7 @@ class VLATrainer(TrainerUtils):
 
     def _log_metrics(self, metrics):
         """Record training metrics."""
-        if self.completed_steps % self.config.trainer.logging_frequency == 0 and dist.get_rank() == 0:
+        if self.completed_steps % self.config.trainer.logging_frequency == 0 and self.accelerator.is_main_process:
             last_lrs = self.lr_scheduler.get_last_lr()
             for i, group in enumerate(self.optimizer.param_groups):
                 group_name = group.get("name", str(i))
@@ -441,7 +443,8 @@ class VLATrainer(TrainerUtils):
             step_metrics["mse_score"] = score / num_pots
 
         del examples
-        dist.barrier()
+        if dist.is_initialized():
+            dist.barrier()
         return step_metrics
 
     def _log_training_config(self):
@@ -544,8 +547,9 @@ def main(cfg) -> None:
     trainer.train()
 
     logger.info("... and that's all, folks!")
-    dist.barrier()
-    dist.destroy_process_group()
+    if dist.is_initialized():
+        dist.barrier()
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ Options:
   --gpus <csv>                 CUDA visible devices, e.g. 0 or 0,1 (optional)
   --num-processes <int>        Processes for accelerate launch (default: 1)
   --use-accelerate <true|false> Use accelerate launch wrapper (default: true)
+  --distributed-backend <deepspeed|none> Trainer distributed backend (default: deepspeed)
   --accelerate-config <path>   Accelerate config path (default: starVLA/config/deepseeds/deepspeed_zero2.yaml)
   --seed <int>                 Seed override (default: 42)
   --wandb-entity <name>        Wandb entity (default: your_wandb_entity)
@@ -76,6 +77,7 @@ RUN_ROOT_DIR="results/Checkpoints"
 GPUS=""
 NUM_PROCESSES="1"
 USE_ACCELERATE="true"
+DIST_BACKEND="deepspeed"
 ACCELERATE_CONFIG="starVLA/config/deepseeds/deepspeed_zero2.yaml"
 SEED="42"
 WANDB_ENTITY="your_wandb_entity"
@@ -131,6 +133,7 @@ while [[ $# -gt 0 ]]; do
     --gpus) GPUS="$2"; shift 2 ;;
     --num-processes) NUM_PROCESSES="$2"; shift 2 ;;
     --use-accelerate) USE_ACCELERATE="$2"; shift 2 ;;
+    --distributed-backend) DIST_BACKEND="$2"; shift 2 ;;
     --accelerate-config) ACCELERATE_CONFIG="$2"; shift 2 ;;
     --seed) SEED="$2"; shift 2 ;;
     --wandb-entity) WANDB_ENTITY="$2"; shift 2 ;;
@@ -238,6 +241,11 @@ if [[ -n "$MICRO_BATCH_SIZE" ]]; then
   BATCH_SIZE="$MICRO_BATCH_SIZE"
 fi
 
+DIST_BACKEND_LOWER="$(echo "$DIST_BACKEND" | tr '[:upper:]' '[:lower:]')"
+if [[ "$DIST_BACKEND_LOWER" == "none" ]]; then
+  USE_ACCELERATE="false"
+fi
+
 LATENCIES_EXPR=""
 if [[ -n "$LATENCIES_CSV" ]]; then
   IFS=',' read -r -a LAT_ARR <<< "$LATENCIES_CSV"
@@ -263,6 +271,7 @@ CMD=(
   "trainer.max_train_steps=$MAX_TRAIN_STEPS"
   "trainer.save_interval=$SAVE_INTERVAL"
   "trainer.eval_interval=$EVAL_INTERVAL"
+  "trainer.distributed_backend=$DIST_BACKEND"
   "trainer.gradient_accumulation_steps=$GRADIENT_ACCUMULATION_STEPS"
   "datasets.vla_data.per_device_batch_size=$BATCH_SIZE"
   "rl_games.env_eval.enabled=$ENV_EVAL_ENABLED"

@@ -76,6 +76,8 @@ class _QWen3_VL_Interface(nn.Module):
             try:
                 if hasattr(model.config, "use_cache"):
                     model.config.use_cache = False
+                if hasattr(model.config, "text_config") and hasattr(model.config.text_config, "use_cache"):
+                    model.config.text_config.use_cache = False
                 model.gradient_checkpointing_enable(
                     gradient_checkpointing_kwargs={"use_reentrant": False}
                 )
@@ -86,7 +88,9 @@ class _QWen3_VL_Interface(nn.Module):
                     ckpt_active = getattr(getattr(model, "model", None), "gradient_checkpointing", None)
                 print(
                     "[QWen3] gradient_checkpointing ENABLED "
-                    f"(use_reentrant=False, active={ckpt_active}, use_cache={getattr(model.config, 'use_cache', None)})",
+                    f"(use_reentrant=False, active={ckpt_active}, "
+                    f"use_cache={getattr(model.config, 'use_cache', None)}, "
+                    f"text_use_cache={getattr(getattr(model.config, 'text_config', None), 'use_cache', None)})",
                     flush=True,
                 )
             except Exception as e:
