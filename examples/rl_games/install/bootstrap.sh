@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 CONDA_ENV_NAME="${CONDA_ENV_NAME:-starvla_rl_games}"
-PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
+PYTHON_VERSION="3.10"
 MODEL_TARGET="${MODEL_TARGET:-all}"
 ENV_TARGET="${ENV_TARGET:-all}"
 RUN_VALIDATE="${RUN_VALIDATE:-true}"

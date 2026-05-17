@@ -6,7 +6,7 @@ BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL=""
 ENV_NAME=""
 CONDA_ENV_NAME=""
-PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
+PYTHON_VERSION="3.10"
 USE_CONDA="true"
 
 usage() {
