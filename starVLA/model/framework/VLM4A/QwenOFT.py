@@ -135,6 +135,28 @@ class Qwenvl_OFT(baseframework):
         # L1 loss
         self.l1_loss = nn.L1Loss()
 
+    def _forward_qwen_last_hidden(self, qwen_inputs: dict) -> torch.Tensor:
+        """
+        Return only the final VLM hidden state when the interface supports it.
+
+        Requesting ``output_hidden_states=True`` from Hugging Face materializes
+        every layer's activations. For OFT we only need the last layer, so the
+        Qwen3 interface exposes a leaner path that preserves the practical memory
+        savings from gradient checkpointing.
+        """
+
+        if hasattr(self.qwen_vl_interface, "forward_last_hidden"):
+            return self.qwen_vl_interface.forward_last_hidden(**qwen_inputs)
+
+        qwenvl_outputs = self.qwen_vl_interface(
+            **qwen_inputs,
+            output_attentions=False,
+            output_hidden_states=True,
+            return_dict=True,
+            use_cache=False,
+        )
+        return qwenvl_outputs.hidden_states[-1]
+
     def forward(
         self,
         examples: List[dict] = None,
@@ -181,14 +203,7 @@ class Qwenvl_OFT(baseframework):
         # Step 1: QWenVL input format
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            qwenvl_outputs = self.qwen_vl_interface(
-                **qwen_inputs,
-                output_attentions=False,
-                output_hidden_states=True,
-                return_dict=True,
-            )
-            # last_hidden_state: [B, seq_len, H]
-            last_hidden = qwenvl_outputs.hidden_states[-1]  # [B, L, H]
+            last_hidden = self._forward_qwen_last_hidden(qwen_inputs)  # [B, L, H]
 
         # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):
@@ -254,14 +269,7 @@ class Qwenvl_OFT(baseframework):
         # Step 1: QWenVL input format
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            qwenvl_outputs = self.qwen_vl_interface(
-                **qwen_inputs,
-                output_attentions=False,
-                output_hidden_states=True,
-                return_dict=True,
-            )
-            # last_hidden_state: [B, seq_len, H]
-            last_hidden = qwenvl_outputs.hidden_states[-1]  # [B, L, H]
+            last_hidden = self._forward_qwen_last_hidden(qwen_inputs)  # [B, L, H]
 
         # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):

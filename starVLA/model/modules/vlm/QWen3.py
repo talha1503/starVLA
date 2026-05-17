@@ -81,7 +81,14 @@ class _QWen3_VL_Interface(nn.Module):
                 )
                 if hasattr(model, "enable_input_require_grads"):
                     model.enable_input_require_grads()
-                print("[QWen3] gradient_checkpointing ENABLED (use_reentrant=False)", flush=True)
+                ckpt_active = getattr(model, "is_gradient_checkpointing", None)
+                if ckpt_active is None:
+                    ckpt_active = getattr(getattr(model, "model", None), "gradient_checkpointing", None)
+                print(
+                    "[QWen3] gradient_checkpointing ENABLED "
+                    f"(use_reentrant=False, active={ckpt_active}, use_cache={getattr(model.config, 'use_cache', None)})",
+                    flush=True,
+                )
             except Exception as e:
                 print(f"[QWen3] failed to enable gradient_checkpointing: {e}", flush=True)
 
@@ -111,6 +118,76 @@ class _QWen3_VL_Interface(nn.Module):
             )
 
         return outputs
+
+    def forward_last_hidden(self, **kwargs) -> torch.Tensor:
+        """
+        Run the Qwen3-VL backbone and return only the final hidden state.
+
+        OFT-style action heads only consume the last hidden layer. Calling the
+        full conditional-generation wrapper with ``output_hidden_states=True``
+        returns every layer's activations, which can largely erase the memory
+        benefit of gradient checkpointing.
+        """
+
+        kwargs = dict(kwargs)
+        kwargs.pop("output_hidden_states", None)
+        kwargs.pop("output_attentions", None)
+        kwargs.setdefault("return_dict", True)
+        kwargs.setdefault("use_cache", False)
+
+        def _wrapper_forward_last_hidden() -> torch.Tensor:
+            lm_head = getattr(self.model, "lm_head", None)
+            captured = {}
+            handle = None
+            if lm_head is not None:
+                def _capture_lm_head_input(_module, inputs):
+                    captured["last_hidden"] = inputs[0]
+
+                handle = lm_head.register_forward_pre_hook(_capture_lm_head_input)
+
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                try:
+                    outputs = self.model(
+                        **kwargs,
+                        output_attentions=False,
+                        output_hidden_states=False,
+                        return_dict=True,
+                    )
+                finally:
+                    if handle is not None:
+                        handle.remove()
+
+            if "last_hidden" in captured:
+                return captured["last_hidden"]
+
+            # Last-resort compatibility path for unusual model wrappers that do
+            # not expose lm_head. This preserves correctness, but returns every
+            # layer and therefore saves less memory.
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                outputs = self.model(
+                    **kwargs,
+                    output_attentions=False,
+                    output_hidden_states=True,
+                    return_dict=True,
+                )
+            return outputs.hidden_states[-1]
+
+        backbone = getattr(self.model, "model", None)
+        if backbone is None:
+            return _wrapper_forward_last_hidden()
+
+        try:
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                outputs = backbone(**kwargs)
+        except TypeError:
+            # Some Transformers Qwen-VL wrappers inject visual embeddings before
+            # calling the text backbone, so the backbone itself may not accept
+            # pixel_values/image_grid_thw. Keep those versions working.
+            return _wrapper_forward_last_hidden()
+
+        if hasattr(outputs, "last_hidden_state"):
+            return outputs.last_hidden_state
+        return outputs[0]
 
     def generate(
         self,
