@@ -15,6 +15,17 @@ This command will:
 - install common deps + all RL-games model/env deps
 - run a validation smoke check
 
+Conflict-safe mode:
+
+```bash
+bash examples/rl_games/install/bootstrap.sh --split-envs
+```
+
+This creates one env per model:
+- `starvla_rl_games_openvla`
+- `starvla_rl_games_pi0`
+- `starvla_rl_games_gr00t`
+
 Layered installer (manual control):
 
 ```bash
@@ -22,6 +33,13 @@ bash examples/rl_games/install/install_stack.sh openvla flappy
 bash examples/rl_games/install/install_stack.sh pi0 demon_attack
 bash examples/rl_games/install/install_stack.sh gr00t deadly_corridor
 ```
+
+By default, layered install uses one conda env per model:
+- `openvla` -> `starvla_rl_games_openvla`
+- `pi0` -> `starvla_rl_games_pi0`
+- `gr00t` -> `starvla_rl_games_gr00t`
+
+You can override with `--conda-env <name>`, or skip conda handling with `--no-conda`.
 
 Available scripts:
 - `examples/rl_games/install/common.sh`

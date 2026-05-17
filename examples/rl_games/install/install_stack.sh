@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONDA_ENV_NAME="${CONDA_ENV_NAME:-starvla_rl_games}"
+CONDA_ENV_NAME="${CONDA_ENV_NAME:-}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
 USE_CONDA="true"
 
@@ -14,7 +14,7 @@ Arguments:
   <env>                    flappy|demon_attack|deadly_corridor
 
 Options:
-  --conda-env <name>       Conda env name (default: ${CONDA_ENV_NAME})
+  --conda-env <name>       Conda env name (default: starvla_rl_games_<model>)
   --python-version <ver>   Python version for new env (default: ${PYTHON_VERSION})
   --no-conda               Skip conda create/activate and use current python
   -h, --help               Show this help
@@ -76,6 +76,10 @@ case "${ENV_NAME}" in
     exit 1
     ;;
 esac
+
+if [[ -z "${CONDA_ENV_NAME}" ]]; then
+  CONDA_ENV_NAME="starvla_rl_games_${MODEL}"
+fi
 
 if [[ "${USE_CONDA}" == "true" ]]; then
   if ! command -v conda >/dev/null 2>&1; then

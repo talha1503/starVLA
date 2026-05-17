@@ -9,6 +9,7 @@ PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
 MODEL_TARGET="${MODEL_TARGET:-all}"
 ENV_TARGET="${ENV_TARGET:-all}"
 RUN_VALIDATE="${RUN_VALIDATE:-true}"
+SPLIT_ENVS="${SPLIT_ENVS:-false}"
 
 usage() {
   cat <<EOF
@@ -19,6 +20,7 @@ Options:
   --python-version <ver>    Python version for new env (default: ${PYTHON_VERSION})
   --model <name|all>        openvla|pi0|gr00t|all (default: ${MODEL_TARGET})
   --env <name|all>          flappy|demon_attack|deadly_corridor|all (default: ${ENV_TARGET})
+  --split-envs              Create/use one env per model: <conda-env>_<model>
   --skip-validate           Skip final validation step
   -h, --help                Show this help
 EOF
@@ -41,6 +43,10 @@ while [[ $# -gt 0 ]]; do
     --env)
       ENV_TARGET="$2"
       shift 2
+      ;;
+    --split-envs)
+      SPLIT_ENVS="true"
+      shift
       ;;
     --skip-validate)
       RUN_VALIDATE="false"
@@ -65,15 +71,6 @@ fi
 
 CONDA_BASE="$(conda info --base)"
 source "${CONDA_BASE}/etc/profile.d/conda.sh"
-
-if conda env list | awk '{print $1}' | grep -qx "${CONDA_ENV_NAME}"; then
-  echo "[bootstrap] Using existing conda env: ${CONDA_ENV_NAME}"
-else
-  echo "[bootstrap] Creating conda env ${CONDA_ENV_NAME} (python=${PYTHON_VERSION})"
-  conda create -n "${CONDA_ENV_NAME}" "python=${PYTHON_VERSION}" -y
-fi
-
-conda activate "${CONDA_ENV_NAME}"
 
 MODELS=(openvla pi0 gr00t)
 ENVS=(flappy demon_attack deadly_corridor)
@@ -110,18 +107,76 @@ for env_name in "${ENVS_TO_INSTALL[@]}"; do
   esac
 done
 
-echo "[bootstrap] Installing common dependencies"
-PYTHON_BIN=python "${SCRIPT_DIR}/common.sh"
+ensure_conda_env() {
+  local env_name="$1"
+  if conda env list | awk '{print $1}' | grep -qx "${env_name}"; then
+    echo "[bootstrap] Using existing conda env: ${env_name}"
+  else
+    echo "[bootstrap] Creating conda env ${env_name} (python=${PYTHON_VERSION})"
+    conda create -n "${env_name}" "python=${PYTHON_VERSION}" -y
+  fi
+}
 
-for model in "${MODELS_TO_INSTALL[@]}"; do
+install_in_active_env() {
+  local model="$1"
+  local run_validate="${2:-true}"
+  shift 2
+  local envs=("$@")
+
+  echo "[bootstrap] Installing common dependencies"
+  PYTHON_BIN=python "${SCRIPT_DIR}/common.sh"
+
   echo "[bootstrap] Installing model dependencies: ${model}"
   PYTHON_BIN=python "${SCRIPT_DIR}/model/${model}.sh"
-done
 
-for env_name in "${ENVS_TO_INSTALL[@]}"; do
-  echo "[bootstrap] Installing environment dependencies: ${env_name}"
-  PYTHON_BIN=python "${SCRIPT_DIR}/env/${env_name}.sh"
-done
+  for env_name in "${envs[@]}"; do
+    echo "[bootstrap] Installing environment dependencies: ${env_name}"
+    PYTHON_BIN=python "${SCRIPT_DIR}/env/${env_name}.sh"
+  done
+
+  if [[ "${run_validate}" == "true" ]]; then
+    echo "[bootstrap] Running validation"
+    PYTHON_BIN=python "${SCRIPT_DIR}/validate/common.sh"
+  fi
+}
+
+if [[ "${SPLIT_ENVS}" == "true" ]]; then
+  for model in "${MODELS_TO_INSTALL[@]}"; do
+    TARGET_ENV_NAME="${CONDA_ENV_NAME}_${model}"
+    ensure_conda_env "${TARGET_ENV_NAME}"
+    conda activate "${TARGET_ENV_NAME}"
+
+    MODEL_ENVS=()
+    if [[ "${ENV_TARGET}" == "all" ]]; then
+      case "${model}" in
+        openvla) MODEL_ENVS=(flappy) ;;
+        pi0) MODEL_ENVS=(demon_attack) ;;
+        gr00t) MODEL_ENVS=(deadly_corridor) ;;
+      esac
+    else
+      MODEL_ENVS=("${ENVS_TO_INSTALL[@]}")
+    fi
+
+    echo "[bootstrap] Installing model=${model} in env=${TARGET_ENV_NAME} with env targets: ${MODEL_ENVS[*]}"
+    install_in_active_env "${model}" "${RUN_VALIDATE}" "${MODEL_ENVS[@]}"
+  done
+
+  echo "[bootstrap] Complete."
+  echo "[bootstrap] Split env mode used. Activate with: conda activate ${CONDA_ENV_NAME}_<model>"
+  echo "[bootstrap] Repo root: ${REPO_ROOT}"
+  exit 0
+fi
+
+ensure_conda_env "${CONDA_ENV_NAME}"
+conda activate "${CONDA_ENV_NAME}"
+install_in_active_env "${MODELS_TO_INSTALL[0]}" "false" "${ENVS_TO_INSTALL[@]}"
+
+if [[ ${#MODELS_TO_INSTALL[@]} -gt 1 ]]; then
+  for ((i=1; i<${#MODELS_TO_INSTALL[@]}; i++)); do
+    echo "[bootstrap] Installing additional model dependencies in shared env: ${MODELS_TO_INSTALL[$i]}"
+    PYTHON_BIN=python "${SCRIPT_DIR}/model/${MODELS_TO_INSTALL[$i]}.sh"
+  done
+fi
 
 if [[ "${RUN_VALIDATE}" == "true" ]]; then
   echo "[bootstrap] Running validation"
