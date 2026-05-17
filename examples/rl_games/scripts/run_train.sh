@@ -15,6 +15,7 @@ Options:
   --env <flappy|demon_attack|deadly_corridor>  Env config group (default: flappy)
   --mode <single|mixed_latency|cross_task>      Mode config group (default: single)
   --run-id <id>                Run id override (default: starvla_rl_games)
+  --workspace-dir <dir>        Workspace root for relative outputs/assets (default: repo root)
   --run-root-dir <dir>         Output root (default: results/Checkpoints)
   --gpus <csv>                 CUDA visible devices, e.g. 0 or 0,1 (optional)
   --num-processes <int>        Processes for accelerate launch (default: 1)
@@ -70,6 +71,7 @@ MODEL="openvla"
 ENV_NAME="flappy"
 MODE="single"
 RUN_ID="starvla_rl_games"
+WORKSPACE_DIR="$REPO_ROOT"
 RUN_ROOT_DIR="results/Checkpoints"
 GPUS=""
 NUM_PROCESSES="1"
@@ -124,6 +126,7 @@ while [[ $# -gt 0 ]]; do
     --env) ENV_NAME="$2"; shift 2 ;;
     --mode) MODE="$2"; shift 2 ;;
     --run-id) RUN_ID="$2"; shift 2 ;;
+    --workspace-dir) WORKSPACE_DIR="$2"; shift 2 ;;
     --run-root-dir) RUN_ROOT_DIR="$2"; shift 2 ;;
     --gpus) GPUS="$2"; shift 2 ;;
     --num-processes) NUM_PROCESSES="$2"; shift 2 ;;
@@ -204,6 +207,32 @@ activate_conda_env() {
 }
 
 activate_conda_env
+
+resolve_workspace_path() {
+  local path_value="$1"
+  if [[ -z "$path_value" ]]; then
+    echo ""
+  elif [[ "$path_value" = /* || "$path_value" = "~"* ]]; then
+    echo "$path_value"
+  else
+    echo "${WORKSPACE_DIR%/}/$path_value"
+  fi
+}
+
+WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" && pwd)"
+RUN_ROOT_DIR="$(resolve_workspace_path "$RUN_ROOT_DIR")"
+DATASET_LOCAL_DIR="$(resolve_workspace_path "$DATASET_LOCAL_DIR")"
+BASE_MODEL_DIR="$(resolve_workspace_path "$BASE_MODEL_DIR")"
+if [[ -n "$DATASET_CACHE_DIR" ]]; then
+  DATASET_CACHE_DIR="$(resolve_workspace_path "$DATASET_CACHE_DIR")"
+fi
+if [[ -n "$ACCELERATE_CONFIG" && "$ACCELERATE_CONFIG" != /* && "$ACCELERATE_CONFIG" != "~"* ]]; then
+  if [[ -f "$REPO_ROOT/$ACCELERATE_CONFIG" ]]; then
+    ACCELERATE_CONFIG="$REPO_ROOT/$ACCELERATE_CONFIG"
+  else
+    ACCELERATE_CONFIG="$(resolve_workspace_path "$ACCELERATE_CONFIG")"
+  fi
+fi
 
 if [[ -n "$MICRO_BATCH_SIZE" ]]; then
   BATCH_SIZE="$MICRO_BATCH_SIZE"
