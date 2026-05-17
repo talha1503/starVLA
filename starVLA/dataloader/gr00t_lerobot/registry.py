@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -47,6 +48,7 @@ logger = logging.getLogger(__name__)
 ROBOT_TYPE_CONFIG_MAP: dict = dict(_BASE_CONFIG_MAP)
 ROBOT_TYPE_TO_EMBODIMENT_TAG: dict = dict(_BASE_EMBODIMENT_MAP)
 DATASET_NAMED_MIXTURES: dict = dict(_BASE_MIXTURES)
+_DEBUG_DATASET_RE = re.compile(r"^(?P<base>.+)__debug(?:_[A-Za-z0-9_-]+)?_(?P<episodes>\d+)ep$")
 
 # ---------------------------------------------------------------------------
 # Discovery logic
@@ -108,6 +110,23 @@ def discover_and_merge() -> None:
                 if hasattr(mod, "DATASET_NAMED_MIXTURES"):
                     DATASET_NAMED_MIXTURES.update(mod.DATASET_NAMED_MIXTURES)
                     logger.info(f"[registry] Loaded mixtures from {bench_name} (data_config): {list(mod.DATASET_NAMED_MIXTURES.keys())}")
+
+
+def get_dataset_named_mixture(data_mix: str):
+    """Return a mixture spec, including debug-subset variants of known mixtures."""
+    if data_mix in DATASET_NAMED_MIXTURES:
+        return DATASET_NAMED_MIXTURES[data_mix]
+
+    match = _DEBUG_DATASET_RE.match(str(data_mix))
+    if match:
+        base_mix = match.group("base")
+        if base_mix in DATASET_NAMED_MIXTURES:
+            return [
+                (data_mix, weight, robot_type)
+                for _, weight, robot_type in DATASET_NAMED_MIXTURES[base_mix]
+            ]
+
+    raise KeyError(data_mix)
 
 
 # Run discovery on first import

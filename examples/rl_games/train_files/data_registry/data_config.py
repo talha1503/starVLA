@@ -41,15 +41,23 @@ class FlappyDataConfig:
         ])
 
 
+class DemonAttackDataConfig(FlappyDataConfig):
+    pass
+
+
 ROBOT_TYPE_CONFIG_MAP = {
     "rl_games_flappy": FlappyDataConfig(),
+    "rl_games_demon_attack": DemonAttackDataConfig(),
 }
 
 ROBOT_TYPE_TO_EMBODIMENT_TAG = {
     "rl_games_flappy": EmbodimentTag.NEW_EMBODIMENT,
+    "rl_games_demon_attack": EmbodimentTag.NEW_EMBODIMENT,
 }
 
 DATASET_NAMED_MIXTURES = {
     "flappy_train": [("flappy_train", 1.0, "rl_games_flappy")],
     "flappy_mixed_latency_train": [("flappy_mixed_latency_train", 1.0, "rl_games_flappy")],
+    "demon_attack_train": [("demon_attack_train", 1.0, "rl_games_demon_attack")],
+    "demon_attack_mixed_latency_train": [("demon_attack_mixed_latency_train", 1.0, "rl_games_demon_attack")],
 }

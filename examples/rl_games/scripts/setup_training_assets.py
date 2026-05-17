@@ -151,12 +151,12 @@ def _ensure_base_model(model: str, base_model_dir: Path, base_model_repo_id: str
 def _validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, Any]:
     from starVLA.dataloader.lerobot_datasets import make_LeRobotSingleDataset
     from starVLA.dataloader.gr00t_lerobot.registry import (
-        DATASET_NAMED_MIXTURES,
         ROBOT_TYPE_CONFIG_MAP,
         ROBOT_TYPE_TO_EMBODIMENT_TAG,
+        get_dataset_named_mixture,
     )
 
-    mixture = DATASET_NAMED_MIXTURES[data_mix]
+    mixture = get_dataset_named_mixture(data_mix)
     dataset_name, _, robot_type = mixture[0]
     data_config = ROBOT_TYPE_CONFIG_MAP[robot_type]
     dataset = make_LeRobotSingleDataset(
@@ -180,10 +180,7 @@ def _validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, A
     }
 
 
-def _ensure_flappy_dataset(args) -> dict[str, Any]:
-    from examples.rl_games.data_conversion.convert_flappy_to_starvla_lerobot import convert_dataset
-    from examples.rl_games.data_conversion.verify_flappy_dataset import verify_dataset
-
+def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -> dict[str, Any]:
     data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
     data_mix = args.converted_dataset_name
     dataset_dir = data_root_dir / data_mix
@@ -252,6 +249,28 @@ def _ensure_flappy_dataset(args) -> dict[str, Any]:
     }
 
 
+def _ensure_flappy_dataset(args) -> dict[str, Any]:
+    from examples.rl_games.data_conversion.convert_flappy_to_starvla_lerobot import convert_dataset
+    from examples.rl_games.data_conversion.verify_flappy_dataset import verify_dataset
+
+    return _ensure_rl_games_lerobot_dataset(
+        args,
+        convert_dataset=convert_dataset,
+        verify_dataset=verify_dataset,
+    )
+
+
+def _ensure_demon_attack_dataset(args) -> dict[str, Any]:
+    from examples.rl_games.data_conversion.convert_demon_attack_to_starvla_lerobot import convert_dataset
+    from examples.rl_games.data_conversion.verify_demon_attack_dataset import verify_dataset
+
+    return _ensure_rl_games_lerobot_dataset(
+        args,
+        convert_dataset=convert_dataset,
+        verify_dataset=verify_dataset,
+    )
+
+
 def setup_assets(args) -> dict[str, Any]:
     result: dict[str, Any] = {
         "model": args.model,
@@ -261,6 +280,8 @@ def setup_assets(args) -> dict[str, Any]:
 
     if args.model == "openvla" and args.env == "flappy":
         result.update(_ensure_flappy_dataset(args))
+    elif args.model == "openvla" and args.env == "demon_attack":
+        result.update(_ensure_demon_attack_dataset(args))
     else:
         data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
         result.update({

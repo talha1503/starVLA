@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -205,9 +206,35 @@ def _append_eval_stage_overrides(cmd: list[str], cfg: dict[str, Any], stage_name
         cmd.append(f"{hydra_prefix}.latencies={_latencies_expr(latencies)}")
 
 
+def _safe_suffix(value: Any) -> str:
+    suffix = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "debug")).strip("_")
+    return suffix or "debug"
+
+
+def _dataset_setup_values(cfg: dict[str, Any]) -> tuple[str, int | None]:
+    converted_name = str(_get(cfg, "dataset.converted_name", "flappy_train"))
+    max_episodes = (
+        None
+        if _get(cfg, "dataset.max_episodes") in (None, "")
+        else int(_get(cfg, "dataset.max_episodes"))
+    )
+
+    if _as_bool(_get(cfg, "dataset.debug_subset.enabled", False)):
+        debug_max = _get(cfg, "dataset.debug_subset.max_episodes", max_episodes)
+        if debug_max in (None, ""):
+            debug_max = 5
+        max_episodes = int(debug_max)
+        suffix = _safe_suffix(_get(cfg, "dataset.debug_subset.suffix", "debug"))
+        debug_suffix = "debug" if suffix == "debug" else f"debug_{suffix}"
+        converted_name = f"{converted_name}__{debug_suffix}_{max_episodes}ep"
+
+    return converted_name, max_episodes
+
+
 def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str) -> SimpleNamespace:
     run_id = str(_get(cfg, "run_id"))
     checkpoint_dir = str(Path(run_root_dir) / run_id / "checkpoints")
+    converted_dataset_name, max_episodes = _dataset_setup_values(cfg)
     return SimpleNamespace(
         model=str(_get(cfg, "model")),
         env=str(_get(cfg, "env")),
@@ -215,7 +242,7 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         latency_mode=str(_get(cfg, "rl_games.latency_mode", "") or ""),
         source_dataset_hf=str(_get(cfg, "dataset.source_hf", "") or ""),
         dataset_local_dir=_resolve_path(_get(cfg, "paths.dataset_local_dir"), workspace_dir),
-        converted_dataset_name=str(_get(cfg, "dataset.converted_name", "flappy_train")),
+        converted_dataset_name=converted_dataset_name,
         dataset_cache_dir=(
             _resolve_path(_get(cfg, "paths.dataset_cache_dir"), workspace_dir)
             if _get(cfg, "paths.dataset_cache_dir") not in (None, "")
@@ -224,11 +251,7 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         dataset_force_download=str(_as_bool(_get(cfg, "dataset.force_download", False))).lower(),
         setup_force=str(_as_bool(_get(cfg, "dataset.setup_force", False))).lower(),
         verify_rows=int(_get(cfg, "dataset.verify_rows", 200)),
-        max_episodes=(
-            None
-            if _get(cfg, "dataset.max_episodes") in (None, "")
-            else int(_get(cfg, "dataset.max_episodes"))
-        ),
+        max_episodes=max_episodes,
         base_model_dir=_resolve_path(_get(cfg, "paths.base_model_dir"), workspace_dir),
         base_model_repo_id=_get(cfg, "base_model.repo_id"),
         checkpoint_local_dir=checkpoint_dir,

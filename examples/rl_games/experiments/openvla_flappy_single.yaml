@@ -42,6 +42,10 @@ dataset:
   setup_force: false
   verify_rows: 200
   max_episodes: null
+  debug_subset:
+    enabled: false
+    max_episodes: 5
+    suffix: debug
 
 # Setup downloads this model into paths.base_model_dir if it is missing.
 base_model:

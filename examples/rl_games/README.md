@@ -116,6 +116,26 @@ bash examples/rl_games/scripts/run_experiment.sh \
   trainer.eval_interval=5
 ```
 
+Fast end-to-end preprocessing debug:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
+  run_id=debug_flappy_mixed_e2e \
+  dataset.debug_subset.enabled=true \
+  dataset.debug_subset.max_episodes=5 \
+  trainer.max_train_steps=2 \
+  trainer.batch_size=1 \
+  trainer.distributed_backend=none \
+  rl_games.mid_train_eval.enabled=false \
+  rl_games.post_train_eval.enabled=false
+```
+
+Debug subsets are written to separate converted dataset folders, for example
+`flappy_mixed_latency_train__debug_5ep`, so they do not overwrite the full
+preprocessed dataset. The same overrides work for the OpenVLA Demon Attack
+single and mixed-latency experiment YAMLs.
+
 Checkpoint fields have separate meanings: `checkpoint.hf_repo_id` is the resume/download source, while `checkpoint.sync_repo_id` is the upload destination when `checkpoint.sync_enabled: true`. The trainer saves full Accelerate training-state directories (`steps_<N>_state/`) for exact resume, including optimizer/scheduler state, and also saves lightweight model files for convenience. A missing `sync_repo_id` repo is created during sync if Hugging Face auth is available. `checkpoint.hf_keep_last_n: 0` keeps all uploaded HF checkpoints.
 
 Environment rollout eval is controlled in the `rl_games` block:

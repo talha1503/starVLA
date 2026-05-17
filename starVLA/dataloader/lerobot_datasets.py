@@ -12,8 +12,8 @@ from starVLA.dataloader.gr00t_lerobot.datasets import LeRobotSingleDataset, LeRo
 from starVLA.dataloader.gr00t_lerobot.registry import (
     ROBOT_TYPE_CONFIG_MAP,
     ROBOT_TYPE_TO_EMBODIMENT_TAG,
-    DATASET_NAMED_MIXTURES,
     EmbodimentTag,
+    get_dataset_named_mixture,
 )
 
 def collate_fn(batch):
@@ -71,7 +71,7 @@ def get_vla_dataset(
     data_root_dir = data_cfg.data_root_dir
     data_mix = data_cfg.data_mix
     delete_pause_frame = data_cfg.get("delete_pause_frame", False)
-    mixture_spec = DATASET_NAMED_MIXTURES[data_mix]
+    mixture_spec = get_dataset_named_mixture(data_mix)
     included_datasets, filtered_mixture_spec = set(), []
     for d_name, d_weight, robot_type in mixture_spec:  
         dataset_key = (d_name, robot_type)  
