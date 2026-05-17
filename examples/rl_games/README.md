@@ -53,11 +53,52 @@ Available scripts:
 
 ## Train
 
-```bash
-bash examples/rl_games/scripts/run_train.sh --model openvla --env flappy --mode single
+The current training flow is config-driven. Pick one YAML file from:
+
+```text
+examples/rl_games/experiments/
 ```
 
-The training launcher activates `starvla_rl_games_<model>` by default. For the command above, it uses `starvla_rl_games_openvla`.
+Main OpenVLA Flappy configs:
+
+```text
+examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml
+examples/rl_games/experiments/openvla_flappy_single.yaml
+```
+
+Edit `workspace_dir`, `wandb`, `dataset`, `base_model`, `checkpoint`, `launch`, `train_data`, and `trainer` in the YAML. Relative asset paths are resolved under `workspace_dir`.
+
+Mixed-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
+  workspace_dir=/root/talha \
+  wandb.entity=YOUR_WANDB_ENTITY
+```
+
+Single-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/openvla_flappy_single.yaml \
+  workspace_dir=/root/talha \
+  wandb.entity=YOUR_WANDB_ENTITY
+```
+
+Override any YAML value from the command line:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
+  workspace_dir=/root/talha \
+  run_id=smoke_test \
+  trainer.max_train_steps=10 \
+  trainer.save_interval=5 \
+  trainer.eval_interval=5
+```
+
+The launcher activates the conda env from the config, then downloads/prepares the dataset, writes dataset statistics, downloads the base model if needed, checks local/Hugging Face checkpoints, and launches training.
 
 ## Eval summary
 

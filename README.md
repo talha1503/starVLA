@@ -148,6 +148,129 @@ Achieve **state-of-the-art (SOTA) performance** on a variety of benchmarks, as f
 
 > **📖 New to StarVLA?** Check out our step-by-step [**Quick Start Guide**](docs/starVLA_guideline.md) — a complete walkthrough from installation to training to evaluation using the LIBERO benchmark.
 
+## RL Games Training
+
+The RL Games training entrypoint is config-driven. Use one bash command and one YAML file per experiment.
+
+### 1. Install the RL Games environment
+
+From the repo root:
+
+```bash
+cd /Users/talhachafekar/Documents/NU/starVLA
+
+bash examples/rl_games/install/bootstrap.sh --split-envs
+```
+
+This creates model-specific conda environments such as `starvla_rl_games_openvla`.
+
+### 2. Choose an experiment config
+
+Configs live here:
+
+```text
+examples/rl_games/experiments/
+```
+
+Current OpenVLA Flappy configs:
+
+```text
+examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml
+examples/rl_games/experiments/openvla_flappy_single.yaml
+```
+
+Edit the YAML before a real run. The most important field is `workspace_dir`:
+
+```yaml
+workspace_dir: /root/talha
+```
+
+All relative training asset paths are resolved under `workspace_dir`:
+
+```yaml
+paths:
+  run_root_dir: results/Checkpoints
+  dataset_local_dir: playground/Datasets/rl_games
+  dataset_cache_dir: null
+  base_model_dir: playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
+  accelerate_config: starVLA/config/deepseeds/deepspeed_zero2.yaml
+```
+
+For `workspace_dir: /root/talha`, this means:
+
+```text
+checkpoints/results: /root/talha/results/Checkpoints/<run_id>/
+converted dataset:    /root/talha/playground/Datasets/rl_games/<dataset.converted_name>
+base model weights:   /root/talha/playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
+```
+
+### 3. Start training
+
+Mixed-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
+  workspace_dir=/root/talha \
+  wandb.entity=YOUR_WANDB_ENTITY
+```
+
+Single-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/openvla_flappy_single.yaml \
+  workspace_dir=/root/talha \
+  wandb.entity=YOUR_WANDB_ENTITY
+```
+
+### 4. Override config values without editing YAML
+
+Use `key=value` overrides after the config path:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
+  workspace_dir=/root/talha \
+  wandb.entity=YOUR_WANDB_ENTITY \
+  run_id=test_lr_1e4 \
+  trainer.max_train_steps=5000 \
+  trainer.learning_rate.action_model=1.0e-04 \
+  trainer.batch_size=4
+```
+
+Useful smoke test:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
+  workspace_dir=/root/talha \
+  wandb.entity=YOUR_WANDB_ENTITY \
+  run_id=smoke_test \
+  trainer.max_train_steps=10 \
+  trainer.save_interval=5 \
+  trainer.eval_interval=5
+```
+
+### What the launcher does
+
+`examples/rl_games/scripts/run_experiment.sh`:
+
+- reads `conda.enabled` and `conda.env_name` from the YAML
+- activates the conda env
+- calls `examples/rl_games/scripts/run_experiment.py`
+
+`run_experiment.py` then:
+
+- resolves paths under `workspace_dir`
+- downloads the HF dataset if the converted dataset is missing
+- converts/preprocesses the dataset into the StarVLA/LeRobot layout
+- writes dataset statistics
+- downloads base model weights if missing
+- checks local checkpoints under `workspace_dir / paths.run_root_dir / run_id / checkpoints`
+- optionally pulls a checkpoint from `checkpoint.hf_repo_id`
+- launches `starVLA/training/train_starvla_hydra.py`
+
 ---
 
 ## Benchmark Results
