@@ -117,6 +117,18 @@ ensure_conda_env() {
   fi
 }
 
+validate_active_python_version() {
+  local env_name="$1"
+  local active_py_mm requested_py_mm
+  active_py_mm="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+  requested_py_mm="$(echo "${PYTHON_VERSION}" | awk -F. '{if (NF>=2) print $1"."$2; else print $1}')"
+  if [[ "${active_py_mm}" != "${requested_py_mm}" ]]; then
+    echo "[bootstrap] Conda env '${env_name}' has Python ${active_py_mm}, expected ${requested_py_mm}." >&2
+    echo "[bootstrap] Use a different --conda-env name, or remove and recreate this env." >&2
+    exit 1
+  fi
+}
+
 install_in_active_env() {
   local model="$1"
   local run_validate="${2:-true}"
@@ -145,6 +157,7 @@ if [[ "${SPLIT_ENVS}" == "true" ]]; then
     TARGET_ENV_NAME="${CONDA_ENV_NAME}_${model}"
     ensure_conda_env "${TARGET_ENV_NAME}"
     conda activate "${TARGET_ENV_NAME}"
+    validate_active_python_version "${TARGET_ENV_NAME}"
 
     MODEL_ENVS=()
     if [[ "${ENV_TARGET}" == "all" ]]; then
@@ -169,6 +182,7 @@ fi
 
 ensure_conda_env "${CONDA_ENV_NAME}"
 conda activate "${CONDA_ENV_NAME}"
+validate_active_python_version "${CONDA_ENV_NAME}"
 install_in_active_env "${MODELS_TO_INSTALL[0]}" "false" "${ENVS_TO_INSTALL[@]}"
 
 if [[ ${#MODELS_TO_INSTALL[@]} -gt 1 ]]; then

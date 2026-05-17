@@ -98,6 +98,14 @@ if [[ "${USE_CONDA}" == "true" ]]; then
   fi
 
   conda activate "${CONDA_ENV_NAME}"
+
+  ACTIVE_PY_MM="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+  REQUESTED_PY_MM="$(echo "${PYTHON_VERSION}" | awk -F. '{if (NF>=2) print $1"."$2; else print $1}')"
+  if [[ "${ACTIVE_PY_MM}" != "${REQUESTED_PY_MM}" ]]; then
+    echo "[install_stack] Conda env '${CONDA_ENV_NAME}' has Python ${ACTIVE_PY_MM}, expected ${REQUESTED_PY_MM}." >&2
+    echo "[install_stack] Use a different --conda-env name, or remove and recreate this env." >&2
+    exit 1
+  fi
 fi
 
 "$BASE_DIR/common.sh"
