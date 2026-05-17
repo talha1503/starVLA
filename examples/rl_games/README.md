@@ -95,6 +95,15 @@ bash examples/rl_games/scripts/run_experiment.sh \
   wandb.entity=WANDB_ENTITY
 ```
 
+Single-GPU direct backend with a custom run name:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/openvla_flappy_single.yaml \
+  run_id=test_qwen3_flappy_gc_none_backend \
+  trainer.distributed_backend=none
+```
+
 Override any YAML value from the command line:
 
 ```bash
