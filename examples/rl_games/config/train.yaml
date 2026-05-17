@@ -6,6 +6,10 @@ defaults:
   - checkpoint: default
   - _self_
 
+hydra:
+  job:
+    chdir: false
+
 run_id: starvla_rl_games
 run_root_dir: results/Checkpoints
 seed: 42
