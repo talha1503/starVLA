@@ -15,3 +15,14 @@ rl_games:
       mode: single
       values: [0]
       prompt_map_path: null
+    mid_train:
+      enabled: true
+      interval_steps: 100
+      latencies: null
+      num_episodes: 5
+      max_steps_per_episode: 2000
+    post_train:
+      enabled: true
+      latencies: null
+      num_episodes: 5
+      max_steps_per_episode: 2000

@@ -98,7 +98,7 @@ def _latencies_expr(values: Any) -> str | None:
         return None
     if isinstance(values, str):
         values = [item.strip() for item in values.split(",") if item.strip()]
-    return "[" + ", ".join(str(int(value)) for value in values) + "]"
+    return "[" + ",".join(str(int(value)) for value in values) + "]"
 
 
 def _hydra_value(value: Any) -> str:
@@ -120,6 +120,34 @@ def _append_override(
     if value in (None, ""):
         return
     cmd.append(f"{hydra_path or config_path}={_hydra_value(value)}")
+
+
+def _first_config_value(cfg: dict[str, Any], paths: list[str], default: Any = None) -> Any:
+    for path in paths:
+        value = _get(cfg, path)
+        if value not in (None, ""):
+            return value
+    return default
+
+
+def _append_eval_stage_overrides(cmd: list[str], cfg: dict[str, Any], stage_name: str, hydra_name: str) -> None:
+    prefix = f"rl_games.{stage_name}"
+    hydra_prefix = f"rl_games.env_eval.{hydra_name}"
+
+    mappings = [
+        ("enabled", "enabled"),
+        ("interval_steps", "interval_steps"),
+        ("num_episodes", "num_episodes"),
+        ("max_steps_per_episode", "max_steps_per_episode"),
+    ]
+    for config_key, hydra_key in mappings:
+        value = _get(cfg, f"{prefix}.{config_key}")
+        if value not in (None, ""):
+            cmd.append(f"{hydra_prefix}.{hydra_key}={_hydra_value(value)}")
+
+    latencies = _get(cfg, f"{prefix}.latencies")
+    if latencies not in (None, ""):
+        cmd.append(f"{hydra_prefix}.latencies={_latencies_expr(latencies)}")
 
 
 def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str) -> SimpleNamespace:
@@ -168,9 +196,7 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         f"seed={_get(cfg, 'seed', 42)}",
         f"wandb_entity={_get(cfg, 'wandb.entity', 'your_wandb_entity')}",
         f"wandb_project={_get(cfg, 'wandb.project', 'starVLA_rl_games')}",
-        f"rl_games.env_eval.enabled={str(_as_bool(_get(cfg, 'rl_games.env_eval_enabled', True))).lower()}",
-        f"rl_games.env_eval.num_episodes={_get(cfg, 'rl_games.num_episodes', 5)}",
-        f"rl_games.env_eval.max_episode_steps={_get(cfg, 'rl_games.max_episode_steps', 2000)}",
+        f"rl_games.env_eval.enabled={str(_as_bool(_first_config_value(cfg, ['rl_games.env_eval_enabled'], True))).lower()}",
         f"checkpoint.sync.enabled={str(_as_bool(_get(cfg, 'checkpoint.sync_enabled', False))).lower()}",
         f"checkpoint.sync.keep_last_n={_get(cfg, 'checkpoint.hf_keep_last_n', 0)}",
         f"checkpoint.local.keep_last_n={_get(cfg, 'checkpoint.local_keep_last_n', 3)}",
@@ -235,6 +261,7 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         "rl_games.env_eval.latency.mode": _get(cfg, "rl_games.latency_mode"),
         "rl_games.env_eval.frameskip": _get(cfg, "rl_games.frameskip"),
         "rl_games.env_eval.image_size": _get(cfg, "rl_games.image_size"),
+        "rl_games.env_eval.task_description": _get(cfg, "rl_games.task_description"),
     }
     for key, value in optional.items():
         if value not in (None, ""):
@@ -247,6 +274,9 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
     prompt_map = _get(cfg, "rl_games.latency_prompt_map_path") or setup.get("latency_prompt_map_path")
     if prompt_map:
         cmd.append(f"rl_games.env_eval.latency.prompt_map_path={prompt_map}")
+
+    _append_eval_stage_overrides(cmd, cfg, "mid_train_eval", "mid_train")
+    _append_eval_stage_overrides(cmd, cfg, "post_train_eval", "post_train")
 
     if str(_get(cfg, "env")) == "deadly_corridor" or str(_get(cfg, "rl_games.task", "")) == "deadly_corridor":
         cmd.append(f"rl_games.env_eval.deadly.action_layout={_get(cfg, 'rl_games.deadly_action_layout', 'multibinary_7')}")

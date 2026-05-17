@@ -360,18 +360,19 @@ class VLATrainer(TrainerUtils):
             if self.completed_steps % self.config.trainer.eval_interval == 0:
                 step_metrics = self.eval_action_model(step_metrics)
             if self._rl_games_eval_runner is not None:
-                eval_every = int(getattr(self.config.rl_games.env_eval, "interval_steps", self.config.trainer.eval_interval))
+                eval_every = self._rl_games_eval_runner.interval_steps(default=self.config.trainer.eval_interval)
                 if eval_every > 0 and self.completed_steps % eval_every == 0:
-                    eval_result = self._rl_games_eval_runner.run(
-                        model=self.accelerator.unwrap_model(self.model),
-                        step=self.completed_steps,
-                        stage="mid_train",
-                    )
-                    step_metrics = self._append_rl_games_eval_metrics(
-                        step_metrics=step_metrics,
-                        eval_result=eval_result,
-                        stage="mid_train",
-                    )
+                    if self._rl_games_eval_runner.is_enabled(stage="mid_train"):
+                        eval_result = self._rl_games_eval_runner.run(
+                            model=self.accelerator.unwrap_model(self.model),
+                            step=self.completed_steps,
+                            stage="mid_train",
+                        )
+                        step_metrics = self._append_rl_games_eval_metrics(
+                            step_metrics=step_metrics,
+                            eval_result=eval_result,
+                            stage="mid_train",
+                        )
 
             step_metrics["timing/data"] = t_end_data - t_start_data
             step_metrics["timing/model"] = t_end_model - t_start_model
@@ -457,7 +458,7 @@ class VLATrainer(TrainerUtils):
             else:
                 raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
             logger.info(f"Training complete. Final model saved at {final_checkpoint}")
-            if self._rl_games_eval_runner is not None:
+            if self._rl_games_eval_runner is not None and self._rl_games_eval_runner.is_enabled(stage="post_train"):
                 eval_result = self._rl_games_eval_runner.run(
                     model=self.accelerator.unwrap_model(self.model),
                     step=self.completed_steps,

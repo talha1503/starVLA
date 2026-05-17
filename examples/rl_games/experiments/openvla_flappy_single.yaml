@@ -95,13 +95,32 @@ trainer:
   save_format: pt
 
 rl_games:
-  task: null
-  model_alias: null
-  latency_mode: null
-  latencies: null
+  task: flappy
+  model_alias: openvla
+  task_description: ""
+  frameskip: 1
+  image_size: 84
+
+  # Used as the default prompt map for all eval stages.
   latency_prompt_map_path: null
+
+  # Global switch for environment rollout eval.
   env_eval_enabled: true
-  num_episodes: 5
-  max_episode_steps: 2000
-  frameskip: null
-  image_size: null
+
+  # Runs during training. Keep this smaller if eval is expensive.
+  mid_train_eval:
+    enabled: true
+    interval_steps: 100
+    latencies: [0]
+    num_episodes: 5
+    max_steps_per_episode: 2000
+
+  # Runs once after training completes. This can be larger/more exhaustive.
+  post_train_eval:
+    enabled: true
+    latencies: [0]
+    num_episodes: 5
+    max_steps_per_episode: 2000
+
+  latency_mode: single
+  latencies: [0]

@@ -98,6 +98,28 @@ bash examples/rl_games/scripts/run_experiment.sh \
   trainer.eval_interval=5
 ```
 
+Environment rollout eval is controlled in the `rl_games` block:
+
+```yaml
+rl_games:
+  env_eval_enabled: true
+
+  mid_train_eval:
+    enabled: true
+    interval_steps: 100
+    latencies: [0, 1, 2, 3, 4, 5]
+    num_episodes: 5
+    max_steps_per_episode: 2000
+
+  post_train_eval:
+    enabled: true
+    latencies: [0, 1, 2, 3, 4, 5]
+    num_episodes: 5
+    max_steps_per_episode: 2000
+```
+
+This is separate from `trainer.eval_interval`. `trainer.eval_interval` runs the trainer's action-model eval; `rl_games.mid_train_eval` and `rl_games.post_train_eval` run the current model in the actual environment.
+
 The launcher activates the conda env from the config, then downloads/prepares the dataset, writes dataset statistics, downloads the base model if needed, checks local/Hugging Face checkpoints, and launches training.
 
 ## Eval summary

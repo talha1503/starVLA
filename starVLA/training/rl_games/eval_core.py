@@ -291,10 +291,51 @@ class RlGamesEvalRunner:
         self.cfg = cfg
         self.output_dir = output_dir
 
-    def _get_latency_values(self) -> List[int]:
+    def _stage_cfg(self, stage: str):
         env_eval = self.cfg.rl_games.env_eval
-        values = list(getattr(getattr(env_eval, "latency", {}), "values", []) or [0])
+        if stage in {"mid_train", "post_train"}:
+            return getattr(env_eval, stage, None)
+        return None
+
+    def is_enabled(self, stage: str) -> bool:
+        env_eval = self.cfg.rl_games.env_eval
+        if not bool(getattr(env_eval, "enabled", False)):
+            return False
+        stage_cfg = self._stage_cfg(stage)
+        if stage_cfg is None:
+            return True
+        return bool(getattr(stage_cfg, "enabled", True))
+
+    def interval_steps(self, default: int) -> int:
+        env_eval = self.cfg.rl_games.env_eval
+        stage_cfg = self._stage_cfg("mid_train")
+        if stage_cfg is not None and getattr(stage_cfg, "interval_steps", None) is not None:
+            return int(stage_cfg.interval_steps)
+        return int(getattr(env_eval, "interval_steps", default))
+
+    def _get_latency_values(self, stage: str) -> List[int]:
+        env_eval = self.cfg.rl_games.env_eval
+        stage_cfg = self._stage_cfg(stage)
+        values = None
+        if stage_cfg is not None:
+            values = getattr(stage_cfg, "latencies", None)
+        if not values:
+            values = getattr(getattr(env_eval, "latency", {}), "values", []) or [0]
         return [int(v) for v in values]
+
+    def _num_episodes(self, stage: str) -> int:
+        env_eval = self.cfg.rl_games.env_eval
+        stage_cfg = self._stage_cfg(stage)
+        if stage_cfg is not None and getattr(stage_cfg, "num_episodes", None) is not None:
+            return int(stage_cfg.num_episodes)
+        return int(getattr(env_eval, "num_episodes", 5))
+
+    def _max_steps_per_episode(self, stage: str) -> int:
+        env_eval = self.cfg.rl_games.env_eval
+        stage_cfg = self._stage_cfg(stage)
+        if stage_cfg is not None and getattr(stage_cfg, "max_steps_per_episode", None) is not None:
+            return int(stage_cfg.max_steps_per_episode)
+        return int(getattr(env_eval, "max_episode_steps", 2000))
 
     def _resolve_prompt(self, latency: int, mapping: Dict[int, Dict[str, Any]]) -> str:
         if latency in mapping:
@@ -325,9 +366,9 @@ class RlGamesEvalRunner:
         return ["flappy", "demon_attack"]
 
     def run(self, model, step: int, stage: str = "mid_train") -> EvalResult:
-        latency_values = self._get_latency_values()
-        max_steps = int(getattr(self.cfg.rl_games.env_eval, "max_episode_steps", 2000))
-        num_episodes = int(getattr(self.cfg.rl_games.env_eval, "num_episodes", 5))
+        latency_values = self._get_latency_values(stage=stage)
+        max_steps = self._max_steps_per_episode(stage=stage)
+        num_episodes = self._num_episodes(stage=stage)
 
         latency_map_path = getattr(getattr(self.cfg.rl_games.env_eval, "latency", {}), "prompt_map_path", None)
         latency_prompt_map = _load_latency_prompt_map(latency_map_path)
