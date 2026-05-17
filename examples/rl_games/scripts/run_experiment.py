@@ -270,6 +270,7 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         "trainer.eval_interval",
         "trainer.logging_frequency",
         "trainer.gradient_accumulation_steps",
+        "trainer.distributed_backend",
         ("trainer.batch_size", "datasets.vla_data.per_device_batch_size"),
         "trainer.learning_rate.base",
         "trainer.learning_rate.qwen_vl_interface",
@@ -286,6 +287,7 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         "trainer.optimizer.betas",
         "trainer.optimizer.eps",
         "trainer.optimizer.weight_decay",
+        "trainer.optimizer.fused",
         "trainer.save_format",
     ]
     for override in trainer_overrides:
@@ -345,6 +347,8 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
 
 
 def _launch_command(cfg: dict[str, Any], trainer_cmd: list[str], workspace_dir: Path) -> list[str]:
+    if str(_get(cfg, "trainer.distributed_backend", "deepspeed")).lower() == "none":
+        return [sys.executable, *trainer_cmd]
     if _as_bool(_get(cfg, "launch.use_accelerate", True)):
         accelerate_config = _repo_or_workspace_path(_get(cfg, "paths.accelerate_config"), workspace_dir)
         return [
