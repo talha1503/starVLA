@@ -53,6 +53,8 @@ Options:
   --preprocess-cmd <cmd>       Optional preprocessing command run before training
   --checkpoint-load <none|local|hf>  Resume source policy (default: none)
   --checkpoint-hf-repo-id <repo>  HF model repo id for checkpoint-load=hf
+  --conda-env <name>            Conda env to activate (default: starvla_rl_games_<model>)
+  --no-conda                    Use the current python environment
   --help                       Show this help
 USAGE
 }
@@ -100,6 +102,8 @@ DATASET_FORCE_DOWNLOAD="false"
 PREPROCESS_CMD=""
 CHECKPOINT_LOAD="none"
 CHECKPOINT_HF_REPO_ID=""
+CONDA_ENV_NAME=""
+USE_CONDA="true"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -146,10 +150,42 @@ while [[ $# -gt 0 ]]; do
     --preprocess-cmd) PREPROCESS_CMD="$2"; shift 2 ;;
     --checkpoint-load) CHECKPOINT_LOAD="$2"; shift 2 ;;
     --checkpoint-hf-repo-id) CHECKPOINT_HF_REPO_ID="$2"; shift 2 ;;
+    --conda-env) CONDA_ENV_NAME="$2"; shift 2 ;;
+    --no-conda) USE_CONDA="false"; shift ;;
     --help|-h) usage; exit 0 ;;
     *) echo "Unknown option: $1"; usage; exit 1 ;;
   esac
 done
+
+activate_conda_env() {
+  if [[ "$USE_CONDA" != "true" ]]; then
+    return
+  fi
+
+  if [[ -z "$CONDA_ENV_NAME" ]]; then
+    CONDA_ENV_NAME="starvla_rl_games_${MODEL}"
+  fi
+
+  if ! command -v conda >/dev/null 2>&1; then
+    echo "conda is required to activate ${CONDA_ENV_NAME}. Use --no-conda only if the current python env is already correct." >&2
+    exit 1
+  fi
+
+  CONDA_BASE="$(conda info --base)"
+  source "${CONDA_BASE}/etc/profile.d/conda.sh"
+
+  if ! conda env list | awk '{print $1}' | grep -qx "$CONDA_ENV_NAME"; then
+    echo "Conda env '${CONDA_ENV_NAME}' does not exist." >&2
+    echo "Install it first with: bash examples/rl_games/install/install_stack.sh ${MODEL} ${ENV_NAME}" >&2
+    exit 1
+  fi
+
+  conda activate "$CONDA_ENV_NAME"
+  echo "Using conda env: ${CONDA_ENV_NAME}"
+  echo "Python: $(python --version)"
+}
+
+activate_conda_env
 
 if [[ -n "$MICRO_BATCH_SIZE" ]]; then
   BATCH_SIZE="$MICRO_BATCH_SIZE"

@@ -55,6 +55,8 @@ Available scripts:
 bash examples/rl_games/scripts/run_train.sh --model openvla --env flappy --mode single
 ```
 
+The training launcher activates `starvla_rl_games_<model>` by default. For the command above, it uses `starvla_rl_games_openvla`.
+
 ## Eval summary
 
 ```bash
