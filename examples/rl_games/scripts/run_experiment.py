@@ -93,6 +93,48 @@ def _repo_or_workspace_path(value: Any, workspace_dir: Path) -> str:
     return str(workspace_dir / path)
 
 
+def _strip_env_quotes(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        raise FileNotFoundError(f"Auth env file not found: {path}")
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        os.environ[key] = _strip_env_quotes(value)
+
+
+def _load_auth_env(cfg: dict[str, Any], workspace_dir: Path) -> None:
+    env_file = _get(cfg, "auth.env_file")
+    if env_file not in (None, ""):
+        _load_env_file(Path(_repo_or_workspace_path(env_file, workspace_dir)))
+
+    hf_token_env = str(_get(cfg, "auth.hf_token_env", "HF_TOKEN") or "HF_TOKEN")
+    hf_token = os.environ.get(hf_token_env)
+    if hf_token:
+        os.environ.setdefault("HF_TOKEN", hf_token)
+        os.environ.setdefault("HUGGINGFACE_HUB_TOKEN", hf_token)
+
+    wandb_key_env = str(_get(cfg, "auth.wandb_api_key_env", "WANDB_API_KEY") or "WANDB_API_KEY")
+    wandb_key = os.environ.get(wandb_key_env)
+    if wandb_key:
+        os.environ.setdefault("WANDB_API_KEY", wandb_key)
+
+
 def _latencies_expr(values: Any) -> str | None:
     if values in (None, ""):
         return None
@@ -315,6 +357,7 @@ def main() -> int:
     workspace_dir = Path(_resolve_path(_get(cfg, "workspace_dir", "."), REPO_ROOT)).resolve()
     workspace_dir.mkdir(parents=True, exist_ok=True)
     run_root_dir = _resolve_path(_get(cfg, "paths.run_root_dir", "results/Checkpoints"), workspace_dir)
+    _load_auth_env(cfg, workspace_dir)
 
     gpus = _get(cfg, "launch.gpus")
     if gpus not in (None, ""):

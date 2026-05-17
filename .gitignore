@@ -106,14 +106,19 @@ celerybeat.pid
 
 # Environments
 .env
+*.env
 .venv
 env/
 !examples/rl_games/install/env/
 !examples/rl_games/install/env/*.sh
+!examples/rl_games/config/env/
+!examples/rl_games/config/env/*.yaml
 venv/
 ENV/
 !examples/rl_games/install/env/
 !examples/rl_games/install/env/*.sh
+!examples/rl_games/config/env/
+!examples/rl_games/config/env/*.yaml
 env.bak/
 venv.bak/
 

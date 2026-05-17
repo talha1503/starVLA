@@ -1,9 +1,16 @@
-workspace_dir: /root/talha
+workspace_dir: WORKSPACE_DIR
 
 # Bash reads this block before Python starts.
 conda:
   enabled: true
   env_name: starvla_rl_games_openvla
+
+# Optional. Do not commit the real env file; put it in workspace_dir or export
+# HF_TOKEN/WANDB_API_KEY in the shell before running.
+auth:
+  env_file: null
+  hf_token_env: HF_TOKEN
+  wandb_api_key_env: WANDB_API_KEY
 
 # These choose the Hydra config groups under examples/rl_games/config.
 config_name: train

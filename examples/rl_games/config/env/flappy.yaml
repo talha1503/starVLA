@@ -1,0 +1,9 @@
+rl_games:
+  task: flappy
+  env_eval:
+    image_size: 84
+    frameskip: 1
+
+datasets:
+  vla_data:
+    data_mix: flappy_train

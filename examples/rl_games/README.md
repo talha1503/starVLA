@@ -66,15 +66,24 @@ examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml
 examples/rl_games/experiments/openvla_flappy_single.yaml
 ```
 
-Edit `workspace_dir`, `wandb`, `dataset`, `base_model`, `checkpoint`, `launch`, `train_data`, and `trainer` in the YAML. Relative asset paths are resolved under `workspace_dir`.
+Edit `workspace_dir`, `auth`, `wandb`, `dataset`, `base_model`, `checkpoint`, `launch`, `train_data`, and `trainer` in the YAML. Relative asset paths are resolved under `workspace_dir`.
+
+Authentication tokens are read from `HF_TOKEN` and `WANDB_API_KEY` by default:
+
+```bash
+export HF_TOKEN=HF_TOKEN_VALUE
+export WANDB_API_KEY=WANDB_API_KEY_VALUE
+```
+
+You can also copy `examples/rl_games/auth.env.example` to a private file such as `WORKSPACE_DIR/auth.env`, then set `auth.env_file: auth.env` in the experiment YAML. Do not commit real tokens.
 
 Mixed-latency Flappy:
 
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
-  workspace_dir=/root/talha \
-  wandb.entity=YOUR_WANDB_ENTITY
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
 ```
 
 Single-latency Flappy:
@@ -82,8 +91,8 @@ Single-latency Flappy:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/openvla_flappy_single.yaml \
-  workspace_dir=/root/talha \
-  wandb.entity=YOUR_WANDB_ENTITY
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
 ```
 
 Override any YAML value from the command line:
@@ -91,7 +100,7 @@ Override any YAML value from the command line:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
-  workspace_dir=/root/talha \
+  workspace_dir=WORKSPACE_DIR \
   run_id=smoke_test \
   trainer.max_train_steps=10 \
   trainer.save_interval=5 \

@@ -1,0 +1,12 @@
+rl_games:
+  task: deadly_corridor
+  env_eval:
+    image_size: 84
+    frameskip: 1
+    deadly:
+      action_layout: multibinary_7
+    task_description: "You are playing Deadly Corridor in VizDoom. Choose actions from MOVE_FORWARD, MOVE_BACKWARD, MOVE_LEFT, MOVE_RIGHT, TURN_LEFT, TURN_RIGHT, ATTACK."
+
+datasets:
+  vla_data:
+    data_mix: deadly_corridor_train

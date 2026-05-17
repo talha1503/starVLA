@@ -157,7 +157,7 @@ The RL Games training entrypoint is config-driven. Use one bash command and one 
 From the repo root:
 
 ```bash
-cd /Users/talhachafekar/Documents/NU/starVLA
+cd PATH_TO_STARVLA
 
 bash examples/rl_games/install/bootstrap.sh --split-envs
 ```
@@ -182,7 +182,7 @@ examples/rl_games/experiments/openvla_flappy_single.yaml
 Edit the YAML before a real run. The most important field is `workspace_dir`:
 
 ```yaml
-workspace_dir: /root/talha
+workspace_dir: WORKSPACE_DIR
 ```
 
 All relative training asset paths are resolved under `workspace_dir`:
@@ -196,13 +196,35 @@ paths:
   accelerate_config: starVLA/config/deepseeds/deepspeed_zero2.yaml
 ```
 
-For `workspace_dir: /root/talha`, this means:
+For `workspace_dir: WORKSPACE_DIR`, this means:
 
 ```text
-checkpoints/results: /root/talha/results/Checkpoints/<run_id>/
-converted dataset:    /root/talha/playground/Datasets/rl_games/<dataset.converted_name>
-base model weights:   /root/talha/playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
+checkpoints/results: WORKSPACE_DIR/results/Checkpoints/<run_id>/
+converted dataset:    WORKSPACE_DIR/playground/Datasets/rl_games/<dataset.converted_name>
+base model weights:   WORKSPACE_DIR/playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
 ```
+
+Authentication tokens are read from the shell by default:
+
+```bash
+export HF_TOKEN=HF_TOKEN_VALUE
+export WANDB_API_KEY=WANDB_API_KEY_VALUE
+```
+
+Alternatively, copy the example env file outside git tracking:
+
+```bash
+cp examples/rl_games/auth.env.example WORKSPACE_DIR/auth.env
+```
+
+then set:
+
+```yaml
+auth:
+  env_file: auth.env
+```
+
+The runner loads `auth.env_file` before dataset/model/checkpoint setup and passes those variables to training. Do not commit real tokens.
 
 ### 3. Start training
 
@@ -211,8 +233,8 @@ Mixed-latency Flappy:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
-  workspace_dir=/root/talha \
-  wandb.entity=YOUR_WANDB_ENTITY
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
 ```
 
 Single-latency Flappy:
@@ -220,8 +242,8 @@ Single-latency Flappy:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/openvla_flappy_single.yaml \
-  workspace_dir=/root/talha \
-  wandb.entity=YOUR_WANDB_ENTITY
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
 ```
 
 ### 4. Override config values without editing YAML
@@ -231,8 +253,8 @@ Use `key=value` overrides after the config path:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
-  workspace_dir=/root/talha \
-  wandb.entity=YOUR_WANDB_ENTITY \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY \
   run_id=test_lr_1e4 \
   trainer.max_train_steps=5000 \
   trainer.learning_rate.action_model=1.0e-04 \
@@ -269,8 +291,8 @@ Useful smoke test:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
-  workspace_dir=/root/talha \
-  wandb.entity=YOUR_WANDB_ENTITY \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY \
   run_id=smoke_test \
   trainer.max_train_steps=10 \
   trainer.save_interval=5 \
