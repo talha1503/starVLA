@@ -12,6 +12,8 @@ hydra:
 
 run_id: starvla_rl_games
 run_root_dir: results/Checkpoints
+output_dir: null
+config_yaml: null
 seed: 42
 wandb_entity: your_wandb_entity
 wandb_project: starVLA_rl_games
