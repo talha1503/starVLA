@@ -13,6 +13,7 @@ Conventions:
 # Standard Library
 import argparse
 import json
+import logging
 import os
 import re
 import shutil
@@ -26,7 +27,6 @@ import torch
 import torch.distributed as dist
 import wandb
 from accelerate import Accelerator, DeepSpeedPlugin
-from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
@@ -45,7 +45,7 @@ from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_par
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Initialize logger
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def load_fast_tokenizer():
