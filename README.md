@@ -261,6 +261,19 @@ bash examples/rl_games/scripts/run_experiment.sh \
   trainer.batch_size=4
 ```
 
+Checkpoint fields have separate meanings:
+
+```yaml
+checkpoint:
+  hf_repo_id: HF_RESUME_REPO_ID
+  sync_enabled: true
+  sync_repo_id: HF_OUTPUT_REPO_ID
+  hf_keep_last_n: 0
+  local_keep_last_n: 3
+```
+
+`hf_repo_id` is only used as a resume/download source when no local checkpoint exists. `sync_repo_id` is only used as the upload destination for newly saved checkpoints. If `sync_enabled: true`, the sync code creates `sync_repo_id` on Hugging Face if it does not already exist. `hf_keep_last_n: 0` means keep all uploaded HF checkpoints.
+
 Environment rollout eval is controlled separately from trainer batch eval:
 
 ```yaml

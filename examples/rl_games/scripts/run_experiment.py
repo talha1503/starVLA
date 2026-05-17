@@ -221,7 +221,7 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         checkpoint_local_dir=checkpoint_dir,
         checkpoint_load=str(_get(cfg, "checkpoint.load", "auto")),
         checkpoint_hf_repo_id=str(_get(cfg, "checkpoint.hf_repo_id", "") or ""),
-        hf_repo_id=str(_get(cfg, "checkpoint.sync_repo_id", "") or ""),
+        hf_repo_id="",
     )
 
 
@@ -286,7 +286,7 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
     for config_path, hydra_path in data_overrides:
         _append_override(cmd, cfg, config_path, hydra_path)
 
-    sync_repo = _get(cfg, "checkpoint.sync_repo_id") or _get(cfg, "checkpoint.hf_repo_id")
+    sync_repo = _get(cfg, "checkpoint.sync_repo_id")
     if sync_repo:
         cmd.append(f"checkpoint.sync.repo_id={sync_repo}")
 

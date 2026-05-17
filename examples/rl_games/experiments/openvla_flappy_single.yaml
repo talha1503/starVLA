@@ -50,7 +50,8 @@ base_model:
 # Setup first checks local checkpoints under:
 #   workspace_dir / paths.run_root_dir / run_id / checkpoints
 # If checkpoint.load is auto/hf and checkpoint.hf_repo_id is set, it can also
-# pull the latest checkpoint from Hugging Face.
+# pull the latest checkpoint from Hugging Face. checkpoint.sync_repo_id is only
+# the upload destination for newly saved checkpoints when sync_enabled=true.
 checkpoint:
   load: auto
   hf_repo_id: null

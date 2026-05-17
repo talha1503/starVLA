@@ -51,14 +51,14 @@ class CheckpointSyncManager:
         if not os.path.isfile(path):
             return
         try:
+            api = HfApi()
+            api.create_repo(repo_id=self._hf_repo_id, repo_type="model", exist_ok=True)
             upload_file(
                 path_or_fileobj=path,
                 path_in_repo=os.path.basename(path),
                 repo_id=self._hf_repo_id,
                 repo_type="model",
             )
-            # Touch API client to ensure auth errors surface in same branch.
-            HfApi()
         except Exception:
             # Non-fatal by design.
             return
