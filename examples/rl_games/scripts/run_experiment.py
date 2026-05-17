@@ -73,7 +73,7 @@ def _as_bool(value: Any) -> bool:
 def _resolve_path(value: Any, workspace_dir: Path) -> str:
     if value in (None, ""):
         return ""
-    expanded = os.path.expanduser(str(value))
+    expanded = os.path.expandvars(os.path.expanduser(str(value)))
     path = Path(expanded)
     if path.is_absolute():
         return str(path)
@@ -83,7 +83,7 @@ def _resolve_path(value: Any, workspace_dir: Path) -> str:
 def _repo_or_workspace_path(value: Any, workspace_dir: Path) -> str:
     if value in (None, ""):
         return ""
-    expanded = os.path.expanduser(str(value))
+    expanded = os.path.expandvars(os.path.expanduser(str(value)))
     path = Path(expanded)
     if path.is_absolute():
         return str(path)
@@ -91,6 +91,19 @@ def _repo_or_workspace_path(value: Any, workspace_dir: Path) -> str:
     if repo_path.exists():
         return str(repo_path)
     return str(workspace_dir / path)
+
+
+def _workspace_dir(cfg: dict[str, Any]) -> Path:
+    configured = _get(cfg, "workspace_dir")
+    if configured not in (None, "", "WORKSPACE_DIR"):
+        return Path(_resolve_path(configured, REPO_ROOT)).resolve()
+    env_workspace = os.environ.get("WORKSPACE_DIR")
+    if env_workspace:
+        return Path(_resolve_path(env_workspace, REPO_ROOT)).resolve()
+    default_workspace = Path("/workspace")
+    if default_workspace.exists():
+        return default_workspace.resolve()
+    return REPO_ROOT
 
 
 def _strip_env_quotes(value: str) -> str:
@@ -359,7 +372,7 @@ def main() -> int:
     for override in args.overrides:
         _apply_override(cfg, override)
 
-    workspace_dir = Path(_resolve_path(_get(cfg, "workspace_dir", "."), REPO_ROOT)).resolve()
+    workspace_dir = _workspace_dir(cfg)
     workspace_dir.mkdir(parents=True, exist_ok=True)
     run_root_dir = _resolve_path(_get(cfg, "paths.run_root_dir", "results/Checkpoints"), workspace_dir)
     _load_auth_env(cfg, workspace_dir)

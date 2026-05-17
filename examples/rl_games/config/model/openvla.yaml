@@ -5,6 +5,8 @@ rl_games:
 
 framework:
   name: QwenOFT
+  qwenvl:
+    enable_gradient_checkpointing: true
   action_model:
     action_dim: 2
     action_env_dim: 2

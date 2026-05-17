@@ -49,6 +49,7 @@ class _QWen3_VL_Interface(nn.Module):
         qwenvl_config = config.framework.get("qwenvl", {})
         model_id = qwenvl_config.get("base_vlm", "Qwen/Qwen3-VL-4B-Instruct")
         attn_implementation = qwenvl_config.get("attn_implementation", "sdpa")
+        enable_grad_ckpt = bool(qwenvl_config.get("enable_gradient_checkpointing", False))
 
         # Fallback to sdpa if flash_attention_2 is requested but flash_attn is not installed
         if attn_implementation == "flash_attention_2":
@@ -66,6 +67,19 @@ class _QWen3_VL_Interface(nn.Module):
         )
         processor = AutoProcessor.from_pretrained(model_id)
         processor.tokenizer.padding_side = "left"
+
+        if enable_grad_ckpt:
+            try:
+                if hasattr(model.config, "use_cache"):
+                    model.config.use_cache = False
+                model.gradient_checkpointing_enable(
+                    gradient_checkpointing_kwargs={"use_reentrant": False}
+                )
+                if hasattr(model, "enable_input_require_grads"):
+                    model.enable_input_require_grads()
+                print("[QWen3] gradient_checkpointing ENABLED (use_reentrant=False)", flush=True)
+            except Exception as e:
+                print(f"[QWen3] failed to enable gradient_checkpointing: {e}", flush=True)
 
         self.model = model
         self.processor = processor
