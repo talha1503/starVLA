@@ -1,3 +1,5 @@
+# @package _global_
+
 rl_games:
   task: deadly_corridor
   env_eval:

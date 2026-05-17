@@ -1,3 +1,5 @@
+# @package _global_
+
 rl_games:
   model_alias: pi-0
 

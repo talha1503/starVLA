@@ -61,6 +61,10 @@ trainer:
   logging_frequency: 10
   gradient_clipping: 1.0
   gradient_accumulation_steps: 1
+  is_resume: false
+  pretrained_checkpoint: null
+  resume_step: 0
+  reload_modules: null
   optimizer:
     name: AdamW
     betas: [0.9, 0.95]

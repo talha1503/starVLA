@@ -1,3 +1,5 @@
+# @package _global_
+
 rl_games:
   env_eval:
     latency:

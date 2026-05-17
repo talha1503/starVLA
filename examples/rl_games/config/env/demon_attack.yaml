@@ -1,3 +1,5 @@
+# @package _global_
+
 rl_games:
   task: demon_attack
   env_eval:
