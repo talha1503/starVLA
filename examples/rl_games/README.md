@@ -7,24 +7,26 @@ Detailed guide: `examples/rl_games/USAGE.md`
 One-command bootstrap (recommended):
 
 ```bash
-bash examples/rl_games/install/bootstrap.sh
-```
-
-This command will:
-- create conda env `starvla_rl_games` if missing
-- install common deps + all RL-games model/env deps
-- run a validation smoke check
-
-Conflict-safe mode:
-
-```bash
 bash examples/rl_games/install/bootstrap.sh --split-envs
 ```
 
-This creates one env per model:
+This command will:
+- create one conda env per model
+- install the repo-standard `starVLA` stack plus all RL-games env deps in each model env
+- run a validation smoke check
+
+Shared-env bootstrap:
+
+```bash
+bash examples/rl_games/install/bootstrap.sh
+```
+
+Split bootstrap creates one env per model:
 - `starvla_rl_games_openvla`
 - `starvla_rl_games_pi0`
 - `starvla_rl_games_gr00t`
+
+Each split env installs the repo-standard `starVLA` stack plus the requested RL-games env dependencies. With the default `--env all`, every model env gets `flappy`, `demon_attack`, and `deadly_corridor` dependencies.
 
 Layered installer (manual control):
 

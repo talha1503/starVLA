@@ -159,16 +159,7 @@ if [[ "${SPLIT_ENVS}" == "true" ]]; then
     conda activate "${TARGET_ENV_NAME}"
     validate_active_python_version "${TARGET_ENV_NAME}"
 
-    MODEL_ENVS=()
-    if [[ "${ENV_TARGET}" == "all" ]]; then
-      case "${model}" in
-        openvla) MODEL_ENVS=(flappy) ;;
-        pi0) MODEL_ENVS=(demon_attack) ;;
-        gr00t) MODEL_ENVS=(deadly_corridor) ;;
-      esac
-    else
-      MODEL_ENVS=("${ENVS_TO_INSTALL[@]}")
-    fi
+    MODEL_ENVS=("${ENVS_TO_INSTALL[@]}")
 
     echo "[bootstrap] Installing model=${model} in env=${TARGET_ENV_NAME} with env targets: ${MODEL_ENVS[*]}"
     install_in_active_env "${model}" "${RUN_VALIDATE}" "${MODEL_ENVS[@]}"
