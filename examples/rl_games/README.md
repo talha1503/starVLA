@@ -28,6 +28,8 @@ Split bootstrap creates one env per model:
 
 Each split env installs the repo-standard `starVLA` stack plus the requested RL-games env dependencies. With the default `--env all`, every model env gets `flappy`, `demon_attack`, and `deadly_corridor` dependencies.
 
+PyTorch is selected automatically during install. Blackwell GPUs (`compute_cap=12.0` / `sm_120`) get the CUDA 12.8 PyTorch stack; other CUDA GPUs use the repo-compatible CUDA 12.4 stack. Override with `STARVLA_TORCH_PROFILE=cu128|cu126|cu124|cpu`.
+
 Layered installer (manual control):
 
 ```bash
