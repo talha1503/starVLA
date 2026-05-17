@@ -50,8 +50,14 @@ Options:
   --dataset-allow-patterns <csv>  HF dataset allow patterns (comma-separated)
   --dataset-required-subdirs <csv> Required subdirs to consider dataset ready (default: train)
   --dataset-force-download <true|false> Force re-download for dataset-mode=hf
+  --source-dataset-hf <repo>  Raw/source HF dataset repo to verify and convert at setup time
+  --converted-dataset-name <name> StarVLA dataset subdir/data_mix name (default: flappy_train)
+  --dataset-cache-dir <dir>   HF datasets cache override for verification/conversion
+  --setup-force <true|false>  Force setup-time conversion/model checks (default: false)
   --preprocess-cmd <cmd>       Optional preprocessing command run before training
-  --checkpoint-load <none|local|hf>  Resume source policy (default: none)
+  --base-model-dir <dir>      Local base model directory
+  --base-model-repo-id <repo> HF repo for base model download
+  --checkpoint-load <auto|none|local|hf>  Resume policy (default: auto; local first, then HF)
   --checkpoint-hf-repo-id <repo>  HF model repo id for checkpoint-load=hf
   --conda-env <name>            Conda env to activate (default: starvla_rl_games_<model>)
   --no-conda                    Use the current python environment
@@ -99,8 +105,14 @@ DATASET_HF_REPO_ID=""
 DATASET_ALLOW_PATTERNS=""
 DATASET_REQUIRED_SUBDIRS="train"
 DATASET_FORCE_DOWNLOAD="false"
+SOURCE_DATASET_HF=""
+CONVERTED_DATASET_NAME="flappy_train"
+DATASET_CACHE_DIR=""
+SETUP_FORCE="false"
 PREPROCESS_CMD=""
-CHECKPOINT_LOAD="none"
+BASE_MODEL_DIR="playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action"
+BASE_MODEL_REPO_ID="StarVLA/Qwen3-VL-4B-Instruct-Action"
+CHECKPOINT_LOAD="auto"
 CHECKPOINT_HF_REPO_ID=""
 CONDA_ENV_NAME=""
 USE_CONDA="true"
@@ -147,7 +159,13 @@ while [[ $# -gt 0 ]]; do
     --dataset-allow-patterns) DATASET_ALLOW_PATTERNS="$2"; shift 2 ;;
     --dataset-required-subdirs) DATASET_REQUIRED_SUBDIRS="$2"; shift 2 ;;
     --dataset-force-download) DATASET_FORCE_DOWNLOAD="$2"; shift 2 ;;
+    --source-dataset-hf) SOURCE_DATASET_HF="$2"; shift 2 ;;
+    --converted-dataset-name) CONVERTED_DATASET_NAME="$2"; shift 2 ;;
+    --dataset-cache-dir) DATASET_CACHE_DIR="$2"; shift 2 ;;
+    --setup-force) SETUP_FORCE="$2"; shift 2 ;;
     --preprocess-cmd) PREPROCESS_CMD="$2"; shift 2 ;;
+    --base-model-dir) BASE_MODEL_DIR="$2"; shift 2 ;;
+    --base-model-repo-id) BASE_MODEL_REPO_ID="$2"; shift 2 ;;
     --checkpoint-load) CHECKPOINT_LOAD="$2"; shift 2 ;;
     --checkpoint-hf-repo-id) CHECKPOINT_HF_REPO_ID="$2"; shift 2 ;;
     --conda-env) CONDA_ENV_NAME="$2"; shift 2 ;;
@@ -260,22 +278,29 @@ fi
 
 RUN_OUTPUT_DIR="${RUN_ROOT_DIR}/${RUN_ID}"
 CHECKPOINT_LOCAL_DIR="${RUN_OUTPUT_DIR}/checkpoints"
-BOOTSTRAP_JSON="$(
-  python examples/rl_games/scripts/bootstrap_data_and_checkpoint.py \
-    --dataset-mode "$DATASET_MODE" \
+SETUP_JSON="$(
+  python examples/rl_games/scripts/setup_training_assets.py \
+    --model "$MODEL" \
+    --env "$ENV_NAME" \
+    --mode "$MODE" \
+    --latency-mode "${LATENCY_MODE_OVERRIDE:-}" \
+    --source-dataset-hf "${SOURCE_DATASET_HF:-${DATASET_HF_REPO_ID:-}}" \
     --dataset-local-dir "$DATASET_LOCAL_DIR" \
-    --dataset-hf-repo-id "${DATASET_HF_REPO_ID:-}" \
-    --dataset-allow-patterns "${DATASET_ALLOW_PATTERNS:-}" \
-    --dataset-required-subdirs "${DATASET_REQUIRED_SUBDIRS:-train}" \
+    --converted-dataset-name "$CONVERTED_DATASET_NAME" \
+    --dataset-cache-dir "${DATASET_CACHE_DIR:-}" \
     --dataset-force-download "${DATASET_FORCE_DOWNLOAD}" \
-    --checkpoint-mode "$CHECKPOINT_LOAD" \
+    --setup-force "${SETUP_FORCE}" \
+    --base-model-dir "$BASE_MODEL_DIR" \
+    --base-model-repo-id "${BASE_MODEL_REPO_ID:-}" \
     --checkpoint-local-dir "$CHECKPOINT_LOCAL_DIR" \
-    --checkpoint-hf-repo-id "${CHECKPOINT_HF_REPO_ID:-}"
+    --checkpoint-load "$CHECKPOINT_LOAD" \
+    --checkpoint-hf-repo-id "${CHECKPOINT_HF_REPO_ID:-}" \
+    --hf-repo-id "${HF_REPO_ID:-}"
 )"
-echo "Bootstrap summary: $BOOTSTRAP_JSON"
+echo "Setup summary: $SETUP_JSON"
 
 RESUME_FOUND="$(
-  python -c 'import json,sys; print("true" if json.loads(sys.argv[1]).get("resume_found") else "false")' "$BOOTSTRAP_JSON"
+  python -c 'import json,sys; print("true" if json.loads(sys.argv[1]).get("resume_found") else "false")' "$SETUP_JSON"
 )"
 if [[ "$RESUME_FOUND" == "true" ]]; then
   CMD+=("trainer.is_resume=true")
@@ -283,35 +308,38 @@ else
   CMD+=("trainer.is_resume=false")
 fi
 
-CMD+=("datasets.vla_data.data_root_dir=$DATASET_LOCAL_DIR")
+RESOLVED_DATA_ROOT="$(
+  python -c 'import json,sys; print(json.loads(sys.argv[1]).get("dataset_local_dir") or "")' "$SETUP_JSON"
+)"
+RESOLVED_DATA_MIX="$(
+  python -c 'import json,sys; print(json.loads(sys.argv[1]).get("data_mix") or "")' "$SETUP_JSON"
+)"
+RESOLVED_BASE_MODEL="$(
+  python -c 'import json,sys; print(json.loads(sys.argv[1]).get("base_model_dir") or "")' "$SETUP_JSON"
+)"
+RESOLVED_LATENCY_PROMPT_MAP="$(
+  python -c 'import json,sys; print(json.loads(sys.argv[1]).get("latency_prompt_map_path") or "")' "$SETUP_JSON"
+)"
+
+if [[ -n "$RESOLVED_DATA_ROOT" ]]; then
+  CMD+=("datasets.vla_data.data_root_dir=$RESOLVED_DATA_ROOT")
+else
+  CMD+=("datasets.vla_data.data_root_dir=$DATASET_LOCAL_DIR")
+fi
+if [[ -n "$RESOLVED_DATA_MIX" ]]; then
+  CMD+=("datasets.vla_data.data_mix=$RESOLVED_DATA_MIX")
+fi
+if [[ -n "$RESOLVED_BASE_MODEL" ]]; then
+  CMD+=("framework.qwenvl.base_vlm=$RESOLVED_BASE_MODEL")
+fi
+if [[ -z "$LATENCY_PROMPT_MAP_PATH" && -n "$RESOLVED_LATENCY_PROMPT_MAP" ]]; then
+  CMD+=("rl_games.env_eval.latency.prompt_map_path=$RESOLVED_LATENCY_PROMPT_MAP")
+fi
 
 if [[ -n "$PREPROCESS_CMD" ]]; then
   echo "Running preprocess command:"
   echo "  $PREPROCESS_CMD"
   eval "$PREPROCESS_CMD"
-fi
-
-if [[ "$DATASET_MODE" != "none" ]]; then
-  DATASET_READY="$(
-    python -c 'import json,sys; print("true" if json.loads(sys.argv[1]).get("dataset_ready") else "false")' "$BOOTSTRAP_JSON"
-  )"
-  if [[ "$DATASET_READY" != "true" ]]; then
-    POST_PREPROCESS_JSON="$(
-      python examples/rl_games/scripts/bootstrap_data_and_checkpoint.py \
-        --dataset-mode local \
-        --dataset-local-dir "$DATASET_LOCAL_DIR" \
-        --dataset-required-subdirs "${DATASET_REQUIRED_SUBDIRS:-train}" \
-        --checkpoint-mode none \
-        --checkpoint-local-dir "$CHECKPOINT_LOCAL_DIR"
-    )"
-    DATASET_READY="$(
-      python -c 'import json,sys; print("true" if json.loads(sys.argv[1]).get("dataset_ready") else "false")' "$POST_PREPROCESS_JSON"
-    )"
-    if [[ "$DATASET_READY" != "true" ]]; then
-      echo "Dataset is not ready at ${DATASET_LOCAL_DIR} (required subdirs: ${DATASET_REQUIRED_SUBDIRS})."
-      exit 1
-    fi
-  fi
 fi
 
 USE_ACCELERATE_LOWER="$(echo "$USE_ACCELERATE" | tr '[:upper:]' '[:lower:]')"
