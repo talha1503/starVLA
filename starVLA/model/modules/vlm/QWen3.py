@@ -50,6 +50,10 @@ class _QWen3_VL_Interface(nn.Module):
         model_id = qwenvl_config.get("base_vlm", "Qwen/Qwen3-VL-4B-Instruct")
         attn_implementation = qwenvl_config.get("attn_implementation", "sdpa")
         enable_grad_ckpt = bool(qwenvl_config.get("enable_gradient_checkpointing", False))
+        print(
+            f"[QWen3] loading {model_id} with gradient_checkpointing={enable_grad_ckpt}",
+            flush=True,
+        )
 
         # Fallback to sdpa if flash_attention_2 is requested but flash_attn is not installed
         if attn_implementation == "flash_attention_2":
