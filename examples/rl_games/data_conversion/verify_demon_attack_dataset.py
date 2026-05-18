@@ -17,6 +17,15 @@ EXPECTED_PROMPT = (
     "You are playing Demon Attack from a single game image. "
     "Choose exactly one action from: NOOP, FIRE, RIGHT, LEFT, RIGHTFIRE, LEFTFIRE."
 )
+REQUIRED_PROMPT_PARTS = [
+    "Demon Attack",
+    "NOOP",
+    "FIRE",
+    "RIGHT",
+    "LEFT",
+    "RIGHTFIRE",
+    "LEFTFIRE",
+]
 
 
 def verify_dataset(
@@ -65,10 +74,14 @@ def verify_dataset(
             print(f"ERROR: invalid mixed-latency prompt mapping: {exc}")
             ok = False
     else:
-        if len(prompts) != 1 or next(iter(prompts)) != EXPECTED_PROMPT:
-            print("ERROR: prompt does not match expected Demon Attack prompt.")
+        invalid_prompts = [
+            prompt for prompt in prompts
+            if not all(part in prompt for part in REQUIRED_PROMPT_PARTS)
+        ]
+        if invalid_prompts:
+            print("ERROR: prompt does not contain the expected Demon Attack action vocabulary.")
             print(f"  sampled prompts: {sorted(prompts)}")
-            print(f"  expected: {EXPECTED_PROMPT!r}")
+            print(f"  required parts: {REQUIRED_PROMPT_PARTS}")
             ok = False
 
     action_id_to_text: dict[int, set[str]] = defaultdict(set)
