@@ -189,6 +189,7 @@ def convert_dataset(
     cache_dir: str | None = None,
     max_episodes: int | None = None,
     force: bool = False,
+    require_latency_prompt_map: bool = False,
 ) -> dict[str, Any]:
     val_output_dir = output_dir.with_name(f"{output_dir.name}__val")
     if output_dir.exists() and force:
@@ -269,8 +270,12 @@ def convert_dataset(
                     encoding="utf-8",
                 )
             except ValueError:
+                if require_latency_prompt_map:
+                    raise
                 # Non-latency or malformed latency columns should not block single-latency training.
                 pass
+        elif require_latency_prompt_map:
+            raise ValueError(f"{dataset_name} {split} split has no latency rows; cannot build latency_prompt_map.json")
 
         manifest = {
             "dataset_name": split_output_dir.name,
@@ -311,6 +316,7 @@ def main() -> int:
         cache_dir=args.cache_dir,
         max_episodes=args.max_episodes,
         force=args.force,
+        require_latency_prompt_map=False,
     )
     print(json.dumps(manifest, indent=2))
     return 0

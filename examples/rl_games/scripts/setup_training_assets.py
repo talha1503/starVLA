@@ -237,8 +237,14 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
             cache_dir=args.dataset_cache_dir,
             max_episodes=args.max_episodes,
             force=rebuild,
+            require_latency_prompt_map=mixed_latency,
         )
         converted = True
+        if mixed_latency and not _mixed_prompt_map_ready():
+            raise ValueError(
+                f"mixed-latency dataset conversion did not create a usable prompt map: {prompt_map}. "
+                "Check that the selected training episodes contain latency/prompt columns for more than one latency."
+            )
 
     validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=data_mix)
     eval_validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=eval_data_mix)
