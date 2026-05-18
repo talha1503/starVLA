@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
 
 
 class ActionLatencyQueue:
@@ -226,7 +227,16 @@ class _TaskEvaluator:
             return _semantic_to_runtime_multibinary(semantic, runtime_button_order)
         return decode_discrete_argmax(raw_action, raw_action.shape[-1])
 
-    def run_latency(self, model, latency: int, prompt: str, max_steps: int, num_episodes: int) -> Dict[str, Any]:
+    def run_latency(
+        self,
+        model,
+        latency: int,
+        prompt: str,
+        max_steps: int,
+        num_episodes: int,
+        progress_desc: str | None = None,
+        progress_position: int = 0,
+    ) -> Dict[str, Any]:
         env = self._make_env()
         runtime_button_order = _get_available_button_names(env) if self.task == "deadly_corridor" else None
         queue_default = [0] * 7 if self.task == "deadly_corridor" else 0
@@ -236,7 +246,15 @@ class _TaskEvaluator:
         lengths: List[int] = []
         action_hist = Counter()
 
-        for episode in range(num_episodes):
+        episode_iter = tqdm(
+            range(num_episodes),
+            desc=progress_desc or f"{self.task} latency={latency}",
+            total=num_episodes,
+            leave=False,
+            position=progress_position,
+            dynamic_ncols=True,
+        )
+        for episode in episode_iter:
             obs, _ = env.reset()
             queue.reset()
             done = False
@@ -274,6 +292,10 @@ class _TaskEvaluator:
 
             rewards.append(total_reward)
             lengths.append(steps)
+            episode_iter.set_postfix({
+                "reward": f"{total_reward:.2f}",
+                "steps": steps,
+            })
 
         env.close()
         mean_reward = float(np.mean(rewards)) if rewards else 0.0
@@ -390,22 +412,34 @@ class RlGamesEvalRunner:
         all_rewards = []
         all_lengths = []
 
-        for task_name in tasks:
+        total_rollouts = len(tasks) * len(latency_values)
+        rollout_iter = tqdm(
+            [(task_name, latency) for task_name in tasks for latency in latency_values],
+            desc=f"rl-games {stage} eval step={step}",
+            total=total_rollouts,
+            leave=True,
+            position=0,
+            dynamic_ncols=True,
+        )
+
+        for task_name, latency in rollout_iter:
+            rollout_iter.set_postfix({"task": task_name, "latency": latency})
             task_eval = _TaskEvaluator(task=task_name, cfg=self.cfg)
-            for latency in latency_values:
-                prompt = self._resolve_prompt(latency=latency, mapping=latency_prompt_map)
-                metrics = task_eval.run_latency(
-                    model=model,
-                    latency=latency,
-                    prompt=prompt,
-                    max_steps=max_steps,
-                    num_episodes=num_episodes,
-                )
-                key = f"{task_name}/latency_{latency}"
-                per_latency[key] = metrics
-                aggregate["total_episodes"] += metrics["num_episodes"]
-                all_rewards.append(metrics["mean_reward"])
-                all_lengths.append(metrics["mean_length"])
+            prompt = self._resolve_prompt(latency=latency, mapping=latency_prompt_map)
+            metrics = task_eval.run_latency(
+                model=model,
+                latency=latency,
+                prompt=prompt,
+                max_steps=max_steps,
+                num_episodes=num_episodes,
+                progress_desc=f"{stage} {task_name} latency={latency}",
+                progress_position=1,
+            )
+            key = f"{task_name}/latency_{latency}"
+            per_latency[key] = metrics
+            aggregate["total_episodes"] += metrics["num_episodes"]
+            all_rewards.append(metrics["mean_reward"])
+            all_lengths.append(metrics["mean_length"])
 
         if all_rewards:
             aggregate["mean_reward"] = float(np.mean(all_rewards))
