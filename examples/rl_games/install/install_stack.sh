@@ -144,6 +144,14 @@ install_stack() {
 
   echo "[install_stack] Running validation"
   "${BASE_DIR}/validate/common.sh"
+  local target_validator="${BASE_DIR}/validate/${MODEL}_${ENV_NAME}.sh"
+  if [[ -x "${target_validator}" ]]; then
+    "${target_validator}"
+  elif [[ -f "${target_validator}" ]]; then
+    bash "${target_validator}"
+  else
+    echo "[install_stack] No target-specific validator found for ${MODEL}/${ENV_NAME}; common validation passed."
+  fi
 }
 
 parse_args "$@"
