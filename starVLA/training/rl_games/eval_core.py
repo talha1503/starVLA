@@ -93,9 +93,31 @@ def _factorized_to_semantic_buttons(action_tuple: List[int]) -> List[int]:
     return [1 if name in active else 0 for name in semantic_order]
 
 
-def _resize_rgb(raw_obs: np.ndarray, image_size: int) -> np.ndarray:
+def _extract_image_observation(obs: Any) -> Any:
+    if isinstance(obs, dict):
+        for key in (
+            "screen",
+            "rgb",
+            "image",
+            "obs",
+            "observation",
+            "pixels",
+        ):
+            value = obs.get(key)
+            if value is not None and np.asarray(value).ndim >= 2:
+                return value
+        for value in obs.values():
+            if hasattr(value, "shape") and np.asarray(value).ndim >= 2:
+                return value
+        raise TypeError(f"dict observation has no image-like value; keys={sorted(obs.keys())}")
+    return obs
+
+
+def _resize_rgb(raw_obs: Any, image_size: int) -> np.ndarray:
+    raw_obs = _extract_image_observation(raw_obs)
     if raw_obs is None:
         return np.zeros((image_size, image_size, 3), dtype=np.uint8)
+    raw_obs = np.asarray(raw_obs)
     if raw_obs.dtype != np.uint8:
         raw_obs = raw_obs.astype(np.uint8)
     if raw_obs.ndim == 2:
@@ -274,7 +296,7 @@ class _TaskEvaluator:
             steps = 0
 
             while not done and steps < max_steps:
-                obs_rgb = _resize_rgb(np.asarray(obs), image_size=self.image_size)
+                obs_rgb = _resize_rgb(obs, image_size=self.image_size)
                 example = {
                     "image": [Image.fromarray(obs_rgb)],
                     "lang": prompt,
