@@ -184,6 +184,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
     data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
     data_mix = args.converted_dataset_name
     dataset_dir = data_root_dir / data_mix
+    eval_data_mix = f"{data_mix}__val"
+    eval_dataset_dir = data_root_dir / eval_data_mix
     force = _str2bool(args.setup_force) or _str2bool(args.dataset_force_download)
     mixed_latency = args.mode == "mixed_latency" or str(args.latency_mode or "").lower() == "mixed"
     prompt_map = dataset_dir / "latency_prompt_map.json"
@@ -212,6 +214,7 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
     rebuild = (
         force
         or not _dataset_ready(dataset_dir)
+        or not _dataset_ready(eval_dataset_dir)
         or not _manifest_source_matches()
         or not _mixed_prompt_map_ready()
     )
@@ -238,14 +241,20 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
         converted = True
 
     validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=data_mix)
+    eval_validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=eval_data_mix)
     return {
         "dataset_ready": True,
         "dataset_converted": converted,
         "dataset_local_dir": str(data_root_dir),
         "dataset_dir": str(dataset_dir),
         "data_mix": data_mix,
+        "eval_data_mix": eval_data_mix,
+        "eval_dataset_dir": str(eval_dataset_dir),
         "latency_prompt_map_path": str(prompt_map) if prompt_map.exists() else None,
         **validation,
+        "eval_dataset_stats_path": eval_validation["dataset_stats_path"],
+        "eval_dataset_num_steps": eval_validation["dataset_num_steps"],
+        "eval_dataset_num_trajectories": eval_validation["dataset_num_trajectories"],
     }
 
 
@@ -288,6 +297,7 @@ def setup_assets(args) -> dict[str, Any]:
             "dataset_ready": _has_files(data_root_dir),
             "dataset_local_dir": str(data_root_dir),
             "data_mix": None,
+            "eval_data_mix": None,
             "latency_prompt_map_path": None,
         })
 

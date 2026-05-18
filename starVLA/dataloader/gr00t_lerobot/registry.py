@@ -117,7 +117,17 @@ def get_dataset_named_mixture(data_mix: str):
     if data_mix in DATASET_NAMED_MIXTURES:
         return DATASET_NAMED_MIXTURES[data_mix]
 
-    match = _DEBUG_DATASET_RE.match(str(data_mix))
+    base_data_mix = str(data_mix)
+    if base_data_mix.endswith("__val"):
+        base_data_mix = base_data_mix.removesuffix("__val")
+
+    if base_data_mix in DATASET_NAMED_MIXTURES:
+        return [
+            (data_mix, weight, robot_type)
+            for _, weight, robot_type in DATASET_NAMED_MIXTURES[base_data_mix]
+        ]
+
+    match = _DEBUG_DATASET_RE.match(base_data_mix)
     if match:
         base_mix = match.group("base")
         if base_mix in DATASET_NAMED_MIXTURES:

@@ -64,15 +64,26 @@ def setup_directories(cfg) -> Path:
     return output_dir
 
 
-def prepare_data(cfg, accelerator, output_dir) -> DataLoader:
+def prepare_data(cfg, accelerator, output_dir) -> tuple[DataLoader, DataLoader | None]:
     """Prepare VLA training data."""
     logger.info(f"Creating VLA Dataset with Mixture `{cfg.datasets.vla_data.data_mix}`")
     vla_train_dataloader = build_dataloader(cfg=cfg, dataset_py=cfg.datasets.vla_data.dataset_py)
+    vla_eval_dataloader = None
+    eval_data_mix = getattr(cfg.datasets.vla_data, "eval_data_mix", None)
+    if eval_data_mix:
+        logger.info(f"Creating VLA Eval Dataset with Mixture `{eval_data_mix}`")
+        vla_eval_dataloader = build_dataloader(
+            cfg=cfg,
+            dataset_py=cfg.datasets.vla_data.dataset_py,
+            data_mix=str(eval_data_mix),
+            mode="eval",
+            save_statistics_filename="dataset_statistics_eval.json",
+        )
 
     accelerator.dataloader_config.dispatch_batches = False
     if dist.is_initialized():
         dist.barrier()
-    return vla_train_dataloader
+    return vla_train_dataloader, vla_eval_dataloader
 
 
 def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler._LRScheduler]:
@@ -117,10 +128,11 @@ def _build_accelerator(cfg) -> Accelerator:
 
 
 class VLATrainer(TrainerUtils):
-    def __init__(self, cfg, model, vla_train_dataloader, optimizer, lr_scheduler, accelerator):
+    def __init__(self, cfg, model, vla_train_dataloader, vla_eval_dataloader, optimizer, lr_scheduler, accelerator):
         self.config = cfg
         self.model = model
         self.vla_train_dataloader = vla_train_dataloader
+        self.vla_eval_dataloader = vla_eval_dataloader
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
         self.accelerator = accelerator
@@ -155,12 +167,21 @@ class VLATrainer(TrainerUtils):
         self.model = self.freeze_backbones(self.model, freeze_modules=freeze_modules)
         self.print_trainable_parameters(self.model)
 
-        self.model, self.optimizer, self.vla_train_dataloader = self.setup_distributed_training(
-            self.accelerator,
-            self.model,
-            self.optimizer,
-            self.vla_train_dataloader,
-        )
+        if self.vla_eval_dataloader is not None:
+            self.model, self.optimizer, self.vla_train_dataloader, self.vla_eval_dataloader = self.setup_distributed_training(
+                self.accelerator,
+                self.model,
+                self.optimizer,
+                self.vla_train_dataloader,
+                self.vla_eval_dataloader,
+            )
+        else:
+            self.model, self.optimizer, self.vla_train_dataloader = self.setup_distributed_training(
+                self.accelerator,
+                self.model,
+                self.optimizer,
+                self.vla_train_dataloader,
+            )
 
         if self._pending_full_state_resume:
             self._load_checkpoint(self._pending_full_state_resume)
@@ -334,6 +355,15 @@ class VLATrainer(TrainerUtils):
             logger.info(f"Step {self.completed_steps}, Loss: {metrics})")
 
     @staticmethod
+    def _total_grad_norm(parameters) -> float:
+        grads = [p.grad.detach() for p in parameters if p.grad is not None]
+        if not grads:
+            return 0.0
+        device = grads[0].device
+        norms = torch.stack([torch.linalg.vector_norm(g.to(device), 2) for g in grads])
+        return float(torch.linalg.vector_norm(norms, 2).item())
+
+    @staticmethod
     def _append_rl_games_eval_metrics(step_metrics: Dict[str, float], eval_result, stage: str) -> Dict[str, float]:
         aggregate = eval_result.aggregate
         prefix = f"rl_games_eval/{stage}"
@@ -399,7 +429,7 @@ class VLATrainer(TrainerUtils):
                 )
 
             if self.completed_steps % self.config.trainer.eval_interval == 0:
-                step_metrics = self.eval_action_model(step_metrics)
+                step_metrics = self.eval_action_loss(step_metrics)
             if self._rl_games_eval_runner is not None:
                 eval_every = self._rl_games_eval_runner.interval_steps(default=self.config.trainer.eval_interval)
                 if eval_every > 0 and self.completed_steps % eval_every == 0:
@@ -427,25 +457,39 @@ class VLATrainer(TrainerUtils):
 
         self._finalize_training()
 
-    def eval_action_model(self, step_metrics: dict = None) -> float:
-        """Run simple action-eval on current batch and attach score to metrics."""
-        examples = self._get_next_batch()
-        actions = [example["action"] for example in examples]
-        output_dict = self.accelerator.unwrap_model(self.model).predict_action(
-            examples=examples, use_ddim=True, num_ddim_steps=20
-        )
+    def eval_action_loss(self, step_metrics: dict = None) -> dict:
+        """Compute held-out action loss over the validation LeRobot dataset."""
+        step_metrics = step_metrics or {}
+        if self.vla_eval_dataloader is None:
+            return step_metrics
 
-        if self.accelerator.is_main_process:
-            normalized_actions = output_dict["normalized_actions"]
-            actions = np.array(actions)
-            num_pots = np.prod(actions.shape)
-            score = TrainerUtils.euclidean_distance(normalized_actions, actions)
-            step_metrics["mse_score"] = score / num_pots
+        was_training = self.model.training
+        self.model.eval()
+        losses = []
+        num_batches = int(getattr(self.config.trainer, "eval_num_batches", 20))
+        with torch.no_grad():
+            for batch_idx, batch_vla in enumerate(self.vla_eval_dataloader):
+                if batch_idx >= num_batches:
+                    break
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    output_dict = self.model.forward(batch_vla)
+                    action_loss = output_dict["action_loss"]
+                losses.append(self.accelerator.gather(action_loss.detach().reshape(1)).mean())
 
-        del examples
+        if was_training:
+            self.model.train()
+
+        if losses and self.accelerator.is_main_process:
+            eval_loss = torch.stack(losses).mean().item()
+            step_metrics["eval/loss"] = eval_loss
+
         if dist.is_initialized():
             dist.barrier()
         return step_metrics
+
+    def eval_action_model(self, step_metrics: dict = None) -> dict:
+        """Backward-compatible alias for the held-out action loss evaluator."""
+        return self.eval_action_loss(step_metrics)
 
     def _log_training_config(self):
         """Record training config."""
@@ -468,8 +512,11 @@ class VLATrainer(TrainerUtils):
 
             self.accelerator.backward(total_loss)
 
+            grad_norm = None
             if self.config.trainer.gradient_clipping is not None:
-                self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
+                grad_norm = self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
+            elif self.accelerator.sync_gradients:
+                grad_norm = self._total_grad_norm(self.model.parameters())
 
             self.optimizer.step()
             # Only step the LR scheduler when gradients are actually synced
@@ -480,9 +527,15 @@ class VLATrainer(TrainerUtils):
             if self.accelerator.sync_gradients:
                 self.lr_scheduler.step()
 
-        return {
-            "action_dit_loss": action_loss.item(),
+        action_loss_value = action_loss.item()
+        metrics = {
+            "train/loss": action_loss_value,
         }
+        if grad_norm is not None:
+            if isinstance(grad_norm, torch.Tensor):
+                grad_norm = grad_norm.detach().float().item()
+            metrics["train/grad_norm_pre_clip"] = float(grad_norm)
+        return metrics
 
     def _finalize_training(self):
         """Training end processing."""
@@ -531,13 +584,14 @@ def main(cfg) -> None:
 
     output_dir = setup_directories(cfg=cfg)
     vla = build_framework(cfg)
-    vla_train_dataloader = prepare_data(cfg=cfg, accelerator=accelerator, output_dir=output_dir)
+    vla_train_dataloader, vla_eval_dataloader = prepare_data(cfg=cfg, accelerator=accelerator, output_dir=output_dir)
     optimizer, lr_scheduler = setup_optimizer_and_scheduler(model=vla, cfg=cfg)
 
     trainer = VLATrainer(
         cfg=cfg,
         model=vla,
         vla_train_dataloader=vla_train_dataloader,
+        vla_eval_dataloader=vla_eval_dataloader,
         optimizer=optimizer,
         lr_scheduler=lr_scheduler,
         accelerator=accelerator,

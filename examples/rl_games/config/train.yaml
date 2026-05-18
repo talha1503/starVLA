@@ -43,6 +43,7 @@ datasets:
     include_state: false
     data_root_dir: playground/Datasets/rl_games
     data_mix: flappy_train
+    eval_data_mix: null
     action_type: discrete
     sequential_step_sampling: false
     per_device_batch_size: 4
@@ -55,6 +56,7 @@ trainer:
   num_warmup_steps: 100
   save_interval: 100
   eval_interval: 100
+  eval_num_batches: 20
   learning_rate:
     base: 2.0e-05
     qwen_vl_interface: 1.0e-05

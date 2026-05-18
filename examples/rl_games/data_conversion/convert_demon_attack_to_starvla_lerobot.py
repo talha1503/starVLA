@@ -190,97 +190,110 @@ def convert_dataset(
     max_episodes: int | None = None,
     force: bool = False,
 ) -> dict[str, Any]:
+    val_output_dir = output_dir.with_name(f"{output_dir.name}__val")
     if output_dir.exists() and force:
         shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if val_output_dir.exists() and force:
+        shutil.rmtree(val_output_dir)
 
-    ds_meta = _load_split(
-        dataset_name,
-        "train",
-        cache_dir=cache_dir,
-        columns=["episode_idx", "t", "action_id", "done", "reward", "prompt"],
-    )
-    if len(ds_meta) == 0:
-        raise ValueError(f"{dataset_name} has no train rows")
-
-    episode_indices: dict[int, list[tuple[int, int]]] = {}
-    prompt_to_task_index: dict[str, int] = {}
-    task_prompts: list[str] = []
-    latency_rows: list[dict[str, Any]] = []
-
-    for row_idx, row in enumerate(tqdm(ds_meta, desc="Indexing Demon Attack train rows")):
-        episode_idx = int(row["episode_idx"])
-        episode_indices.setdefault(episode_idx, []).append((int(row["t"]), row_idx))
-        prompt = str(row["prompt"])
-        if prompt not in prompt_to_task_index:
-            prompt_to_task_index[prompt] = len(task_prompts)
-            task_prompts.append(prompt)
-
-    original_episode_ids = sorted(episode_indices)
-    if max_episodes is not None:
-        original_episode_ids = original_episode_ids[:max_episodes]
-    for episode_id in original_episode_ids:
-        episode_indices[episode_id].sort(key=lambda item: item[0])
-
-    ds_full = _load_split(dataset_name, "train", cache_dir=cache_dir)
-    episode_lengths: list[int] = []
-
-    for new_episode_idx, original_episode_idx in enumerate(tqdm(original_episode_ids, desc="Writing LeRobot episodes")):
-        row_indices = [row_idx for _, row_idx in episode_indices[original_episode_idx]]
-        episode = ds_full.select(row_indices)
-        out_rows = []
-        for frame_idx, row in enumerate(episode):
-            prompt = str(row["prompt"])
-            if "latency" in ds_full.column_names and row.get("latency") is not None:
-                latency_rows.append({
-                    "latency": row["latency"],
-                    "latency_ms": row.get("latency_ms"),
-                    "prompt": prompt,
-                })
-            out_rows.append({
-                "image_bytes": _png_bytes(row["image"]),
-                "action": _one_hot(int(row["action_id"])),
-                "timestamp": float(frame_idx) / FPS,
-                "episode_index": new_episode_idx,
-                "frame_index": frame_idx,
-                "task_index": prompt_to_task_index[prompt],
-                "done": bool(row["done"]),
-                "reward": float(row["reward"]),
-                "action_id": int(row["action_id"]),
-            })
-        episode_lengths.append(len(out_rows))
-        episode_chunk = new_episode_idx // 1000
-        _write_episode(
-            output_dir / f"data/chunk-{episode_chunk:03d}/episode_{new_episode_idx:06d}.parquet",
-            out_rows,
+    def _convert_split(split: str, split_output_dir: Path) -> dict[str, Any]:
+        split_output_dir.mkdir(parents=True, exist_ok=True)
+        ds_meta = _load_split(
+            dataset_name,
+            split,
+            cache_dir=cache_dir,
+            columns=["episode_idx", "t", "action_id", "done", "reward", "prompt"],
         )
+        if len(ds_meta) == 0:
+            raise ValueError(f"{dataset_name} has no {split} rows")
 
-    _write_metadata(output_dir, episode_lengths=episode_lengths, task_prompts=task_prompts)
+        episode_indices: dict[int, list[tuple[int, int]]] = {}
+        prompt_to_task_index: dict[str, int] = {}
+        task_prompts: list[str] = []
+        latency_rows: list[dict[str, Any]] = []
 
-    if latency_rows:
-        try:
-            latency_prompt_map = build_latency_prompt_map(latency_rows)
-            (output_dir / "latency_prompt_map.json").write_text(
-                json.dumps(latency_prompt_map, indent=2),
-                encoding="utf-8",
+        for row_idx, row in enumerate(tqdm(ds_meta, desc=f"Indexing Demon Attack {split} rows")):
+            episode_idx = int(row["episode_idx"])
+            episode_indices.setdefault(episode_idx, []).append((int(row["t"]), row_idx))
+            prompt = str(row["prompt"])
+            if prompt not in prompt_to_task_index:
+                prompt_to_task_index[prompt] = len(task_prompts)
+                task_prompts.append(prompt)
+
+        original_episode_ids = sorted(episode_indices)
+        if max_episodes is not None:
+            original_episode_ids = original_episode_ids[:max_episodes]
+        for episode_id in original_episode_ids:
+            episode_indices[episode_id].sort(key=lambda item: item[0])
+
+        ds_full = _load_split(dataset_name, split, cache_dir=cache_dir)
+        episode_lengths: list[int] = []
+
+        for new_episode_idx, original_episode_idx in enumerate(tqdm(original_episode_ids, desc=f"Writing Demon Attack {split} LeRobot episodes")):
+            row_indices = [row_idx for _, row_idx in episode_indices[original_episode_idx]]
+            episode = ds_full.select(row_indices)
+            out_rows = []
+            for frame_idx, row in enumerate(episode):
+                prompt = str(row["prompt"])
+                if "latency" in ds_full.column_names and row.get("latency") is not None:
+                    latency_rows.append({
+                        "latency": row["latency"],
+                        "latency_ms": row.get("latency_ms"),
+                        "prompt": prompt,
+                    })
+                out_rows.append({
+                    "image_bytes": _png_bytes(row["image"]),
+                    "action": _one_hot(int(row["action_id"])),
+                    "timestamp": float(frame_idx) / FPS,
+                    "episode_index": new_episode_idx,
+                    "frame_index": frame_idx,
+                    "task_index": prompt_to_task_index[prompt],
+                    "done": bool(row["done"]),
+                    "reward": float(row["reward"]),
+                    "action_id": int(row["action_id"]),
+                })
+            episode_lengths.append(len(out_rows))
+            episode_chunk = new_episode_idx // 1000
+            _write_episode(
+                split_output_dir / f"data/chunk-{episode_chunk:03d}/episode_{new_episode_idx:06d}.parquet",
+                out_rows,
             )
-        except ValueError:
-            # Non-latency or malformed latency columns should not block single-latency training.
-            pass
 
-    manifest = {
-        "dataset_name": output_dir.name,
-        "source": dataset_name,
-        "format": "starvla_lerobot_v2_image_parquet",
-        "action_labels": ACTION_LABELS,
-        "action_dim": ACTION_DIM,
-        "state_dim": STATE_DIM,
-        "episodes": len(episode_lengths),
-        "frames": int(sum(episode_lengths)),
-        "task_prompts": task_prompts,
-    }
-    (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    return manifest
+        _write_metadata(split_output_dir, episode_lengths=episode_lengths, task_prompts=task_prompts)
+
+        if latency_rows:
+            try:
+                latency_prompt_map = build_latency_prompt_map(latency_rows)
+                (split_output_dir / "latency_prompt_map.json").write_text(
+                    json.dumps(latency_prompt_map, indent=2),
+                    encoding="utf-8",
+                )
+            except ValueError:
+                # Non-latency or malformed latency columns should not block single-latency training.
+                pass
+
+        manifest = {
+            "dataset_name": split_output_dir.name,
+            "split": split,
+            "source": dataset_name,
+            "format": "starvla_lerobot_v2_image_parquet",
+            "action_labels": ACTION_LABELS,
+            "action_dim": ACTION_DIM,
+            "state_dim": STATE_DIM,
+            "episodes": len(episode_lengths),
+            "frames": int(sum(episode_lengths)),
+            "task_prompts": task_prompts,
+        }
+        (split_output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return manifest
+
+    train_manifest = _convert_split("train", output_dir)
+    val_manifest = _convert_split("validation", val_output_dir)
+    train_manifest["validation_dataset_name"] = val_output_dir.name
+    train_manifest["validation_episodes"] = val_manifest["episodes"]
+    train_manifest["validation_frames"] = val_manifest["frames"]
+    (output_dir / "manifest.json").write_text(json.dumps(train_manifest, indent=2), encoding="utf-8")
+    return train_manifest
 
 
 def main() -> int:

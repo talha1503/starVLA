@@ -1,5 +1,6 @@
 import json
 import os
+import copy
 from accelerate.logging import get_logger
 import numpy as np
 from torch.utils.data import DataLoader
@@ -33,13 +34,22 @@ def save_dataset_statistics(dataset_statistics, run_dir):
 
 
 
-def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here only is get dataset, we need mv dataloader to here
+def build_dataloader(
+    cfg,
+    dataset_py="lerobot_datasets_oxe",
+    *,
+    data_mix: str | None = None,
+    mode: str = "train",
+    save_statistics_filename: str | None = "dataset_statistics.json",
+): # TODO now here only is get dataset, we need mv dataloader to here
 
     if dataset_py == "lerobot_datasets":
         from starVLA.dataloader.lerobot_datasets import get_vla_dataset, collate_fn
-        vla_dataset_cfg = cfg.datasets.vla_data
+        vla_dataset_cfg = copy.deepcopy(cfg.datasets.vla_data)
+        if data_mix:
+            vla_dataset_cfg.data_mix = data_mix
 
-        vla_dataset = get_vla_dataset(data_cfg=vla_dataset_cfg)
+        vla_dataset = get_vla_dataset(data_cfg=vla_dataset_cfg, mode=mode)
         
         vla_train_dataloader = DataLoader(
             vla_dataset,
@@ -48,10 +58,10 @@ def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here on
             num_workers=4,
             # shuffle=True
         )        
-        if not dist.is_initialized() or dist.get_rank() == 0: 
+        if save_statistics_filename and (not dist.is_initialized() or dist.get_rank() == 0): 
             
             output_dir = Path(cfg.output_dir)
-            vla_dataset.save_dataset_statistics(output_dir / "dataset_statistics.json")
+            vla_dataset.save_dataset_statistics(output_dir / save_statistics_filename)
         return vla_train_dataloader
     elif dataset_py == "vlm_datasets":
         vlm_data_module = make_vlm_dataloader(cfg)

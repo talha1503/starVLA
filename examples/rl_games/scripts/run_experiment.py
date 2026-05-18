@@ -291,6 +291,7 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         "trainer.num_warmup_steps",
         "trainer.save_interval",
         "trainer.eval_interval",
+        "trainer.eval_num_batches",
         "trainer.logging_frequency",
         "trainer.gradient_accumulation_steps",
         "trainer.distributed_backend",
@@ -337,6 +338,8 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
     cmd.append(f"datasets.vla_data.data_root_dir={data_root}")
     if setup.get("data_mix"):
         cmd.append(f"datasets.vla_data.data_mix={setup['data_mix']}")
+    if setup.get("eval_data_mix"):
+        cmd.append(f"datasets.vla_data.eval_data_mix={setup['eval_data_mix']}")
     if setup.get("base_model_dir"):
         cmd.append(f"framework.qwenvl.base_vlm={setup['base_model_dir']}")
 
