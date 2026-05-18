@@ -173,6 +173,7 @@ class _TaskEvaluator:
             return gym.make("FlappyBird-v0")
 
         if self.task == "demon_attack":
+            import ale_py  # noqa: F401
             import gymnasium as gym
 
             attempts = [
