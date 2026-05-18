@@ -233,6 +233,14 @@ def _dataset_setup_values(cfg: dict[str, Any]) -> tuple[str, int | None]:
     return converted_name, max_episodes
 
 
+def _optional_int_list(value: Any) -> list[int] | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        value = [item.strip() for item in value.split(",") if item.strip()]
+    return [int(item) for item in value]
+
+
 def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str) -> SimpleNamespace:
     run_id = str(_get(cfg, "run_id"))
     checkpoint_dir = str(Path(run_root_dir) / run_id / "checkpoints")
@@ -254,6 +262,7 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         setup_force=str(_as_bool(_get(cfg, "dataset.setup_force", False))).lower(),
         verify_rows=int(_get(cfg, "dataset.verify_rows", 200)),
         max_episodes=max_episodes,
+        latency_filter=_optional_int_list(_get(cfg, "dataset.latency_filter")),
         base_model_dir=_resolve_path(_get(cfg, "paths.base_model_dir"), workspace_dir),
         base_model_repo_id=_get(cfg, "base_model.repo_id"),
         checkpoint_local_dir=checkpoint_dir,

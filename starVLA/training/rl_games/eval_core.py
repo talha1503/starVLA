@@ -163,7 +163,7 @@ class _TaskEvaluator:
         self.env_eval_cfg = cfg.rl_games.env_eval
         self.default_prompt = str(getattr(self.env_eval_cfg, "task_description", "") or "")
         self.image_size = int(getattr(self.env_eval_cfg, "image_size", 84))
-        self.frameskip = int(getattr(self.env_eval_cfg, "frameskip", 1))
+        self.frameskip = max(1, int(getattr(self.env_eval_cfg, "frameskip", 1)))
         self.state_dim = int(getattr(cfg.framework.action_model, "state_dim", 1) or 1)
 
     def _make_env(self):
@@ -184,7 +184,11 @@ class _TaskEvaluator:
             last_exc = None
             for env_id in attempts:
                 try:
-                    return gym.make(env_id)
+                    return gym.make(
+                        env_id,
+                        frameskip=self.frameskip,
+                        repeat_action_probability=0.0,
+                    )
                 except Exception as exc:
                     last_exc = exc
             raise RuntimeError(f"Failed to create DemonAttack env: {last_exc}")
@@ -202,12 +206,20 @@ class _TaskEvaluator:
             last_exc = None
             for env_id, kwargs in attempts:
                 try:
-                    return gym.make(env_id, render_mode="rgb_array", **kwargs)
+                    return gym.make(
+                        env_id,
+                        render_mode="rgb_array",
+                        frame_skip=self.frameskip,
+                        **kwargs,
+                    )
                 except Exception as exc:
                     last_exc = exc
             raise RuntimeError(f"Failed to create Deadly Corridor env: {last_exc}")
 
         raise ValueError(f"Unsupported task: {self.task}")
+
+    def _uses_native_frameskip(self) -> bool:
+        return self.task in {"demon_attack", "deadly_corridor"}
 
     def _decode_action(self, raw_action: np.ndarray, runtime_button_order: Optional[List[str]] = None):
         if self.task == "flappy":
@@ -277,16 +289,17 @@ class _TaskEvaluator:
                 effective_action = queue.schedule_and_get(decoded)
                 action_hist[str(effective_action)] += 1
 
-                frame_reward = 0.0
+                step_reward = 0.0
                 terminated = False
                 truncated = False
-                for _ in range(max(1, self.frameskip)):
+                repeat_count = 1 if self._uses_native_frameskip() else self.frameskip
+                for _ in range(repeat_count):
                     obs, reward, terminated, truncated, _ = env.step(effective_action)
-                    frame_reward += float(reward)
+                    step_reward += float(reward)
                     if terminated or truncated:
                         break
 
-                total_reward += frame_reward
+                total_reward += step_reward
                 steps += 1
                 done = terminated or truncated
 

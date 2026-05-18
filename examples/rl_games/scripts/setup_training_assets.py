@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import inspect
 import json
 import os
 import re
@@ -190,15 +191,22 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
     mixed_latency = args.mode == "mixed_latency" or str(args.latency_mode or "").lower() == "mixed"
     prompt_map = dataset_dir / "latency_prompt_map.json"
 
-    def _manifest_source_matches() -> bool:
+    def _manifest_matches() -> bool:
         manifest_path = dataset_dir / "manifest.json"
-        if not manifest_path.exists() or not args.source_dataset_hf:
+        if not manifest_path.exists():
             return True
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except Exception:
             return False
-        return str(manifest.get("source", "")) == str(args.source_dataset_hf)
+        if args.source_dataset_hf and str(manifest.get("source", "")) != str(args.source_dataset_hf):
+            return False
+        expected_latency_filter = getattr(args, "latency_filter", None)
+        if expected_latency_filter is not None:
+            manifest_latency_filter = manifest.get("latency_filter")
+            if manifest_latency_filter != [int(value) for value in expected_latency_filter]:
+                return False
+        return True
 
     def _mixed_prompt_map_ready() -> bool:
         if not mixed_latency:
@@ -215,7 +223,7 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
         force
         or not _dataset_ready(dataset_dir)
         or not _dataset_ready(eval_dataset_dir)
-        or not _manifest_source_matches()
+        or not _manifest_matches()
         or not _mixed_prompt_map_ready()
     )
     converted = False
@@ -231,14 +239,15 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
             strict=True,
             allow_mixed_latency_prompts=mixed_latency,
         )
-        convert_dataset(
-            args.source_dataset_hf,
-            dataset_dir,
-            cache_dir=args.dataset_cache_dir,
-            max_episodes=args.max_episodes,
-            force=rebuild,
-            require_latency_prompt_map=mixed_latency,
-        )
+        convert_kwargs = {
+            "cache_dir": args.dataset_cache_dir,
+            "max_episodes": args.max_episodes,
+            "force": rebuild,
+            "require_latency_prompt_map": mixed_latency,
+        }
+        if "latency_filter" in inspect.signature(convert_dataset).parameters:
+            convert_kwargs["latency_filter"] = getattr(args, "latency_filter", None)
+        convert_dataset(args.source_dataset_hf, dataset_dir, **convert_kwargs)
         converted = True
         if mixed_latency and not _mixed_prompt_map_ready():
             raise ValueError(
@@ -286,6 +295,17 @@ def _ensure_demon_attack_dataset(args) -> dict[str, Any]:
     )
 
 
+def _ensure_deadly_corridor_dataset(args) -> dict[str, Any]:
+    from examples.rl_games.data_conversion.convert_deadly_corridor_to_starvla_lerobot import convert_dataset
+    from examples.rl_games.data_conversion.verify_deadly_corridor_dataset import verify_dataset
+
+    return _ensure_rl_games_lerobot_dataset(
+        args,
+        convert_dataset=convert_dataset,
+        verify_dataset=verify_dataset,
+    )
+
+
 def setup_assets(args) -> dict[str, Any]:
     result: dict[str, Any] = {
         "model": args.model,
@@ -297,6 +317,8 @@ def setup_assets(args) -> dict[str, Any]:
         result.update(_ensure_flappy_dataset(args))
     elif args.model == "openvla" and args.env == "demon_attack":
         result.update(_ensure_demon_attack_dataset(args))
+    elif args.model == "openvla" and args.env == "deadly_corridor":
+        result.update(_ensure_deadly_corridor_dataset(args))
     else:
         data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
         result.update({
@@ -409,6 +431,7 @@ def main() -> int:
     parser.add_argument("--setup-force", default="false")
     parser.add_argument("--verify-rows", type=int, default=200)
     parser.add_argument("--max-episodes", type=int, default=None)
+    parser.add_argument("--latency-filter", default=None)
     parser.add_argument("--base-model-dir", required=True)
     parser.add_argument("--base-model-repo-id", default=None)
     parser.add_argument("--checkpoint-local-dir", required=True)
@@ -422,6 +445,10 @@ def main() -> int:
         args.dataset_cache_dir = None
     if args.base_model_repo_id == "":
         args.base_model_repo_id = None
+    if isinstance(args.latency_filter, str) and args.latency_filter:
+        args.latency_filter = [int(item) for item in args.latency_filter.split(",") if item.strip()]
+    elif args.latency_filter == "":
+        args.latency_filter = None
 
     with contextlib.redirect_stdout(sys.stderr):
         result = setup_assets(args)

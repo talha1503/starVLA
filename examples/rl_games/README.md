@@ -59,11 +59,15 @@ The current training flow is config-driven. Pick one YAML file from:
 examples/rl_games/experiments/
 ```
 
-Main OpenVLA Flappy configs:
+Main OpenVLA configs:
 
 ```text
 examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml
 examples/rl_games/experiments/openvla_flappy_single.yaml
+examples/rl_games/experiments/openvla_demon_attack_mixed_latency.yaml
+examples/rl_games/experiments/openvla_demon_attack_single.yaml
+examples/rl_games/experiments/openvla_deadly_corridor_mixed_latency.yaml
+examples/rl_games/experiments/openvla_deadly_corridor_single.yaml
 ```
 
 Edit `workspace_dir`, `auth`, `wandb`, `dataset`, `base_model`, `checkpoint`, `launch`, `train_data`, and `trainer` in the YAML. Relative asset paths are resolved under `workspace_dir`.
@@ -140,6 +144,10 @@ The converter also writes a held-out validation LeRobot dataset next to the
 training dataset, for example `flappy_mixed_latency_train__val` or
 `flappy_mixed_latency_train__debug_5ep__val`. The trainer logs `train/loss`,
 `eval/loss`, and `train/grad_norm_pre_clip`.
+
+Deadly Corridor uses the mixed-latency HF dataset for both modes. The single
+config filters it to `dataset.latency_filter: [0]`, while the mixed config
+keeps all latencies and requires `latency_prompt_map.json`.
 
 Checkpoint fields have separate meanings: `checkpoint.hf_repo_id` is the resume/download source, while `checkpoint.sync_repo_id` is the upload destination when `checkpoint.sync_enabled: true`. The trainer saves full Accelerate training-state directories (`steps_<N>_state/`) for exact resume, including optimizer/scheduler state, and also saves lightweight model files for convenience. A missing `sync_repo_id` repo is created during sync if Hugging Face auth is available. `checkpoint.hf_keep_last_n: 0` keeps all uploaded HF checkpoints.
 

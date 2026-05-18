@@ -45,14 +45,20 @@ class DemonAttackDataConfig(FlappyDataConfig):
     pass
 
 
+class DeadlyCorridorDataConfig(FlappyDataConfig):
+    pass
+
+
 ROBOT_TYPE_CONFIG_MAP = {
     "rl_games_flappy": FlappyDataConfig(),
     "rl_games_demon_attack": DemonAttackDataConfig(),
+    "rl_games_deadly_corridor": DeadlyCorridorDataConfig(),
 }
 
 ROBOT_TYPE_TO_EMBODIMENT_TAG = {
     "rl_games_flappy": EmbodimentTag.NEW_EMBODIMENT,
     "rl_games_demon_attack": EmbodimentTag.NEW_EMBODIMENT,
+    "rl_games_deadly_corridor": EmbodimentTag.NEW_EMBODIMENT,
 }
 
 DATASET_NAMED_MIXTURES = {
@@ -60,4 +66,8 @@ DATASET_NAMED_MIXTURES = {
     "flappy_mixed_latency_train": [("flappy_mixed_latency_train", 1.0, "rl_games_flappy")],
     "demon_attack_train": [("demon_attack_train", 1.0, "rl_games_demon_attack")],
     "demon_attack_mixed_latency_train": [("demon_attack_mixed_latency_train", 1.0, "rl_games_demon_attack")],
+    "deadly_corridor_train": [("deadly_corridor_train", 1.0, "rl_games_deadly_corridor")],
+    "deadly_corridor_mixed_latency_train": [
+        ("deadly_corridor_mixed_latency_train", 1.0, "rl_games_deadly_corridor")
+    ],
 }
