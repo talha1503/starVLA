@@ -1623,6 +1623,8 @@ class LeRobotSingleDataset(Dataset):
                     return entry
                 if isinstance(entry, Image.Image):
                     return np.array(entry)
+                if isinstance(entry, (bytes, bytearray, memoryview)):
+                    return np.array(Image.open(io.BytesIO(bytes(entry))).convert("RGB"))
                 if isinstance(entry, dict):
                     img_bytes = entry.get("bytes", None)
                     img_path = entry.get("path", None)

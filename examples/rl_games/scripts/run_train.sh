@@ -241,6 +241,24 @@ if [[ -n "$MICRO_BATCH_SIZE" ]]; then
   BATCH_SIZE="$MICRO_BATCH_SIZE"
 fi
 
+if [[ "$CONVERTED_DATASET_NAME" == "flappy_train" ]]; then
+  if [[ "$ENV_NAME" == "demon_attack" ]]; then
+    if [[ "$MODE" == "mixed_latency" ]]; then
+      CONVERTED_DATASET_NAME="demon_attack_mixed_latency_train"
+    else
+      CONVERTED_DATASET_NAME="demon_attack_train"
+    fi
+  elif [[ "$ENV_NAME" == "deadly_corridor" ]]; then
+    if [[ "$MODE" == "mixed_latency" ]]; then
+      CONVERTED_DATASET_NAME="deadly_corridor_mixed_latency_train"
+    else
+      CONVERTED_DATASET_NAME="deadly_corridor_train"
+    fi
+  elif [[ "$ENV_NAME" == "flappy" && "$MODE" == "mixed_latency" ]]; then
+    CONVERTED_DATASET_NAME="flappy_mixed_latency_train"
+  fi
+fi
+
 DIST_BACKEND_LOWER="$(echo "$DIST_BACKEND" | tr '[:upper:]' '[:lower:]')"
 if [[ "$DIST_BACKEND_LOWER" == "none" ]]; then
   USE_ACCELERATE="false"
