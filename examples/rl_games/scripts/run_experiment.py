@@ -162,6 +162,8 @@ def _hydra_value(value: Any) -> str:
         return str(value).lower()
     if isinstance(value, list):
         return "[" + ",".join(_hydra_value(item) for item in value) + "]"
+    if isinstance(value, str) and any(ch.isspace() or ch in {",", ":", "{", "}", "[", "]"} for ch in value):
+        return shlex.quote(value)
     return str(value)
 
 
@@ -353,7 +355,7 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
     }
     for key, value in optional.items():
         if value not in (None, ""):
-            cmd.append(f"{key}={value}")
+            cmd.append(f"{key}={_hydra_value(value)}")
 
     latencies = _latencies_expr(_get(cfg, "rl_games.latencies"))
     if latencies:
