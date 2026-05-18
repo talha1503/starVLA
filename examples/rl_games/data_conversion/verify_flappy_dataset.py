@@ -19,8 +19,14 @@ EXPECTED_PROMPT = (
 def _load_train_split(dataset_name: str, cache_dir: str | None, columns: list[str] | None = None):
     from datasets import load_dataset
 
+    def _filter_internal_split(ds):
+        if "split" in ds.column_names:
+            return ds.filter(lambda row: str(row["split"]).lower() == "train")
+        return ds
+
     try:
-        return load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=columns)
+        ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=columns)
+        return _filter_internal_split(ds)
     except (ValueError, KeyError):
         load_columns = list(columns or [])
         if "split" not in load_columns:
@@ -32,6 +38,8 @@ def _load_train_split(dataset_name: str, cache_dir: str | None, columns: list[st
 def build_latency_prompt_map(rows: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     by_latency: dict[int, dict[str, Any]] = {}
     for row in rows:
+        if "split" in row and str(row["split"]).lower() != "train":
+            continue
         latency = int(row["latency"])
         prompt = str(row["prompt"])
         latency_ms = row.get("latency_ms")

@@ -38,12 +38,20 @@ FPS = 35
 
 
 def _load_split(dataset_name: str, split: str, cache_dir: str | None = None, columns: list[str] | None = None):
+    split_values = {"train"} if split == "train" else {"validation", "val", "test"}
+
+    def _filter_internal_split(ds):
+        if "split" in ds.column_names:
+            return ds.filter(lambda row: str(row["split"]).lower() in split_values)
+        return ds
+
     if split == "train":
         try:
-            return load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=columns)
+            ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=columns)
+            return _filter_internal_split(ds)
         except (ValueError, KeyError):
             if columns is not None:
-                return load_dataset(dataset_name, split="train", cache_dir=cache_dir)
+                return _filter_internal_split(load_dataset(dataset_name, split="train", cache_dir=cache_dir))
             pass
     else:
         for candidate in ("validation", "val", "test"):
@@ -56,13 +64,12 @@ def _load_split(dataset_name: str, split: str, cache_dir: str | None = None, col
                     try:
                         ds = load_dataset(dataset_name, split=candidate, cache_dir=cache_dir)
                         if len(ds) > 0:
-                            return ds
+                            return _filter_internal_split(ds)
                     except (ValueError, KeyError):
                         continue
                 else:
                     continue
 
-    split_values = {"train"} if split == "train" else {"validation", "val", "test"}
     load_columns = list(columns or [])
     if "split" not in load_columns:
         load_columns.append("split")
