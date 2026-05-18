@@ -40,6 +40,8 @@ def build_latency_prompt_map(rows: Iterable[dict[str, Any]]) -> dict[str, dict[s
     for row in rows:
         if "split" in row and str(row["split"]).lower() != "train":
             continue
+        if "latency" not in row or "prompt" not in row:
+            raise KeyError(f"row is missing latency/prompt columns; available columns: {sorted(row.keys())}")
         latency = int(row["latency"])
         prompt = str(row["prompt"])
         latency_ms = row.get("latency_ms")

@@ -26,6 +26,23 @@ EXPECTED_ACTIONS = [
 REQUIRED_PROMPT_PARTS = ["Deadly Corridor", *EXPECTED_ACTIONS]
 
 
+def _load_first_available(
+    dataset_name: str,
+    cache_dir: str | None,
+    column_options: tuple[list[str] | None, ...],
+):
+    last_exc: Exception | None = None
+    for columns in column_options:
+        try:
+            return _load_train_split(dataset_name, cache_dir, columns=columns)
+        except Exception as exc:
+            last_exc = exc
+            continue
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("no column options provided")
+
+
 def _action_vector(row: dict[str, Any]) -> list[float]:
     raw_action = row.get("action", row.get("actions"))
     if raw_action is not None:
@@ -52,22 +69,19 @@ def verify_dataset(
     allow_mixed_latency_prompts: bool = False,
 ) -> bool:
     try:
-        for columns in (
-            ["prompt", "action", "action_text", "latency", "latency_ms"],
-            ["prompt", "actions", "action_text", "latency", "latency_ms"],
-            ["prompt", "action", "action_text"],
-            ["prompt", "actions", "action_text"],
-            ["prompt", "action"],
-            ["prompt", "actions"],
-            ["prompt", "action_text"],
-            None,
-        ):
-            try:
-                ds = _load_train_split(dataset_name, cache_dir, columns=columns)
-                break
-            except Exception:
-                if columns is None:
-                    raise
+        ds = _load_first_available(
+            dataset_name,
+            cache_dir,
+            (
+                ["prompt", "action_text", "latency", "latency_ms"],
+                ["prompt", "action", "latency", "latency_ms"],
+                ["prompt", "actions", "latency", "latency_ms"],
+                ["prompt", "action_text"],
+                ["prompt", "action"],
+                ["prompt", "actions"],
+                None,
+            ),
+        )
     except Exception as exc:
         print(f"ERROR: could not load dataset {dataset_name}: {exc}")
         if strict:
@@ -86,7 +100,18 @@ def verify_dataset(
     prompts = {str(ds[i]["prompt"]) for i in range(sample_n)}
     if allow_mixed_latency_prompts:
         try:
-            mapping = build_latency_prompt_map(ds)
+            prompt_ds = _load_first_available(
+                dataset_name,
+                cache_dir,
+                (
+                    ["split", "prompt", "latency", "latency_ms"],
+                    ["prompt", "latency", "latency_ms"],
+                    None,
+                ),
+            )
+            mapping = build_latency_prompt_map(prompt_ds)
+            if len(mapping) <= 1:
+                raise ValueError(f"expected more than one latency prompt, got {len(mapping)}")
             print("Latency prompt map:")
             print(json.dumps(mapping, indent=2))
         except Exception as exc:
