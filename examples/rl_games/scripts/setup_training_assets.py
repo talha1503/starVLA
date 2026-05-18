@@ -313,11 +313,11 @@ def setup_assets(args) -> dict[str, Any]:
         "mode": args.mode,
     }
 
-    if args.model == "openvla" and args.env == "flappy":
+    if args.model in {"openvla", "pi0"} and args.env == "flappy":
         result.update(_ensure_flappy_dataset(args))
-    elif args.model == "openvla" and args.env == "demon_attack":
+    elif args.model in {"openvla", "pi0"} and args.env == "demon_attack":
         result.update(_ensure_demon_attack_dataset(args))
-    elif args.model == "openvla" and args.env == "deadly_corridor":
+    elif args.model in {"openvla", "pi0"} and args.env == "deadly_corridor":
         result.update(_ensure_deadly_corridor_dataset(args))
     else:
         data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()

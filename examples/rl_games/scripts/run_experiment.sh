@@ -137,7 +137,11 @@ if [[ "$CONDA_ENABLED" == "true" ]]; then
   source "${CONDA_BASE}/etc/profile.d/conda.sh"
   if ! conda env list | awk '{print $1}' | grep -qx "$CONDA_ENV_NAME"; then
     echo "Conda env '${CONDA_ENV_NAME}' does not exist." >&2
-    echo "Install it first with: bash examples/rl_games/install/install_stack.sh openvla flappy" >&2
+    INSTALL_MODEL="${CONDA_ENV_NAME#starvla_rl_games_}"
+    if [[ -z "$INSTALL_MODEL" || "$INSTALL_MODEL" == "$CONDA_ENV_NAME" ]]; then
+      INSTALL_MODEL="openvla"
+    fi
+    echo "Install it first with: bash examples/rl_games/install/install_stack.sh ${INSTALL_MODEL} flappy" >&2
     exit 1
   fi
   conda activate "$CONDA_ENV_NAME"

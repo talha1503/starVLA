@@ -331,7 +331,38 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         else:
             _append_override(cmd, cfg, override)
 
+    framework_overrides = [
+        "framework.name",
+        "framework.qwenvl.attn_implementation",
+        "framework.qwenvl.enable_gradient_checkpointing",
+        "framework.action_model.action_model_type",
+        "framework.action_model.action_dim",
+        "framework.action_model.action_env_dim",
+        "framework.action_model.state_dim",
+        "framework.action_model.action_horizon",
+        "framework.action_model.future_action_window_size",
+        "framework.action_model.past_action_window_size",
+        "framework.action_model.repeated_diffusion_steps",
+        "framework.action_model.num_inference_timesteps",
+        "framework.action_model.num_target_vision_tokens",
+        "framework.action_model.add_pos_embed",
+        "framework.action_model.max_seq_len",
+        "framework.action_model.noise_beta_alpha",
+        "framework.action_model.noise_beta_beta",
+        "framework.action_model.noise_s",
+        "framework.action_model.num_timestep_buckets",
+        "framework.action_model.diffusion_model_cfg.dropout",
+        "framework.action_model.diffusion_model_cfg.final_dropout",
+        "framework.action_model.diffusion_model_cfg.interleave_self_attention",
+        "framework.action_model.diffusion_model_cfg.norm_type",
+        "framework.action_model.diffusion_model_cfg.positional_embeddings",
+        "framework.action_model.diffusion_model_cfg.attention_head_dim",
+    ]
+    for override in framework_overrides:
+        _append_override(cmd, cfg, override)
+
     data_overrides = [
+        ("train_data.include_state", "datasets.vla_data.include_state"),
         ("train_data.action_type", "datasets.vla_data.action_type"),
         ("train_data.sequential_step_sampling", "datasets.vla_data.sequential_step_sampling"),
         ("train_data.load_all_data_for_training", "datasets.vla_data.load_all_data_for_training"),
