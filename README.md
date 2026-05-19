@@ -181,6 +181,12 @@ For pi-0 Deadly Corridor:
 bash examples/rl_games/install/install_stack.sh pi0 deadly_corridor
 ```
 
+For GR00T Flappy:
+
+```bash
+bash examples/rl_games/install/install_stack.sh gr00t flappy
+```
+
 ### 2. Choose an experiment config
 
 Configs live here:
@@ -205,6 +211,13 @@ examples/rl_games/experiments/pi0_demon_attack_mixed_latency.yaml
 examples/rl_games/experiments/pi0_demon_attack_single.yaml
 examples/rl_games/experiments/pi0_flappy_mixed_latency.yaml
 examples/rl_games/experiments/pi0_flappy_single.yaml
+```
+
+Current GR00T Flappy configs:
+
+```text
+examples/rl_games/experiments/gr00t_flappy_mixed_latency.yaml
+examples/rl_games/experiments/gr00t_flappy_single.yaml
 ```
 
 Edit the YAML before a real run. The most important field is `workspace_dir`:
@@ -288,6 +301,24 @@ pi-0 single-latency Flappy:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/pi0_flappy_single.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+GR00T mixed-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/gr00t_flappy_mixed_latency.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+GR00T single-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/gr00t_flappy_single.yaml \
   workspace_dir=WORKSPACE_DIR \
   wandb.entity=WANDB_ENTITY
 ```

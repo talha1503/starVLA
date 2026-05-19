@@ -35,6 +35,7 @@ Layered installer (manual control):
 ```bash
 bash examples/rl_games/install/install_stack.sh openvla flappy
 bash examples/rl_games/install/install_stack.sh pi0 demon_attack
+bash examples/rl_games/install/install_stack.sh gr00t flappy
 bash examples/rl_games/install/install_stack.sh gr00t deadly_corridor
 ```
 
@@ -70,6 +71,13 @@ examples/rl_games/experiments/openvla_deadly_corridor_mixed_latency.yaml
 examples/rl_games/experiments/openvla_deadly_corridor_single.yaml
 ```
 
+Main GR00T Flappy configs:
+
+```text
+examples/rl_games/experiments/gr00t_flappy_mixed_latency.yaml
+examples/rl_games/experiments/gr00t_flappy_single.yaml
+```
+
 Edit `workspace_dir`, `auth`, `wandb`, `dataset`, `base_model`, `checkpoint`, `launch`, `train_data`, and `trainer` in the YAML. Relative asset paths are resolved under `workspace_dir`.
 
 Authentication tokens are read from `HF_TOKEN` and `WANDB_API_KEY` by default:
@@ -95,6 +103,24 @@ Single-latency Flappy:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/openvla_flappy_single.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+GR00T mixed-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/gr00t_flappy_mixed_latency.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+GR00T single-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/gr00t_flappy_single.yaml \
   workspace_dir=WORKSPACE_DIR \
   wandb.entity=WANDB_ENTITY
 ```

@@ -6,10 +6,37 @@ rl_games:
 framework:
   name: QwenGR00T
   action_model:
+    action_model_type: DiT-B
     action_dim: 32
     action_env_dim: 2
+    state_dim: 7
+    action_horizon: 8
+    future_action_window_size: 7
+    past_action_window_size: 0
+    repeated_diffusion_steps: 8
+    num_inference_timesteps: 4
+    num_target_vision_tokens: 32
+    add_pos_embed: true
+    max_seq_len: 1024
+    hidden_size: 1024
+    action_hidden_dim: 1024
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+    num_timestep_buckets: 1000
+    diffusion_model_cfg:
+      cross_attention_dim: 2048
+      dropout: 0.2
+      final_dropout: true
+      interleave_self_attention: true
+      norm_type: ada_norm
+      num_layers: 16
+      output_dim: 1024
+      positional_embeddings: null
+      attention_head_dim: 64
 
 trainer:
   learning_rate:
     base: 2.0e-06
+    qwen_vl_interface: 2.0e-06
     action_model: 2.0e-06
