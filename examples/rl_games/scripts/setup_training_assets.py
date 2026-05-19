@@ -313,7 +313,7 @@ def setup_assets(args) -> dict[str, Any]:
         "mode": args.mode,
     }
 
-    if args.model in {"openvla", "pi0"} and args.env == "flappy":
+    if args.model in {"openvla", "pi0", "pi05"} and args.env == "flappy":
         result.update(_ensure_flappy_dataset(args))
     elif args.model in {"openvla", "pi0"} and args.env == "demon_attack":
         result.update(_ensure_demon_attack_dataset(args))
