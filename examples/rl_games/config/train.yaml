@@ -28,6 +28,13 @@ framework:
     base_vlm: ./playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
     attn_implementation: flash_attention_2
     enable_gradient_checkpointing: true
+    lora:
+      enabled: true
+      r: 32
+      alpha: 64
+      dropout: 0.05
+      target_modules: all-linear
+      bias: none
   action_model:
     action_model_type: MLP
     action_dim: 2

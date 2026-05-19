@@ -69,8 +69,9 @@ trainer:
   eval_interval: 100
   eval_num_batches: 20
   logging_frequency: 10
+  # global_batch_size = batch_size * gradient_accumulation_steps
   gradient_accumulation_steps: 1
-  batch_size: 4
+  batch_size: 32    # micro batch size
   learning_rate:
     base: 2.0e-05
     qwen_vl_interface: 1.0e-05
@@ -102,14 +103,14 @@ rl_games:
   env_eval_enabled: true
 
   mid_train_eval:
-    enabled: true
+    enabled: false
     interval_steps: 100
     latencies: [0]
     num_episodes: 5
     max_steps_per_episode: 2000
 
   post_train_eval:
-    enabled: true
+    enabled: false
     latencies: [0]
     num_episodes: 5
     max_steps_per_episode: 2000

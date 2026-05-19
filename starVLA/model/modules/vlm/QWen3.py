@@ -5,6 +5,7 @@
 from typing import Optional
 
 import torch
+import torch.nn as nn
 from starVLA.training.trainer_utils import initialize_overwatch
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -21,9 +22,6 @@ _ACTION_TOKEN_MIN = 151669  # how can we know this range? check how you add fast
 _ACTION_TOKEN_MAX = (
     153716  # here only for fast_tokenizer, see starVLA/model/modules/vlm/tools/add_qwen_special_tokens/README.md
 )
-
-
-import torch.nn as nn
 
 
 class _QWen3_VL_Interface(nn.Module):
@@ -71,6 +69,7 @@ class _QWen3_VL_Interface(nn.Module):
         )
         processor = AutoProcessor.from_pretrained(model_id)
         processor.tokenizer.padding_side = "left"
+        model.config.hidden_size = model.config.text_config.hidden_size
 
         if enable_grad_ckpt:
             try:
@@ -96,12 +95,25 @@ class _QWen3_VL_Interface(nn.Module):
             except Exception as e:
                 print(f"[QWen3] failed to enable gradient_checkpointing: {e}", flush=True)
 
+        lora_config = qwenvl_config.get("lora", {})
+        if bool(lora_config.get("enabled", False)):
+            from peft import LoraConfig, get_peft_model
+
+            model = get_peft_model(
+                model,
+                LoraConfig(
+                    r=int(lora_config.get("r", 16)),
+                    lora_alpha=int(lora_config.get("alpha", 32)),
+                    lora_dropout=float(lora_config.get("dropout", 0.05)),
+                    target_modules=lora_config.get("target_modules", "all-linear"),
+                    bias=lora_config.get("bias", "none"),
+                ),
+            )
+            model.print_trainable_parameters()
+
         self.model = model
         self.processor = processor
         self.config = config
-
-        # alin qwen3 with qwen2.5
-        self.model.config.hidden_size = self.model.config.text_config.hidden_size
 
         # only for fast base model
         if "-Action" in model_id:
@@ -141,6 +153,8 @@ class _QWen3_VL_Interface(nn.Module):
 
         def _wrapper_forward_last_hidden() -> torch.Tensor:
             lm_head = getattr(self.model, "lm_head", None)
+            if lm_head is None and hasattr(self.model, "get_base_model"):
+                lm_head = getattr(self.model.get_base_model(), "lm_head", None)
             captured = {}
             handle = None
             if lm_head is not None:
@@ -149,14 +163,13 @@ class _QWen3_VL_Interface(nn.Module):
 
                 handle = lm_head.register_forward_pre_hook(_capture_lm_head_input)
 
+            call_kwargs = dict(kwargs)
+            call_kwargs["output_attentions"] = False
+            call_kwargs["output_hidden_states"] = False
+            call_kwargs["return_dict"] = True
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 try:
-                    outputs = self.model(
-                        **kwargs,
-                        output_attentions=False,
-                        output_hidden_states=False,
-                        return_dict=True,
-                    )
+                    outputs = self.model(**call_kwargs)
                 finally:
                     if handle is not None:
                         handle.remove()
@@ -167,14 +180,16 @@ class _QWen3_VL_Interface(nn.Module):
             # Last-resort compatibility path for unusual model wrappers that do
             # not expose lm_head. This preserves correctness, but returns every
             # layer and therefore saves less memory.
+            fallback_kwargs = dict(kwargs)
+            fallback_kwargs["output_attentions"] = False
+            fallback_kwargs["output_hidden_states"] = True
+            fallback_kwargs["return_dict"] = True
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                outputs = self.model(
-                    **kwargs,
-                    output_attentions=False,
-                    output_hidden_states=True,
-                    return_dict=True,
-                )
+                outputs = self.model(**fallback_kwargs)
             return outputs.hidden_states[-1]
+
+        if hasattr(self.model, "peft_config"):
+            return _wrapper_forward_last_hidden()
 
         backbone = getattr(self.model, "model", None)
         if backbone is None:
