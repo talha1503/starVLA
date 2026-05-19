@@ -77,6 +77,8 @@ Main GR00T Flappy configs:
 ```text
 examples/rl_games/experiments/gr00t_demon_attack_mixed_latency.yaml
 examples/rl_games/experiments/gr00t_demon_attack_single.yaml
+examples/rl_games/experiments/gr00t_deadly_corridor_mixed_latency.yaml
+examples/rl_games/experiments/gr00t_deadly_corridor_single.yaml
 examples/rl_games/experiments/gr00t_flappy_mixed_latency.yaml
 examples/rl_games/experiments/gr00t_flappy_single.yaml
 ```
@@ -142,6 +144,24 @@ GR00T single-latency Demon Attack:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/gr00t_demon_attack_single.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+GR00T mixed-latency Deadly Corridor:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/gr00t_deadly_corridor_mixed_latency.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+GR00T single-latency Deadly Corridor:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/gr00t_deadly_corridor_single.yaml \
   workspace_dir=WORKSPACE_DIR \
   wandb.entity=WANDB_ENTITY
 ```
