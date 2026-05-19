@@ -175,6 +175,12 @@ For pi-0 Demon Attack:
 bash examples/rl_games/install/install_stack.sh pi0 demon_attack
 ```
 
+For pi-0 Deadly Corridor:
+
+```bash
+bash examples/rl_games/install/install_stack.sh pi0 deadly_corridor
+```
+
 ### 2. Choose an experiment config
 
 Configs live here:
@@ -193,6 +199,8 @@ examples/rl_games/experiments/openvla_flappy_single.yaml
 Current pi-0 Flappy configs:
 
 ```text
+examples/rl_games/experiments/pi0_deadly_corridor_mixed_latency.yaml
+examples/rl_games/experiments/pi0_deadly_corridor_single.yaml
 examples/rl_games/experiments/pi0_demon_attack_mixed_latency.yaml
 examples/rl_games/experiments/pi0_demon_attack_single.yaml
 examples/rl_games/experiments/pi0_flappy_mixed_latency.yaml
@@ -298,6 +306,24 @@ pi-0 single-latency Demon Attack:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/pi0_demon_attack_single.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0 mixed-latency Deadly Corridor:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi0_deadly_corridor_mixed_latency.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0 single-latency Deadly Corridor:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi0_deadly_corridor_single.yaml \
   workspace_dir=WORKSPACE_DIR \
   wandb.entity=WANDB_ENTITY
 ```
