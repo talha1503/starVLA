@@ -129,16 +129,29 @@ validate_active_python_version() {
   fi
 }
 
-run_validation_for_model() {
+target_validator_name() {
+  local model="$1"
+  local env_name="$2"
+  case "${model}:${env_name}" in
+    pi0:demon_attack) echo "pi0_demon.sh" ;;
+    gr00t:deadly_corridor) echo "gr00t_deadly.sh" ;;
+    *) echo "${model}_${env_name}.sh" ;;
+  esac
+}
+
+run_common_validation() {
+  PYTHON_BIN=python "${SCRIPT_DIR}/validate/common.sh"
+}
+
+run_target_validators_for_model() {
   local model="$1"
   shift
   local envs=("$@")
-  local env_name target_validator
-
-  PYTHON_BIN=python "${SCRIPT_DIR}/validate/common.sh"
+  local env_name validator_name target_validator
 
   for env_name in "${envs[@]}"; do
-    target_validator="${SCRIPT_DIR}/validate/${model}_${env_name}.sh"
+    validator_name="$(target_validator_name "${model}" "${env_name}")"
+    target_validator="${SCRIPT_DIR}/validate/${validator_name}"
     if [[ -x "${target_validator}" ]]; then
       PYTHON_BIN=python "${target_validator}"
     elif [[ -f "${target_validator}" ]]; then
@@ -168,7 +181,8 @@ install_in_active_env() {
 
   if [[ "${run_validate}" == "true" ]]; then
     echo "[bootstrap] Running validation"
-    run_validation_for_model "${model}" "${envs[@]}"
+    run_common_validation
+    run_target_validators_for_model "${model}" "${envs[@]}"
   fi
 }
 
@@ -205,8 +219,9 @@ fi
 
 if [[ "${RUN_VALIDATE}" == "true" ]]; then
   echo "[bootstrap] Running validation"
+  run_common_validation
   for model in "${MODELS_TO_INSTALL[@]}"; do
-    run_validation_for_model "${model}" "${ENVS_TO_INSTALL[@]}"
+    run_target_validators_for_model "${model}" "${ENVS_TO_INSTALL[@]}"
   done
 fi
 

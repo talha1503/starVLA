@@ -89,6 +89,16 @@ validate_targets() {
   esac
 }
 
+target_validator_name() {
+  local model="$1"
+  local env_name="$2"
+  case "${model}:${env_name}" in
+    pi0:demon_attack) echo "pi0_demon.sh" ;;
+    gr00t:deadly_corridor) echo "gr00t_deadly.sh" ;;
+    *) echo "${model}_${env_name}.sh" ;;
+  esac
+}
+
 setup_conda_env() {
   if [[ "${USE_CONDA}" != "true" ]]; then
     return
@@ -144,7 +154,9 @@ install_stack() {
 
   echo "[install_stack] Running validation"
   "${BASE_DIR}/validate/common.sh"
-  local target_validator="${BASE_DIR}/validate/${MODEL}_${ENV_NAME}.sh"
+  local validator_name
+  validator_name="$(target_validator_name "${MODEL}" "${ENV_NAME}")"
+  local target_validator="${BASE_DIR}/validate/${validator_name}"
   if [[ -x "${target_validator}" ]]; then
     "${target_validator}"
   elif [[ -f "${target_validator}" ]]; then
