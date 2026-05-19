@@ -1,8 +1,9 @@
 # @package _global_
 
 rl_games:
-  initialization_mode: scratch
-  action_carrier: native
+  initialization_mode: pre-trained
+  action_carrier: bridge
+  bridge_action_dim: 7
   env_eval:
     latency:
       mode: single

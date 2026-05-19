@@ -233,6 +233,77 @@ def _dataset_setup_values(cfg: dict[str, Any]) -> tuple[str, int | None]:
     return converted_name, max_episodes
 
 
+def _env_action_dim_from_cfg(cfg: dict[str, Any]) -> int | None:
+    task = str(_get(cfg, "env") or _get(cfg, "rl_games.task") or "")
+    if task == "flappy":
+        return 2
+    if task == "demon_attack":
+        return 6
+    if task == "deadly_corridor":
+        layout = str(
+            _get(
+                cfg,
+                "rl_games.deadly_action_layout",
+                _get(cfg, "rl_games.env_eval.deadly.action_layout", "multibinary_7"),
+            )
+        )
+        if layout == "multibinary_7":
+            return 7
+        if layout == "factorized_11":
+            return 11
+        raise ValueError(f"Unsupported deadly action layout: {layout}")
+    return None
+
+
+def _is_bridge_cfg(cfg: dict[str, Any]) -> bool:
+    init_mode = str(_get(cfg, "rl_games.initialization_mode", "") or "").lower()
+    action_carrier = str(_get(cfg, "rl_games.action_carrier", "") or "").lower()
+    return init_mode in {"bridge", "pre-trained", "pretrained"} or action_carrier == "bridge"
+
+
+def _validate_bridge_cfg(cfg: dict[str, Any], config_path: Path) -> None:
+    if not _is_bridge_cfg(cfg):
+        return
+
+    initialization_repo = _get(cfg, "initialization.checkpoint_hf_repo_id")
+    if not initialization_repo:
+        raise ValueError(f"{config_path}: bridge configs must set initialization.checkpoint_hf_repo_id")
+    initialization_filename = _get(cfg, "initialization.checkpoint_filename")
+    if not initialization_filename:
+        raise ValueError(f"{config_path}: bridge configs must set initialization.checkpoint_filename")
+    base_repo = str(_get(cfg, "base_model.repo_id", "") or "")
+    base_dir = str(_get(cfg, "paths.base_model_dir", "") or "")
+    if base_repo == "StarVLA/Qwen3-VL-4B-Instruct-Action" or "Qwen3-VL-4B-Instruct-Action" in base_dir:
+        raise ValueError(
+            f"{config_path}: bridge mode must not use StarVLA/Qwen3-VL-4B-Instruct-Action "
+            "as its base model. Use Qwen/Qwen3-VL-4B-Instruct plus a Bridge/RT-1 checkpoint "
+            "under initialization.checkpoint_hf_repo_id."
+        )
+
+    env_dim = _env_action_dim_from_cfg(cfg)
+    if env_dim is None:
+        return
+    if env_dim > 7:
+        raise ValueError(
+            f"{config_path}: bridge configs use a 7D action carrier, but this task resolves "
+            f"active action dim={env_dim}. Use the 7D multibinary layout for bridge mode."
+        )
+
+    action_dim = _get(cfg, "framework.action_model.action_dim")
+    action_env_dim = _get(cfg, "framework.action_model.action_env_dim")
+    state_dim = _get(cfg, "framework.action_model.state_dim")
+    if action_dim not in (None, "") and int(action_dim) != 7:
+        raise ValueError(f"{config_path}: bridge framework.action_model.action_dim must be 7, got {action_dim}")
+    if action_env_dim not in (None, "") and int(action_env_dim) != env_dim:
+        raise ValueError(
+            f"{config_path}: bridge framework.action_model.action_env_dim must be {env_dim}, got {action_env_dim}"
+        )
+    if state_dim not in (None, "") and int(state_dim) != 7:
+        raise ValueError(f"{config_path}: bridge framework.action_model.state_dim must be 7, got {state_dim}")
+    if not _as_bool(_get(cfg, "train_data.include_state", False)):
+        raise ValueError(f"{config_path}: bridge train_data.include_state must be true")
+
+
 def _optional_int_list(value: Any) -> list[int] | None:
     if value in (None, ""):
         return None
@@ -249,6 +320,8 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         model=str(_get(cfg, "model")),
         env=str(_get(cfg, "env")),
         mode=str(_get(cfg, "mode")),
+        initialization_mode=str(_get(cfg, "rl_games.initialization_mode", "") or ""),
+        action_carrier=str(_get(cfg, "rl_games.action_carrier", "") or ""),
         latency_mode=str(_get(cfg, "rl_games.latency_mode", "") or ""),
         source_dataset_hf=str(_get(cfg, "dataset.source_hf", "") or ""),
         dataset_local_dir=_resolve_path(_get(cfg, "paths.dataset_local_dir"), workspace_dir),
@@ -268,6 +341,8 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         checkpoint_local_dir=checkpoint_dir,
         checkpoint_load=str(_get(cfg, "checkpoint.load", "auto")),
         checkpoint_hf_repo_id=str(_get(cfg, "checkpoint.hf_repo_id", "") or ""),
+        initialization_hf_repo_id=str(_get(cfg, "initialization.checkpoint_hf_repo_id", "") or ""),
+        initialization_checkpoint_filename=str(_get(cfg, "initialization.checkpoint_filename", "") or ""),
         checkpoint_sync_enabled=str(_as_bool(_get(cfg, "checkpoint.sync_enabled", False))).lower(),
         checkpoint_sync_repo_id=str(_get(cfg, "checkpoint.sync_repo_id", "") or ""),
         hf_repo_id="",
@@ -296,6 +371,9 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
     if setup.get("resume_checkpoint"):
         cmd.append(f"trainer.pretrained_checkpoint={setup['resume_checkpoint']}")
         cmd.append(f"trainer.resume_step={int(setup.get('resume_step') or 0)}")
+    elif setup.get("pretrained_checkpoint"):
+        cmd.append(f"trainer.pretrained_checkpoint={setup['pretrained_checkpoint']}")
+        cmd.append("trainer.resume_step=0")
 
     trainer_overrides = [
         "trainer.max_train_steps",
@@ -393,6 +471,8 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
     optional = {
         "rl_games.task": _get(cfg, "rl_games.task"),
         "rl_games.model_alias": _get(cfg, "rl_games.model_alias"),
+        "rl_games.initialization_mode": _get(cfg, "rl_games.initialization_mode"),
+        "rl_games.action_carrier": _get(cfg, "rl_games.action_carrier"),
         "rl_games.env_eval.latency.mode": _get(cfg, "rl_games.latency_mode"),
         "rl_games.env_eval.frameskip": _get(cfg, "rl_games.frameskip"),
         "rl_games.env_eval.image_size": _get(cfg, "rl_games.image_size"),
@@ -448,6 +528,7 @@ def main() -> int:
     cfg = _load_yaml(config_path)
     for override in args.overrides:
         _apply_override(cfg, override)
+    _validate_bridge_cfg(cfg, config_path)
 
     workspace_dir = _workspace_dir(cfg)
     workspace_dir.mkdir(parents=True, exist_ok=True)

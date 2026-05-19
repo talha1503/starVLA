@@ -14,6 +14,7 @@ Options:
   --model <openvla|pi0|gr00t>  Model config group (default: openvla)
   --env <flappy|demon_attack|deadly_corridor>  Env config group (default: flappy)
   --mode <single|mixed_latency|cross_task>      Mode config group (default: single)
+  --init-mode <scratch|bridge>  Action-carrier initialization mode (default: scratch)
   --run-id <id>                Run id override (default: starvla_rl_games)
   --workspace-dir <dir>        Workspace root for relative outputs/assets (default: repo root)
   --run-root-dir <dir>         Output root (default: results/Checkpoints)
@@ -61,6 +62,8 @@ Options:
   --base-model-repo-id <repo> HF repo for base model download
   --checkpoint-load <auto|none|local|hf>  Resume policy (default: auto; local first, then HF)
   --checkpoint-hf-repo-id <repo>  HF model repo id for checkpoint-load=hf
+  --initialization-hf-repo-id <repo> HF model repo used as bridge initializer
+  --initialization-checkpoint-filename <path> Exact checkpoint file inside the bridge initializer repo
   --conda-env <name>            Conda env to activate (default: starvla_rl_games_<model>)
   --no-conda                    Use the current python environment
   --help                       Show this help
@@ -71,6 +74,7 @@ CONFIG_NAME="train"
 MODEL="openvla"
 ENV_NAME="flappy"
 MODE="single"
+INIT_MODE="scratch"
 RUN_ID="starvla_rl_games"
 WORKSPACE_DIR="$REPO_ROOT"
 RUN_ROOT_DIR="results/Checkpoints"
@@ -118,6 +122,8 @@ BASE_MODEL_DIR="playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action"
 BASE_MODEL_REPO_ID="StarVLA/Qwen3-VL-4B-Instruct-Action"
 CHECKPOINT_LOAD="auto"
 CHECKPOINT_HF_REPO_ID=""
+INITIALIZATION_HF_REPO_ID=""
+INITIALIZATION_CHECKPOINT_FILENAME=""
 CONDA_ENV_NAME=""
 USE_CONDA="true"
 
@@ -127,6 +133,7 @@ while [[ $# -gt 0 ]]; do
     --model) MODEL="$2"; shift 2 ;;
     --env) ENV_NAME="$2"; shift 2 ;;
     --mode) MODE="$2"; shift 2 ;;
+    --init-mode) INIT_MODE="$2"; shift 2 ;;
     --run-id) RUN_ID="$2"; shift 2 ;;
     --workspace-dir) WORKSPACE_DIR="$2"; shift 2 ;;
     --run-root-dir) RUN_ROOT_DIR="$2"; shift 2 ;;
@@ -174,6 +181,8 @@ while [[ $# -gt 0 ]]; do
     --base-model-repo-id) BASE_MODEL_REPO_ID="$2"; shift 2 ;;
     --checkpoint-load) CHECKPOINT_LOAD="$2"; shift 2 ;;
     --checkpoint-hf-repo-id) CHECKPOINT_HF_REPO_ID="$2"; shift 2 ;;
+    --initialization-hf-repo-id) INITIALIZATION_HF_REPO_ID="$2"; shift 2 ;;
+    --initialization-checkpoint-filename) INITIALIZATION_CHECKPOINT_FILENAME="$2"; shift 2 ;;
     --conda-env) CONDA_ENV_NAME="$2"; shift 2 ;;
     --no-conda) USE_CONDA="false"; shift ;;
     --help|-h) usage; exit 0 ;;
@@ -246,6 +255,44 @@ if [[ "$DIST_BACKEND_LOWER" == "none" ]]; then
   USE_ACCELERATE="false"
 fi
 
+INIT_MODE_LOWER="$(echo "$INIT_MODE" | tr '[:upper:]' '[:lower:]')"
+case "$INIT_MODE_LOWER" in
+  scratch)
+    ACTION_CARRIER="native"
+    ;;
+  bridge|pre-trained|pretrained)
+    INIT_MODE="bridge"
+    INIT_MODE_LOWER="bridge"
+    ACTION_CARRIER="bridge"
+    if [[ "$BASE_MODEL_REPO_ID" == "StarVLA/Qwen3-VL-4B-Instruct-Action" ]]; then
+      BASE_MODEL_REPO_ID="Qwen/Qwen3-VL-4B-Instruct"
+    fi
+    if [[ "$BASE_MODEL_DIR" == *"Qwen3-VL-4B-Instruct-Action" ]]; then
+      BASE_MODEL_DIR="${BASE_MODEL_DIR%-Action}"
+    fi
+    if [[ -z "$INITIALIZATION_HF_REPO_ID" ]]; then
+      case "$MODEL" in
+        openvla) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-OFT-Bridge-RT-1" ;;
+        pi0) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1" ;;
+        gr00t) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-GR00T-Bridge-RT-1" ;;
+        *) echo "No default bridge initializer for model '${MODEL}'." >&2; exit 1 ;;
+      esac
+    fi
+    if [[ -z "$INITIALIZATION_CHECKPOINT_FILENAME" ]]; then
+      case "$MODEL" in
+        openvla) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_5000_pytorch_model.pt" ;;
+        pi0) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_50000_pytorch_model.pt" ;;
+        gr00t) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_20000_pytorch_model.pt" ;;
+        *) echo "No default bridge checkpoint filename for model '${MODEL}'." >&2; exit 1 ;;
+      esac
+    fi
+    ;;
+  *)
+    echo "Invalid --init-mode '${INIT_MODE}'. Expected scratch|bridge." >&2
+    exit 1
+    ;;
+esac
+
 LATENCIES_EXPR=""
 if [[ -n "$LATENCIES_CSV" ]]; then
   IFS=',' read -r -a LAT_ARR <<< "$LATENCIES_CSV"
@@ -280,6 +327,8 @@ CMD=(
   "checkpoint.sync.enabled=$HF_SYNC_ENABLED"
   "checkpoint.sync.keep_last_n=$HF_KEEP_LAST_N"
   "checkpoint.local.keep_last_n=$LOCAL_KEEP_LAST_N"
+  "rl_games.initialization_mode=$INIT_MODE"
+  "rl_games.action_carrier=$ACTION_CARRIER"
 )
 
 if [[ -n "$TASK_OVERRIDE" ]]; then
@@ -287,6 +336,13 @@ if [[ -n "$TASK_OVERRIDE" ]]; then
 fi
 if [[ -n "$MODEL_ALIAS_OVERRIDE" ]]; then
   CMD+=("rl_games.model_alias=$MODEL_ALIAS_OVERRIDE")
+fi
+if [[ "$INIT_MODE_LOWER" == "bridge" ]]; then
+  CMD+=("framework.action_model.state_dim=7")
+  CMD+=("datasets.vla_data.include_state=true")
+  if [[ "$MODEL" == "pi0" ]]; then
+    CMD+=("framework.name=QwenPI_v3")
+  fi
 fi
 if [[ -n "$LATENCY_MODE_OVERRIDE" ]]; then
   CMD+=("rl_games.env_eval.latency.mode=$LATENCY_MODE_OVERRIDE")
@@ -321,6 +377,8 @@ SETUP_JSON="$(
     --model "$MODEL" \
     --env "$ENV_NAME" \
     --mode "$MODE" \
+    --initialization-mode "$INIT_MODE" \
+    --action-carrier "$ACTION_CARRIER" \
     --latency-mode "${LATENCY_MODE_OVERRIDE:-}" \
     --source-dataset-hf "${SOURCE_DATASET_HF:-${DATASET_HF_REPO_ID:-}}" \
     --dataset-local-dir "$DATASET_LOCAL_DIR" \
@@ -333,6 +391,8 @@ SETUP_JSON="$(
     --checkpoint-local-dir "$CHECKPOINT_LOCAL_DIR" \
     --checkpoint-load "$CHECKPOINT_LOAD" \
     --checkpoint-hf-repo-id "${CHECKPOINT_HF_REPO_ID:-}" \
+    --initialization-hf-repo-id "${INITIALIZATION_HF_REPO_ID:-}" \
+    --initialization-checkpoint-filename "${INITIALIZATION_CHECKPOINT_FILENAME:-}" \
     --hf-repo-id "${HF_REPO_ID:-}"
 )"
 echo "Setup summary: $SETUP_JSON"
@@ -358,6 +418,9 @@ RESOLVED_BASE_MODEL="$(
 RESOLVED_LATENCY_PROMPT_MAP="$(
   python -c 'import json,sys; print(json.loads(sys.argv[1]).get("latency_prompt_map_path") or "")' "$SETUP_JSON"
 )"
+RESOLVED_PRETRAINED_CHECKPOINT="$(
+  python -c 'import json,sys; print(json.loads(sys.argv[1]).get("pretrained_checkpoint") or "")' "$SETUP_JSON"
+)"
 
 if [[ -n "$RESOLVED_DATA_ROOT" ]]; then
   CMD+=("datasets.vla_data.data_root_dir=$RESOLVED_DATA_ROOT")
@@ -372,6 +435,10 @@ if [[ -n "$RESOLVED_BASE_MODEL" ]]; then
 fi
 if [[ -z "$LATENCY_PROMPT_MAP_PATH" && -n "$RESOLVED_LATENCY_PROMPT_MAP" ]]; then
   CMD+=("rl_games.env_eval.latency.prompt_map_path=$RESOLVED_LATENCY_PROMPT_MAP")
+fi
+if [[ -n "$RESOLVED_PRETRAINED_CHECKPOINT" ]]; then
+  CMD+=("trainer.pretrained_checkpoint=$RESOLVED_PRETRAINED_CHECKPOINT")
+  CMD+=("trainer.resume_step=0")
 fi
 
 if [[ -n "$PREPROCESS_CMD" ]]; then

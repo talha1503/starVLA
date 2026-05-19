@@ -163,6 +163,16 @@ class Qwen_PI(baseframework):
         # are normalised upstream by `share_tools.apply_config_compat`, so we
         # only ever read `action_horizon` here.
         self.action_horizon = int(self.config.framework.action_model.action_horizon)
+        self.action_dim = int(self.config.framework.action_model.action_dim)
+
+    def _pad_actions_to_model_dim(self, actions: torch.Tensor) -> torch.Tensor:
+        if actions.shape[-1] == self.action_dim:
+            return actions
+        if actions.shape[-1] > self.action_dim:
+            return actions[..., : self.action_dim]
+        pad_shape = (*actions.shape[:-1], self.action_dim - actions.shape[-1])
+        padding = torch.zeros(pad_shape, device=actions.device, dtype=actions.dtype)
+        return torch.cat((actions, padding), dim=-1)
 
     def _encode_vl_hidden_states(
         self, batch_images: List, instructions: List[str]
@@ -214,6 +224,7 @@ class Qwen_PI(baseframework):
                 np.array(actions), device=base_hidden.device, dtype=base_hidden.dtype
             )  # [B, T_full, action_dim]
             actions_target = actions[:, -self.action_horizon :, :]  # (B, action_horizon, action_dim)
+            actions_target = self._pad_actions_to_model_dim(actions_target)
 
             repeated_diffusion_steps = (
                 self.config.framework.action_model.get("repeated_diffusion_steps", 4)

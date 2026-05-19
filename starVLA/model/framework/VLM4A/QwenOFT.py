@@ -127,6 +127,8 @@ class Qwenvl_OFT(baseframework):
         # only ever read `action_horizon` here.
         self.action_horizon = int(self.config.framework.action_model.action_horizon)
         self.chunk_len = self.action_horizon
+        self.action_dim = int(self.config.framework.action_model.action_dim)
+        self.action_env_dim = int(getattr(self.config.framework.action_model, "action_env_dim", self.action_dim))
         # self.hidden_dim = config.framework.action_model.action_hidden_dim
 
         self.action_token = "🔍"  # TODO also can add spacail token to Qwen, but too complex
@@ -220,8 +222,16 @@ class Qwenvl_OFT(baseframework):
             )  # [B, T_full, action_dim]
             actions_target = actions[:, -self.action_horizon :, :]  # (B, action_horizon, action_dim)
 
-            # Compute L1 loss
-            action_loss = self.l1_loss(pred_actions, actions_target)
+            effective_dim = min(self.action_env_dim, pred_actions.shape[-1], actions_target.shape[-1])
+            if effective_dim <= 0:
+                raise ValueError(
+                    f"Invalid action_env_dim={self.action_env_dim} for predicted shape={pred_actions.shape} "
+                    f"and target shape={actions_target.shape}"
+                )
+            action_loss = self.l1_loss(
+                pred_actions[..., :effective_dim],
+                actions_target[..., :effective_dim],
+            )
 
         return {"action_loss": action_loss}
 

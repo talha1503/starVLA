@@ -3,6 +3,8 @@
 rl_games:
   task: flappy
   model_alias: openvla
+  initialization_mode: scratch
+  action_carrier: native
   env_eval:
     enabled: true
     interval_steps: 100
