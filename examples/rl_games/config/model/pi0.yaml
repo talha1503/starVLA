@@ -6,8 +6,29 @@ rl_games:
 framework:
   name: QwenPI
   action_model:
+    action_model_type: LayerwiseFM
     action_dim: 32
     action_env_dim: 2
+    state_dim: 7
+    action_horizon: 16
+    future_action_window_size: 15
+    past_action_window_size: 0
+    repeated_diffusion_steps: 2
+    num_inference_timesteps: 4
+    num_target_vision_tokens: 32
+    add_pos_embed: true
+    max_seq_len: 1024
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+    num_timestep_buckets: 1000
+    diffusion_model_cfg:
+      dropout: 0.2
+      final_dropout: true
+      interleave_self_attention: true
+      norm_type: ada_norm
+      positional_embeddings: null
+      attention_head_dim: 64
 
 trainer:
   learning_rate:
