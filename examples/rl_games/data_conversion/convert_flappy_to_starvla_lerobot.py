@@ -76,6 +76,39 @@ def _one_hot(action_id: int) -> list[float]:
     return values
 
 
+def _select_episode_ids(
+    episode_ids: list[int],
+    episode_latencies: dict[int, int],
+    *,
+    max_episodes: int | None,
+    require_latency_prompt_map: bool,
+) -> list[int]:
+    if max_episodes is None:
+        return episode_ids
+    if not require_latency_prompt_map:
+        return episode_ids[:max_episodes]
+
+    selected: list[int] = []
+    selected_set: set[int] = set()
+    for latency in sorted(set(episode_latencies.values())):
+        for episode_id in episode_ids:
+            if episode_id in selected_set:
+                continue
+            if episode_latencies.get(episode_id) == latency:
+                selected.append(episode_id)
+                selected_set.add(episode_id)
+                break
+
+    target_count = max(max_episodes, len(selected))
+    for episode_id in episode_ids:
+        if len(selected) >= target_count:
+            break
+        if episode_id not in selected_set:
+            selected.append(episode_id)
+            selected_set.add(episode_id)
+    return selected
+
+
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -210,12 +243,21 @@ def convert_dataset(
             dataset_name,
             split,
             cache_dir=cache_dir,
-            columns=["episode_idx", "t", "action_id", "done", "reward", "prompt"],
+            columns=[
+                "episode_idx",
+                "t",
+                "action_id",
+                "done",
+                "reward",
+                "prompt",
+                *(["latency"] if require_latency_prompt_map else []),
+            ],
         )
         if len(ds_meta) == 0:
             raise ValueError(f"{dataset_name} has no {split} rows")
 
         episode_indices: dict[int, list[tuple[int, int]]] = {}
+        episode_latencies: dict[int, int] = {}
         prompt_to_task_index: dict[str, int] = {}
         task_prompts: list[str] = []
         latency_rows: list[dict[str, Any]] = []
@@ -223,14 +265,20 @@ def convert_dataset(
         for row_idx, row in enumerate(tqdm(ds_meta, desc=f"Indexing Flappy {split} rows")):
             episode_idx = int(row["episode_idx"])
             episode_indices.setdefault(episode_idx, []).append((int(row["t"]), row_idx))
+            if require_latency_prompt_map and "latency" in row and row["latency"] is not None:
+                episode_latencies.setdefault(episode_idx, int(row["latency"]))
             prompt = str(row["prompt"])
             if prompt not in prompt_to_task_index:
                 prompt_to_task_index[prompt] = len(task_prompts)
                 task_prompts.append(prompt)
 
         original_episode_ids = sorted(episode_indices)
-        if max_episodes is not None:
-            original_episode_ids = original_episode_ids[:max_episodes]
+        original_episode_ids = _select_episode_ids(
+            original_episode_ids,
+            episode_latencies,
+            max_episodes=max_episodes,
+            require_latency_prompt_map=require_latency_prompt_map,
+        )
         for episode_id in original_episode_ids:
             episode_indices[episode_id].sort(key=lambda item: item[0])
 
