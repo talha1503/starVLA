@@ -18,7 +18,7 @@ Usage: bash examples/rl_games/install/bootstrap.sh [options]
 Options:
   --conda-env <name>        Conda env name (default: ${CONDA_ENV_NAME})
   --python-version <ver>    Python version for new env (default: ${PYTHON_VERSION})
-  --model <name|all>        openvla|pi0|gr00t|all (default: ${MODEL_TARGET})
+  --model <name|all>        openvla|pi0|pi05|gr00t|all (default: ${MODEL_TARGET})
   --env <name|all>          flappy|demon_attack|deadly_corridor|all (default: ${ENV_TARGET})
   --split-envs              Create/use one env per model: <conda-env>_<model>
   --skip-validate           Skip final validation step
@@ -72,7 +72,7 @@ fi
 CONDA_BASE="$(conda info --base)"
 source "${CONDA_BASE}/etc/profile.d/conda.sh"
 
-MODELS=(openvla pi0 gr00t)
+MODELS=(openvla pi0 pi05 gr00t)
 ENVS=(flappy demon_attack deadly_corridor)
 
 if [[ "${MODEL_TARGET}" == "all" ]]; then
@@ -89,9 +89,9 @@ fi
 
 for model in "${MODELS_TO_INSTALL[@]}"; do
   case "${model}" in
-    openvla|pi0|gr00t) ;;
+    openvla|pi0|pi05|gr00t) ;;
     *)
-      echo "[bootstrap] Invalid --model '${model}'. Expected openvla|pi0|gr00t|all." >&2
+      echo "[bootstrap] Invalid --model '${model}'. Expected openvla|pi0|pi05|gr00t|all." >&2
       exit 1
       ;;
   esac

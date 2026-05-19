@@ -18,7 +18,7 @@ Examples:
   bash examples/rl_games/install/install_stack.sh --conda-env my_openvla openvla flappy
 
 Arguments:
-  <model>                  openvla|pi0|gr00t
+  <model>                  openvla|pi0|pi05|gr00t
   <env>                    flappy|demon_attack|deadly_corridor
 
 Options:
@@ -73,9 +73,9 @@ parse_args() {
 
 validate_targets() {
   case "${MODEL}" in
-    openvla|pi0|gr00t) ;;
+    openvla|pi0|pi05|gr00t) ;;
     *)
-      echo "[install_stack] Invalid model '${MODEL}'. Expected openvla|pi0|gr00t." >&2
+      echo "[install_stack] Invalid model '${MODEL}'. Expected openvla|pi0|pi05|gr00t." >&2
       exit 1
       ;;
   esac
