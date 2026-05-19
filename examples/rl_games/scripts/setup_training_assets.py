@@ -315,7 +315,7 @@ def setup_assets(args) -> dict[str, Any]:
 
     if args.model in {"openvla", "pi0", "gr00t"} and args.env == "flappy":
         result.update(_ensure_flappy_dataset(args))
-    elif args.model in {"openvla", "pi0"} and args.env == "demon_attack":
+    elif args.model in {"openvla", "pi0", "gr00t"} and args.env == "demon_attack":
         result.update(_ensure_demon_attack_dataset(args))
     elif args.model in {"openvla", "pi0"} and args.env == "deadly_corridor":
         result.update(_ensure_deadly_corridor_dataset(args))
