@@ -129,6 +129,26 @@ validate_active_python_version() {
   fi
 }
 
+run_validation_for_model() {
+  local model="$1"
+  shift
+  local envs=("$@")
+  local env_name target_validator
+
+  PYTHON_BIN=python "${SCRIPT_DIR}/validate/common.sh"
+
+  for env_name in "${envs[@]}"; do
+    target_validator="${SCRIPT_DIR}/validate/${model}_${env_name}.sh"
+    if [[ -x "${target_validator}" ]]; then
+      PYTHON_BIN=python "${target_validator}"
+    elif [[ -f "${target_validator}" ]]; then
+      PYTHON_BIN=python bash "${target_validator}"
+    else
+      echo "[bootstrap] No target-specific validator found for ${model}/${env_name}; common validation passed."
+    fi
+  done
+}
+
 install_in_active_env() {
   local model="$1"
   local run_validate="${2:-true}"
@@ -148,7 +168,7 @@ install_in_active_env() {
 
   if [[ "${run_validate}" == "true" ]]; then
     echo "[bootstrap] Running validation"
-    PYTHON_BIN=python "${SCRIPT_DIR}/validate/common.sh"
+    run_validation_for_model "${model}" "${envs[@]}"
   fi
 }
 
@@ -185,7 +205,9 @@ fi
 
 if [[ "${RUN_VALIDATE}" == "true" ]]; then
   echo "[bootstrap] Running validation"
-  PYTHON_BIN=python "${SCRIPT_DIR}/validate/common.sh"
+  for model in "${MODELS_TO_INSTALL[@]}"; do
+    run_validation_for_model "${model}" "${ENVS_TO_INSTALL[@]}"
+  done
 fi
 
 echo "[bootstrap] Complete."
