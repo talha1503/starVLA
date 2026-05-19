@@ -6,6 +6,7 @@ from typing import Dict
 MODEL_ALIAS_TO_FRAMEWORK: Dict[str, str] = {
     "openvla": "QwenOFT",
     "pi-0": "QwenPI",
+    "pi-0.5": "QwenPI_v3",
     "gr00t": "QwenGR00T",
 }
 

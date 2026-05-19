@@ -41,7 +41,7 @@ def apply_action_spec(cfg) -> None:
     action_cfg = framework.action_model
     model_alias = str(getattr(rl_games, "model_alias", "openvla"))
 
-    if model_alias in {"pi-0", "gr00t"}:
+    if model_alias in {"pi-0", "pi-0.5", "gr00t"}:
         model_action_dim = int(getattr(action_cfg, "action_dim", 0))
         if model_action_dim < env_dim:
             raise ValueError(
@@ -54,4 +54,3 @@ def apply_action_spec(cfg) -> None:
     # openvla and other dense/discrete heads should emit env action space directly.
     action_cfg.action_dim = int(env_dim)
     action_cfg.action_env_dim = int(env_dim)
-
