@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, TypedDict
 
+import pytest
 import yaml
 
 from examples.rl_games.scripts import setup_training_assets
@@ -59,6 +60,23 @@ def _load_experiment_config(name: str) -> dict[str, Any]:
     return loaded
 
 
+def _setup_args(tmp_path: Path, model: str, env: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        model=model,
+        env=env,
+        mode="single",
+        dataset_local_dir=str(tmp_path / f"{model}_{env}_datasets"),
+        base_model_dir=str(tmp_path / f"{model}_{env}_base_model"),
+        base_model_repo_id="test/base-model",
+        checkpoint_local_dir=str(tmp_path / f"{model}_{env}_checkpoints"),
+        checkpoint_load="none",
+        checkpoint_hf_repo_id="",
+        hf_repo_id="",
+        checkpoint_sync_repo_id="",
+        checkpoint_sync_enabled="false",
+    )
+
+
 def _assert_pi05_flappy_experiment(cfg: dict[str, Any], expected: ExpectedExperimentConfig) -> None:
     assert cfg["model"] == "pi05"
     assert cfg["env"] == "flappy"
@@ -98,7 +116,7 @@ def test_pi05_action_spec_preserves_model_dim_and_sets_env_dim() -> None:
         },
         "framework": {
             "action_model": {
-                "action_dim": 2,
+                "action_dim": 32,
                 "action_env_dim": 0,
             }
         },
@@ -106,15 +124,69 @@ def test_pi05_action_spec_preserves_model_dim_and_sets_env_dim() -> None:
 
     apply_action_spec(cfg)
 
-    assert cfg.framework.action_model.action_dim == 2
+    assert cfg.framework.action_model.action_dim == 32
     assert cfg.framework.action_model.action_env_dim == 2
 
 
-def test_pi05_uses_managed_flappy_dataset_setup_only_for_flappy() -> None:
-    assert setup_training_assets._uses_managed_flappy_dataset("pi05") is True
-    assert setup_training_assets._uses_managed_flappy_dataset("pi0") is True
-    assert setup_training_assets._uses_managed_flappy_dataset("openvla") is True
-    assert setup_training_assets._uses_managed_flappy_dataset("gr00t") is False
+def test_pi05_setup_assets_uses_public_flappy_route_only_for_flappy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+
+    def fake_flappy_dataset(args: SimpleNamespace) -> dict[str, Any]:
+        calls.append(f"{args.model}:{args.env}:flappy")
+        return {
+            "dataset_ready": True,
+            "dataset_local_dir": args.dataset_local_dir,
+            "data_mix": f"{args.model}_flappy_train",
+            "eval_data_mix": f"{args.model}_flappy_eval",
+            "latency_prompt_map_path": None,
+        }
+
+    def fake_demon_attack_dataset(args: SimpleNamespace) -> dict[str, Any]:
+        calls.append(f"{args.model}:{args.env}:demon_attack")
+        return {
+            "dataset_ready": True,
+            "dataset_local_dir": args.dataset_local_dir,
+            "data_mix": f"{args.model}_demon_attack_train",
+            "eval_data_mix": f"{args.model}_demon_attack_eval",
+            "latency_prompt_map_path": None,
+        }
+
+    def fake_deadly_corridor_dataset(args: SimpleNamespace) -> dict[str, Any]:
+        calls.append(f"{args.model}:{args.env}:deadly_corridor")
+        return {
+            "dataset_ready": True,
+            "dataset_local_dir": args.dataset_local_dir,
+            "data_mix": f"{args.model}_deadly_corridor_train",
+            "eval_data_mix": f"{args.model}_deadly_corridor_eval",
+            "latency_prompt_map_path": None,
+        }
+
+    def fake_base_model(model: str, base_model_dir: Path, base_model_repo_id: str | None) -> dict[str, Any]:
+        return {
+            "base_model_dir": str(base_model_dir),
+            "base_model_repo_id": base_model_repo_id,
+            "base_model_downloaded": False,
+        }
+
+    monkeypatch.setattr(setup_training_assets, "_ensure_flappy_dataset", fake_flappy_dataset)
+    monkeypatch.setattr(setup_training_assets, "_ensure_demon_attack_dataset", fake_demon_attack_dataset)
+    monkeypatch.setattr(setup_training_assets, "_ensure_deadly_corridor_dataset", fake_deadly_corridor_dataset)
+    monkeypatch.setattr(setup_training_assets, "_ensure_base_model", fake_base_model)
+
+    pi0_flappy = setup_training_assets.setup_assets(_setup_args(tmp_path, "pi0", "flappy"))
+    openvla_flappy = setup_training_assets.setup_assets(_setup_args(tmp_path, "openvla", "flappy"))
+    pi05_demon_attack = setup_training_assets.setup_assets(_setup_args(tmp_path, "pi05", "demon_attack"))
+    pi05_flappy = setup_training_assets.setup_assets(_setup_args(tmp_path, "pi05", "flappy"))
+
+    assert pi0_flappy["data_mix"] == "pi0_flappy_train"
+    assert openvla_flappy["data_mix"] == "openvla_flappy_train"
+    assert pi05_demon_attack["data_mix"] is None
+    assert "pi05:demon_attack:demon_attack" not in calls
+    assert pi05_flappy["data_mix"] == "pi05_flappy_train"
+    assert "pi05:flappy:flappy" in calls
 
 
 def test_pi05_flappy_single_experiment_uses_qwenpi_v3() -> None:
