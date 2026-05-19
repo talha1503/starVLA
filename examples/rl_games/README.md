@@ -70,6 +70,15 @@ examples/rl_games/experiments/openvla_deadly_corridor_mixed_latency.yaml
 examples/rl_games/experiments/openvla_deadly_corridor_single.yaml
 ```
 
+pi-0 and pi-0.5-style Flappy configs:
+
+```text
+examples/rl_games/experiments/pi0_flappy_mixed_latency.yaml
+examples/rl_games/experiments/pi0_flappy_single.yaml
+examples/rl_games/experiments/pi05_flappy_mixed_latency.yaml
+examples/rl_games/experiments/pi05_flappy_single.yaml
+```
+
 Edit `workspace_dir`, `auth`, `wandb`, `dataset`, `base_model`, `checkpoint`, `launch`, `train_data`, and `trainer` in the YAML. Relative asset paths are resolved under `workspace_dir`.
 
 Authentication tokens are read from `HF_TOKEN` and `WANDB_API_KEY` by default:
@@ -95,6 +104,15 @@ Single-latency Flappy:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/openvla_flappy_single.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0.5-style mixed-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi05_flappy_mixed_latency.yaml \
   workspace_dir=WORKSPACE_DIR \
   wandb.entity=WANDB_ENTITY
 ```

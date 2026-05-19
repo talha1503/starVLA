@@ -169,6 +169,12 @@ For pi-0 Flappy specifically, the direct installer form is:
 bash examples/rl_games/install/install_stack.sh pi0 flappy
 ```
 
+For pi-0.5-style Flappy through StarVLA `QwenPI_v3`, the direct installer form is:
+
+```bash
+bash examples/rl_games/install/install_stack.sh pi05 flappy
+```
+
 ### 2. Choose an experiment config
 
 Configs live here:
@@ -189,6 +195,13 @@ Current pi-0 Flappy configs:
 ```text
 examples/rl_games/experiments/pi0_flappy_mixed_latency.yaml
 examples/rl_games/experiments/pi0_flappy_single.yaml
+```
+
+Current pi-0.5-style Flappy configs:
+
+```text
+examples/rl_games/experiments/pi05_flappy_mixed_latency.yaml
+examples/rl_games/experiments/pi05_flappy_single.yaml
 ```
 
 Edit the YAML before a real run. The most important field is `workspace_dir`:
@@ -272,6 +285,24 @@ pi-0 single-latency Flappy:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/pi0_flappy_single.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0.5-style mixed-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi05_flappy_mixed_latency.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0.5-style single-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi05_flappy_single.yaml \
   workspace_dir=WORKSPACE_DIR \
   wandb.entity=WANDB_ENTITY
 ```
