@@ -11,7 +11,7 @@ Usage:
 
 Options:
   --config-name <name>         Hydra top-level config name (default: train)
-  --model <openvla|pi0|gr00t>  Model config group (default: openvla)
+  --model <openvla|pi0|pi05|gr00t>  Model config group (default: openvla)
   --env <flappy|demon_attack|deadly_corridor>  Env config group (default: flappy)
   --mode <single|mixed_latency|cross_task>      Mode config group (default: single)
   --run-id <id>                Run id override (default: starvla_rl_games)
