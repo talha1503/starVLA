@@ -163,6 +163,11 @@ bash examples/rl_games/install/bootstrap.sh --split-envs
 ```
 
 This creates model-specific conda environments such as `starvla_rl_games_openvla`.
+For pi-0 Flappy specifically, the direct installer form is:
+
+```bash
+bash examples/rl_games/install/install_stack.sh pi0 flappy
+```
 
 ### 2. Choose an experiment config
 
@@ -177,6 +182,13 @@ Current OpenVLA Flappy configs:
 ```text
 examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml
 examples/rl_games/experiments/openvla_flappy_single.yaml
+```
+
+Current pi-0 Flappy configs:
+
+```text
+examples/rl_games/experiments/pi0_flappy_mixed_latency.yaml
+examples/rl_games/experiments/pi0_flappy_single.yaml
 ```
 
 Edit the YAML before a real run. The most important field is `workspace_dir`:
@@ -242,6 +254,24 @@ Single-latency Flappy:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/openvla_flappy_single.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0 mixed-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi0_flappy_mixed_latency.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0 single-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi0_flappy_single.yaml \
   workspace_dir=WORKSPACE_DIR \
   wandb.entity=WANDB_ENTITY
 ```
