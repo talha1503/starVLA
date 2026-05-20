@@ -9,30 +9,44 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 import os
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
-from pathlib import Path
-
 import flappy_bird_gymnasium  # noqa: F401
 import flappy_bird_gymnasium.envs.utils as flappy_utils
 import gymnasium as gym
-import pygame
-from PIL import Image
+from pathlib import Path
 
-repaired = []
-for sprite_path in sorted(Path(flappy_utils.SPRITES_PATH).glob("*.png")):
+utils_path = Path(flappy_utils.__file__)
+source = utils_path.read_text(encoding="utf-8")
+marker = "[StarVLA PATCH] PIL fallback"
+if marker not in source:
+    patch = '''
+
+# [StarVLA PATCH] PIL fallback for sprites pygame's libpng cannot decode.
+import pygame as _starvla_pygame
+from PIL import Image as _starvla_PILImage
+_starvla_orig_load_sprite = _load_sprite
+def _load_sprite(filename, convert, alpha):  # noqa: F811
     try:
-        pygame.image.load(str(sprite_path))
-        continue
-    except pygame.error:
-        pass
+        return _starvla_orig_load_sprite(filename, convert, alpha)
+    except _starvla_pygame.error:
+        path = f"{SPRITES_PATH}/{filename}"
+        mode = "RGBA" if alpha else "RGB"
+        pil = _starvla_PILImage.open(path).convert(mode)
+        surface = _starvla_pygame.image.fromstring(pil.tobytes(), pil.size, mode)
+        if convert:
+            try:
+                surface = surface.convert_alpha() if alpha else surface.convert()
+            except _starvla_pygame.error:
+                pass
+        return surface
+'''
+    utils_path.write_text(source + patch, encoding="utf-8")
+    print(f"[install/env/flappy] patched sprite loader: {utils_path}")
+else:
+    print(f"[install/env/flappy] sprite loader already patched: {utils_path}")
 
-    image = Image.open(sprite_path)
-    mode = "RGBA" if image.mode in {"RGBA", "LA", "P"} else "RGB"
-    image.convert(mode).save(sprite_path, format="PNG", optimize=False)
-    pygame.image.load(str(sprite_path))
-    repaired.append(sprite_path.name)
-
-if repaired:
-    print(f"[install/env/flappy] repaired sprite PNGs: {', '.join(repaired)}")
+# Reload the module so validation below uses the patched loader in this process.
+import importlib
+importlib.reload(flappy_utils)
 
 env = gym.make("FlappyBird-v0", render_mode="rgb_array", use_lidar=False)
 env.reset()
