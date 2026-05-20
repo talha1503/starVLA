@@ -20,6 +20,15 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from examples.rl_games.data_conversion.image_stack import (
+    IMAGE_STACK_ORDER,
+    IMAGE_STACK_SOURCE,
+    image_array,
+    image_feature,
+    image_stack_features,
+    image_stack_modality,
+    image_stack_table_columns,
+)
 from examples.rl_games.data_conversion.verify_flappy_dataset import build_latency_prompt_map
 
 
@@ -129,7 +138,13 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def _write_metadata(dataset_dir: Path, *, episode_lengths: list[int], task_prompts: list[str]) -> None:
+def _write_metadata(
+    dataset_dir: Path,
+    *,
+    episode_lengths: list[int],
+    task_prompts: list[str],
+    image_stack_size: int,
+) -> None:
     meta_dir = dataset_dir / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
 
@@ -152,11 +167,7 @@ def _write_metadata(dataset_dir: Path, *, episode_lengths: list[int], task_promp
                 "original_key": "action",
             }
         },
-        "video": {
-            "image": {
-                "original_key": "observation.image",
-            }
-        },
+        "video": image_stack_modality(image_stack_size),
         "annotation": {
             "human.action.task_description": {
                 "original_key": "task_index",
@@ -172,12 +183,8 @@ def _write_metadata(dataset_dir: Path, *, episode_lengths: list[int], task_promp
         "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
         "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
         "features": {
-            "observation.image": {
-                "dtype": "image",
-                "shape": [84, 84, 3],
-                "names": ["height", "width", "channel"],
-                "video_info": {"video.fps": FPS},
-            },
+            "observation.image": image_feature(FPS),
+            **image_stack_features(image_stack_size, FPS),
             "observation.state": {
                 "dtype": "float32",
                 "shape": [STATE_DIM],
@@ -201,14 +208,12 @@ def _write_metadata(dataset_dir: Path, *, episode_lengths: list[int], task_promp
     _write_jsonl(meta_dir / "tasks.jsonl", [{"task_index": idx, "task": prompt} for idx, prompt in enumerate(task_prompts)])
 
 
-def _write_episode(path: Path, rows: list[dict[str, Any]]) -> None:
+def _write_episode(path: Path, rows: list[dict[str, Any]], *, image_stack_size: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     table = pa.table(
         {
-            "observation.image": pa.array(
-                [{"bytes": row["image_bytes"], "path": None} for row in rows],
-                type=pa.struct([("bytes", pa.binary()), ("path", pa.string())]),
-            ),
+            "observation.image": image_array([row["image_bytes"] for row in rows]),
+            **image_stack_table_columns(rows, image_stack_size),
             "observation.state": pa.array(
                 [[0.0] * STATE_DIM for _ in rows],
                 type=pa.list_(pa.float32(), STATE_DIM),
@@ -278,6 +283,7 @@ def convert_dataset(
             episode_indices[episode_id].sort(key=lambda item: item[0])
 
         ds_full = _filter_latency(_load_split(dataset_name, split, cache_dir=cache_dir), latency_filter)
+        image_stack_size = len(ds_full[0]["image_stack"])
         episode_lengths: list[int] = []
 
         for new_episode_idx, original_episode_idx in enumerate(
@@ -299,6 +305,7 @@ def convert_dataset(
                 out_rows.append(
                     {
                         "image_bytes": _png_bytes(_row_get(row, ("image", "observation.image", "obs"))),
+                        "image_stack_bytes": [_png_bytes(image) for image in row["image_stack"]],
                         "action": _action_vector(row),
                         "timestamp": float(frame_idx) / FPS,
                         "episode_index": new_episode_idx,
@@ -313,9 +320,15 @@ def convert_dataset(
             _write_episode(
                 split_output_dir / f"data/chunk-{episode_chunk:03d}/episode_{new_episode_idx:06d}.parquet",
                 out_rows,
+                image_stack_size=image_stack_size,
             )
 
-        _write_metadata(split_output_dir, episode_lengths=episode_lengths, task_prompts=task_prompts)
+        _write_metadata(
+            split_output_dir,
+            episode_lengths=episode_lengths,
+            task_prompts=task_prompts,
+            image_stack_size=image_stack_size,
+        )
 
         if latency_rows:
             try:
@@ -338,6 +351,9 @@ def convert_dataset(
             "action_labels": ACTION_LABELS,
             "action_dim": ACTION_DIM,
             "state_dim": STATE_DIM,
+            "image_stack_size": image_stack_size,
+            "image_stack_order": IMAGE_STACK_ORDER,
+            "image_stack_source": IMAGE_STACK_SOURCE,
             "latency_filter": latency_filter,
             "episodes": len(episode_lengths),
             "frames": int(sum(episode_lengths)),

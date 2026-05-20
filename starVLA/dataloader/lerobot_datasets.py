@@ -9,6 +9,7 @@ from typing import Sequence
 from omegaconf import OmegaConf
 
 from starVLA.dataloader.gr00t_lerobot.datasets import LeRobotSingleDataset, LeRobotMixtureDataset
+from starVLA.dataloader.rl_games_image_stack import apply_rl_games_image_stack_video_keys
 from starVLA.dataloader.gr00t_lerobot.registry import (
     ROBOT_TYPE_CONFIG_MAP,
     ROBOT_TYPE_TO_EMBODIMENT_TAG,
@@ -40,6 +41,7 @@ def make_LeRobotSingleDataset(
     modality_config = data_config.modality_config()
     transforms = data_config.transform()
     dataset_path = data_root_dir / data_name
+    modality_config = apply_rl_games_image_stack_video_keys(dataset_path, robot_type, modality_config)
     if robot_type not in ROBOT_TYPE_TO_EMBODIMENT_TAG:
         print(f"Warning: Robot type {robot_type} not found in ROBOT_TYPE_TO_EMBODIMENT_TAG, using {EmbodimentTag.NEW_EMBODIMENT} as default")
         embodiment_tag = EmbodimentTag.NEW_EMBODIMENT
