@@ -120,8 +120,6 @@ SETUP_FORCE="false"
 PREPROCESS_CMD=""
 BASE_MODEL_DIR="playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action"
 BASE_MODEL_REPO_ID="StarVLA/Qwen3-VL-4B-Instruct-Action"
-BASE_MODEL_DIR_SET="false"
-BASE_MODEL_REPO_ID_SET="false"
 CHECKPOINT_LOAD="auto"
 CHECKPOINT_HF_REPO_ID=""
 INITIALIZATION_HF_REPO_ID=""
@@ -179,8 +177,8 @@ while [[ $# -gt 0 ]]; do
     --dataset-cache-dir) DATASET_CACHE_DIR="$2"; shift 2 ;;
     --setup-force) SETUP_FORCE="$2"; shift 2 ;;
     --preprocess-cmd) PREPROCESS_CMD="$2"; shift 2 ;;
-    --base-model-dir) BASE_MODEL_DIR="$2"; BASE_MODEL_DIR_SET="true"; shift 2 ;;
-    --base-model-repo-id) BASE_MODEL_REPO_ID="$2"; BASE_MODEL_REPO_ID_SET="true"; shift 2 ;;
+    --base-model-dir) BASE_MODEL_DIR="$2"; shift 2 ;;
+    --base-model-repo-id) BASE_MODEL_REPO_ID="$2"; shift 2 ;;
     --checkpoint-load) CHECKPOINT_LOAD="$2"; shift 2 ;;
     --checkpoint-hf-repo-id) CHECKPOINT_HF_REPO_ID="$2"; shift 2 ;;
     --initialization-hf-repo-id) INITIALIZATION_HF_REPO_ID="$2"; shift 2 ;;
@@ -191,15 +189,6 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1"; usage; exit 1 ;;
   esac
 done
-
-if [[ "$MODEL" == "pi05" ]]; then
-  if [[ "$BASE_MODEL_DIR_SET" != "true" ]]; then
-    BASE_MODEL_DIR="playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1"
-  fi
-  if [[ "$BASE_MODEL_REPO_ID_SET" != "true" ]]; then
-    BASE_MODEL_REPO_ID="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"
-  fi
-fi
 
 activate_conda_env() {
   if [[ "$USE_CONDA" != "true" ]]; then
@@ -302,7 +291,7 @@ case "$INIT_MODE_LOWER" in
     if [[ -z "$INITIALIZATION_HF_REPO_ID" ]]; then
       case "$MODEL" in
         openvla) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-OFT-Bridge-RT-1" ;;
-        pi0) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1" ;;
+        pi0|pi05) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1" ;;
         gr00t) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-GR00T-Bridge-RT-1" ;;
         *) echo "No default bridge initializer for model '${MODEL}'." >&2; exit 1 ;;
       esac
@@ -310,7 +299,7 @@ case "$INIT_MODE_LOWER" in
     if [[ -z "$INITIALIZATION_CHECKPOINT_FILENAME" ]]; then
       case "$MODEL" in
         openvla) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_5000_pytorch_model.pt" ;;
-        pi0) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_50000_pytorch_model.pt" ;;
+        pi0|pi05) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_50000_pytorch_model.pt" ;;
         gr00t) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_20000_pytorch_model.pt" ;;
         *) echo "No default bridge checkpoint filename for model '${MODEL}'." >&2; exit 1 ;;
       esac

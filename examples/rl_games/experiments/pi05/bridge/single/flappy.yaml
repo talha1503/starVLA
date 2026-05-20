@@ -16,8 +16,8 @@ auth:
 config_name: train
 model: pi05
 env: flappy
-mode: mixed_latency
-run_id: pi05_flappy_mixed_latency
+mode: single
+run_id: pi05_flappy_single
 seed: 42
 
 wandb:
@@ -30,14 +30,14 @@ paths:
   run_root_dir: results/Checkpoints
   dataset_local_dir: playground/Datasets/rl_games
   dataset_cache_dir: null
-  base_model_dir: playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1
+  base_model_dir: playground/Pretrained_models/Qwen3-VL-4B-Instruct
   accelerate_config: starVLA/config/deepseeds/deepspeed_zero2.yaml
 
 # Setup downloads this HF dataset if converted_name is missing or setup_force=true,
 # then converts it into the StarVLA/LeRobot layout and writes dataset statistics.
 dataset:
-  source_hf: talha1503/flappy_bird_mixed_latency_parquet
-  converted_name: flappy_mixed_latency_train
+  source_hf: talha1503/flappy_bird_zero_latency_parquet
+  converted_name: flappy_train
   force_download: false
   setup_force: false
   verify_rows: 200
@@ -47,9 +47,14 @@ dataset:
     max_episodes: 5
     suffix: debug
 
+# Bridge mode starts from a released Bridge/RT-1 StarVLA checkpoint.
+initialization:
+  checkpoint_hf_repo_id: StarVLA/Qwen3VL-PI_v3-Bridge-RT_1
+  checkpoint_filename: checkpoints/steps_50000_pytorch_model.pt
+
 # Setup downloads this model into paths.base_model_dir if it is missing.
 base_model:
-  repo_id: StarVLA/Qwen3VL-PI_v3-Bridge-RT_1
+  repo_id: Qwen/Qwen3-VL-4B-Instruct
 
 # Setup first checks local checkpoints under:
 #   workspace_dir / paths.run_root_dir / run_id / checkpoints
@@ -85,9 +90,9 @@ framework:
     enable_gradient_checkpointing: true
   action_model:
     action_model_type: LayerwiseFM
-    action_dim: 2
+    action_dim: 7
     action_env_dim: 2
-    state_dim: 1
+    state_dim: 7
     action_horizon: 1
     future_action_window_size: 0
     past_action_window_size: 0
@@ -142,6 +147,8 @@ trainer:
 rl_games:
   task: flappy
   model_alias: pi-0.5
+  initialization_mode: bridge
+  action_carrier: bridge
   task_description: ""
   frameskip: 1
   image_size: 84
@@ -156,16 +163,16 @@ rl_games:
   mid_train_eval:
     enabled: true
     interval_steps: 100
-    latencies: [0, 1, 2, 3, 4, 5]
+    latencies: [0]
     num_episodes: 5
     max_steps_per_episode: 2000
 
   # Runs once after training completes. This can be larger/more exhaustive.
   post_train_eval:
     enabled: true
-    latencies: [0, 1, 2, 3, 4, 5]
+    latencies: [0]
     num_episodes: 5
     max_steps_per_episode: 2000
 
-  latency_mode: mixed
-  latencies: [0, 1, 2, 3, 4, 5]
+  latency_mode: single
+  latencies: [0]

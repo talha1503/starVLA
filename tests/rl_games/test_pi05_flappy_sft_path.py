@@ -26,7 +26,7 @@ class ExpectedExperimentConfig(TypedDict):
 
 EXPECTED_PI05_FLAPPY_EXPERIMENTS: dict[str, ExpectedExperimentConfig] = {
     "single": {
-        "name": "pi05_flappy_single.yaml",
+        "name": "pi05/bridge/single/flappy.yaml",
         "mode": "single",
         "run_id": "pi05_flappy_single",
         "source_hf": "talha1503/flappy_bird_zero_latency_parquet",
@@ -34,7 +34,7 @@ EXPECTED_PI05_FLAPPY_EXPERIMENTS: dict[str, ExpectedExperimentConfig] = {
         "latencies": [0],
     },
     "mixed_latency": {
-        "name": "pi05_flappy_mixed_latency.yaml",
+        "name": "pi05/bridge/mixed_latency/flappy.yaml",
         "mode": "mixed_latency",
         "run_id": "pi05_flappy_mixed_latency",
         "source_hf": "talha1503/flappy_bird_mixed_latency_parquet",
@@ -92,17 +92,21 @@ def _assert_pi05_flappy_experiment(cfg: dict[str, Any], expected: ExpectedExperi
     assert cfg["mode"] == expected["mode"]
     assert cfg["run_id"] == expected["run_id"]
     assert cfg["conda"]["env_name"] == "starvla_rl_games_pi05"
-    assert cfg["paths"]["base_model_dir"] == "playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1"
-    assert cfg["base_model"]["repo_id"] == "StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"
+    assert cfg["paths"]["base_model_dir"] == "playground/Pretrained_models/Qwen3-VL-4B-Instruct"
+    assert cfg["base_model"]["repo_id"] == "Qwen/Qwen3-VL-4B-Instruct"
+    assert cfg["initialization"]["checkpoint_hf_repo_id"] == "StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"
+    assert cfg["initialization"]["checkpoint_filename"] == "checkpoints/steps_50000_pytorch_model.pt"
     assert cfg["dataset"]["source_hf"] == expected["source_hf"]
     assert cfg["dataset"]["converted_name"] == expected["converted_name"]
     assert cfg["framework"]["name"] == "QwenPI_v3"
-    assert cfg["framework"]["action_model"]["action_dim"] == 2
+    assert cfg["framework"]["action_model"]["action_dim"] == 7
     assert cfg["framework"]["action_model"]["action_env_dim"] == 2
-    assert cfg["framework"]["action_model"]["state_dim"] == 1
+    assert cfg["framework"]["action_model"]["state_dim"] == 7
     assert cfg["framework"]["action_model"]["action_horizon"] == 1
     assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["action_dit_hidden_dim"] == 1024
     assert cfg["rl_games"]["model_alias"] == "pi-0.5"
+    assert cfg["rl_games"]["initialization_mode"] == "bridge"
+    assert cfg["rl_games"]["action_carrier"] == "bridge"
     assert cfg["rl_games"]["latencies"] == expected["latencies"]
 
 
@@ -139,19 +143,19 @@ def test_pi05_action_spec_preserves_model_dim_and_sets_env_dim() -> None:
     assert cfg.framework.action_model.action_env_dim == 2
 
 
-def test_pi05_model_config_uses_pi_v3_bridge_base_model() -> None:
+def test_pi05_model_config_uses_qwen3_base_backbone() -> None:
     cfg = _load_model_config("pi05.yaml")
 
     assert cfg["framework"]["qwenvl"]["base_vlm"] == (
-        "./playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1"
+        "./playground/Pretrained_models/Qwen3-VL-4B-Instruct"
     )
 
 
-def test_run_train_pi05_default_base_model_is_pi_v3_bridge() -> None:
+def test_run_train_pi05_bridge_initializer_matches_official_pi_v3_checkpoint() -> None:
     script = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "run_train.sh").read_text(encoding="utf-8")
 
-    assert 'BASE_MODEL_DIR="playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1"' in script
-    assert 'BASE_MODEL_REPO_ID="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"' in script
+    assert 'pi05) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1" ;;' in script
+    assert 'pi05) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_50000_pytorch_model.pt" ;;' in script
 
 
 def test_pi05_setup_assets_uses_public_flappy_route_only_for_flappy(

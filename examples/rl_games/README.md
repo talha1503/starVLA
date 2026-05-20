@@ -69,19 +69,20 @@ Available model trees:
 ```text
 examples/rl_games/experiments/openvla/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
 examples/rl_games/experiments/pi0/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
+examples/rl_games/experiments/pi05/bridge/{single,mixed_latency}/flappy.yaml
 examples/rl_games/experiments/gr00t/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
 ```
 
 `scratch` trains with the native task action width. `bridge` starts from the released StarVLA Bridge/RT-1 checkpoints, uses `Qwen/Qwen3-VL-4B-Instruct` as the base backbone, and trains through a shared 7D action/state carrier. Losses and inference are masked to the active task action dimensions: 2 for Flappy, 6 for Demon Attack, and 7 for Deadly Corridor.
 
-Legacy pi-0.5-style Flappy configs:
+pi-0.5 Bridge Flappy configs:
 
 ```text
-examples/rl_games/experiments/pi05_flappy_mixed_latency.yaml
-examples/rl_games/experiments/pi05_flappy_single.yaml
+examples/rl_games/experiments/pi05/bridge/mixed_latency/flappy.yaml
+examples/rl_games/experiments/pi05/bridge/single/flappy.yaml
 ```
 
-These pi-0.5 configs download and train from `StarVLA/Qwen3VL-PI_v3-Bridge-RT_1`.
+These pi-0.5 configs use `Qwen/Qwen3-VL-4B-Instruct` as the base backbone and initialize from `StarVLA/Qwen3VL-PI_v3-Bridge-RT_1`.
 
 Edit `workspace_dir`, `auth`, `wandb`, `dataset`, `base_model`, `checkpoint`, `launch`, `train_data`, and `trainer` in the YAML. Relative asset paths are resolved under `workspace_dir`.
 
@@ -179,7 +180,7 @@ pi-0.5-style mixed-latency Flappy:
 
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/pi05_flappy_mixed_latency.yaml \
+  examples/rl_games/experiments/pi05/bridge/mixed_latency/flappy.yaml \
   workspace_dir=WORKSPACE_DIR \
   wandb.entity=WANDB_ENTITY
 ```

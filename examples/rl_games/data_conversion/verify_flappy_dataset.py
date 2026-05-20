@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Iterable
 
 
@@ -16,6 +17,27 @@ EXPECTED_PROMPT = (
 )
 
 
+def _local_parquet_files(dataset_name: str) -> list[str] | None:
+    dataset_path = Path(dataset_name).expanduser()
+    if not dataset_path.exists():
+        return None
+    if dataset_path.is_file():
+        if dataset_path.suffix != ".parquet":
+            raise ValueError(f"dataset_name={dataset_name!r} exists but is not a parquet file")
+        return [str(dataset_path)]
+
+    parquet_files = sorted(dataset_path.rglob("*.parquet"))
+    if len(parquet_files) == 0:
+        raise FileNotFoundError(f"dataset_name={dataset_name!r} exists but contains no parquet files")
+
+    train_files = [
+        parquet_file
+        for parquet_file in parquet_files
+        if any("train" in part.lower() for part in parquet_file.relative_to(dataset_path).parts)
+    ]
+    return [str(parquet_file) for parquet_file in (train_files or parquet_files)]
+
+
 def _load_train_split(dataset_name: str, cache_dir: str | None, columns: list[str] | None = None):
     from datasets import load_dataset
 
@@ -23,6 +45,19 @@ def _load_train_split(dataset_name: str, cache_dir: str | None, columns: list[st
         if "split" in ds.column_names:
             return ds.filter(lambda row: str(row["split"]).lower() == "train")
         return ds
+
+    local_files = _local_parquet_files(dataset_name)
+    if local_files is not None:
+        load_columns = list(columns) if columns is not None else None
+        if load_columns is not None and "split" not in load_columns:
+            load_columns.append("split")
+        try:
+            ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=load_columns)
+        except (ValueError, KeyError):
+            if columns is None:
+                raise
+            ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=columns)
+        return _filter_internal_split(ds)
 
     try:
         ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=columns)
