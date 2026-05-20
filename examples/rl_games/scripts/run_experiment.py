@@ -266,8 +266,12 @@ def _validate_bridge_cfg(cfg: dict[str, Any], config_path: Path) -> None:
         return
 
     initialization_repo = _get(cfg, "initialization.checkpoint_hf_repo_id")
-    if not initialization_repo:
-        raise ValueError(f"{config_path}: bridge configs must set initialization.checkpoint_hf_repo_id")
+    initialization_local_dir = _get(cfg, "initialization.checkpoint_local_dir")
+    if not initialization_repo and not initialization_local_dir:
+        raise ValueError(
+            f"{config_path}: bridge configs must set initialization.checkpoint_local_dir "
+            "or initialization.checkpoint_hf_repo_id"
+        )
     initialization_filename = _get(cfg, "initialization.checkpoint_filename")
     if not initialization_filename:
         raise ValueError(f"{config_path}: bridge configs must set initialization.checkpoint_filename")
@@ -277,7 +281,7 @@ def _validate_bridge_cfg(cfg: dict[str, Any], config_path: Path) -> None:
         raise ValueError(
             f"{config_path}: bridge mode must not use StarVLA/Qwen3-VL-4B-Instruct-Action "
             "as its base model. Use Qwen/Qwen3-VL-4B-Instruct plus a Bridge/RT-1 checkpoint "
-            "under initialization.checkpoint_hf_repo_id."
+            "under initialization.checkpoint_local_dir or initialization.checkpoint_hf_repo_id."
         )
 
     env_dim = _env_action_dim_from_cfg(cfg)
@@ -341,6 +345,11 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         checkpoint_local_dir=checkpoint_dir,
         checkpoint_load=str(_get(cfg, "checkpoint.load", "auto")),
         checkpoint_hf_repo_id=str(_get(cfg, "checkpoint.hf_repo_id", "") or ""),
+        initialization_local_dir=(
+            _resolve_path(_get(cfg, "initialization.checkpoint_local_dir"), workspace_dir)
+            if _get(cfg, "initialization.checkpoint_local_dir") not in (None, "")
+            else ""
+        ),
         initialization_hf_repo_id=str(_get(cfg, "initialization.checkpoint_hf_repo_id", "") or ""),
         initialization_checkpoint_filename=str(_get(cfg, "initialization.checkpoint_filename", "") or ""),
         checkpoint_sync_enabled=str(_as_bool(_get(cfg, "checkpoint.sync_enabled", False))).lower(),

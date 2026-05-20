@@ -94,6 +94,7 @@ def _assert_pi05_flappy_experiment(cfg: dict[str, Any], expected: ExpectedExperi
     assert cfg["conda"]["env_name"] == "starvla_rl_games_pi05"
     assert cfg["paths"]["base_model_dir"] == "playground/Pretrained_models/Qwen3-VL-4B-Instruct"
     assert cfg["base_model"]["repo_id"] == "Qwen/Qwen3-VL-4B-Instruct"
+    assert cfg["initialization"]["checkpoint_local_dir"] == "playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1"
     assert cfg["initialization"]["checkpoint_hf_repo_id"] == "StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"
     assert cfg["initialization"]["checkpoint_filename"] == "checkpoints/steps_50000_pytorch_model.pt"
     assert cfg["dataset"]["source_hf"] == expected["source_hf"]
@@ -154,6 +155,7 @@ def test_pi05_model_config_uses_qwen3_base_backbone() -> None:
 def test_run_train_pi05_bridge_initializer_matches_official_pi_v3_checkpoint() -> None:
     script = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "run_train.sh").read_text(encoding="utf-8")
 
+    assert 'pi0|pi05) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1" ;;' in script
     assert 'pi05) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1" ;;' in script
     assert 'pi05) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_50000_pytorch_model.pt" ;;' in script
 
@@ -238,6 +240,109 @@ def test_pi05_flappy_single_experiment_forwards_qwenpi_v3_diffusion_width(tmp_pa
     cmd = run_experiment._trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
     assert "framework.action_model.diffusion_model_cfg.action_dit_hidden_dim=1024" in cmd
+
+
+def test_pi05_flappy_single_setup_resolves_local_initialization_dir(tmp_path: Path) -> None:
+    expected = EXPECTED_PI05_FLAPPY_EXPERIMENTS["single"]
+    cfg = _load_experiment_config(expected["name"])
+
+    setup_args = run_experiment._setup_namespace(cfg, tmp_path, "results/Checkpoints")
+
+    assert setup_args.initialization_local_dir == str(
+        tmp_path / "playground" / "Pretrained_models" / "Qwen3VL-PI_v3-Bridge-RT_1"
+    )
+
+
+def test_pi05_setup_assets_prefers_local_bridge_initialization_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    local_repo = tmp_path / "Qwen3VL-PI_v3-Bridge-RT_1"
+    checkpoint_file = local_repo / "checkpoints" / "steps_50000_pytorch_model.pt"
+    checkpoint_file.parent.mkdir(parents=True)
+    checkpoint_file.write_bytes(b"checkpoint")
+    args = _setup_args(tmp_path, "pi05", "flappy")
+    args.initialization_mode = "bridge"
+    args.initialization_local_dir = str(local_repo)
+    args.initialization_hf_repo_id = "StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"
+    args.initialization_checkpoint_filename = "checkpoints/steps_50000_pytorch_model.pt"
+
+    def fake_flappy_dataset(args: SimpleNamespace) -> dict[str, Any]:
+        return {
+            "dataset_ready": True,
+            "dataset_local_dir": args.dataset_local_dir,
+            "data_mix": "flappy_train__bridge",
+            "eval_data_mix": "flappy_train__bridge__val",
+            "latency_prompt_map_path": None,
+        }
+
+    def fake_base_model(model: str, base_model_dir: Path, base_model_repo_id: str | None) -> dict[str, Any]:
+        return {
+            "base_model_dir": str(base_model_dir),
+            "base_model_repo_id": base_model_repo_id,
+            "base_model_downloaded": False,
+        }
+
+    def fail_hf_download(repo_id: str, filename: str, checkpoint_dir: Path) -> tuple[Path | None, int, str | None]:
+        raise AssertionError("HF checkpoint download should not run when local initialization exists")
+
+    monkeypatch.setattr(setup_training_assets, "_ensure_flappy_dataset", fake_flappy_dataset)
+    monkeypatch.setattr(setup_training_assets, "_ensure_base_model", fake_base_model)
+    monkeypatch.setattr(setup_training_assets, "_download_hf_checkpoint_file", fail_hf_download)
+
+    setup = setup_training_assets.setup_assets(args)
+
+    assert setup["pretrained_checkpoint"] == str(checkpoint_file.resolve())
+    assert setup["initialization_source"] == "local"
+    assert setup["initialization_local_dir"] == str(local_repo.resolve())
+    assert setup["initialization_step"] == 50000
+
+
+def test_pi05_setup_assets_falls_back_to_hf_when_local_initialization_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    missing_local_repo = tmp_path / "missing_Qwen3VL-PI_v3-Bridge-RT_1"
+    downloaded_checkpoint = tmp_path / "downloaded" / "checkpoints" / "steps_50000_pytorch_model.pt"
+    downloaded_checkpoint.parent.mkdir(parents=True)
+    downloaded_checkpoint.write_bytes(b"checkpoint")
+    args = _setup_args(tmp_path, "pi05", "flappy")
+    args.initialization_mode = "bridge"
+    args.initialization_local_dir = str(missing_local_repo)
+    args.initialization_hf_repo_id = "StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"
+    args.initialization_checkpoint_filename = "checkpoints/steps_50000_pytorch_model.pt"
+
+    def fake_flappy_dataset(args: SimpleNamespace) -> dict[str, Any]:
+        return {
+            "dataset_ready": True,
+            "dataset_local_dir": args.dataset_local_dir,
+            "data_mix": "flappy_train__bridge",
+            "eval_data_mix": "flappy_train__bridge__val",
+            "latency_prompt_map_path": None,
+        }
+
+    def fake_base_model(model: str, base_model_dir: Path, base_model_repo_id: str | None) -> dict[str, Any]:
+        return {
+            "base_model_dir": str(base_model_dir),
+            "base_model_repo_id": base_model_repo_id,
+            "base_model_downloaded": False,
+        }
+
+    def fake_hf_download(repo_id: str, filename: str, checkpoint_dir: Path) -> tuple[Path | None, int, str | None]:
+        assert repo_id == "StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"
+        assert filename == "checkpoints/steps_50000_pytorch_model.pt"
+        return downloaded_checkpoint, 50000, None
+
+    monkeypatch.setattr(setup_training_assets, "_ensure_flappy_dataset", fake_flappy_dataset)
+    monkeypatch.setattr(setup_training_assets, "_ensure_base_model", fake_base_model)
+    monkeypatch.setattr(setup_training_assets, "_download_hf_checkpoint_file", fake_hf_download)
+
+    setup = setup_training_assets.setup_assets(args)
+
+    assert setup["pretrained_checkpoint"] == str(downloaded_checkpoint)
+    assert setup["initialization_source"] == "hf"
+    assert setup["initialization_local_dir"] == str(missing_local_repo)
+    assert setup["initialization_step"] == 50000
 
 
 def test_pi05_flappy_mixed_experiment_uses_qwenpi_v3() -> None:

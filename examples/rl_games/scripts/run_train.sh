@@ -62,7 +62,8 @@ Options:
   --base-model-repo-id <repo> HF repo for base model download
   --checkpoint-load <auto|none|local|hf>  Resume policy (default: auto; local first, then HF)
   --checkpoint-hf-repo-id <repo>  HF model repo id for checkpoint-load=hf
-  --initialization-hf-repo-id <repo> HF model repo used as bridge initializer
+  --initialization-local-dir <dir> Local Bridge initializer repo directory checked before HF
+  --initialization-hf-repo-id <repo> HF model repo used as bridge initializer when local checkpoint is missing
   --initialization-checkpoint-filename <path> Exact checkpoint file inside the bridge initializer repo
   --conda-env <name>            Conda env to activate (default: starvla_rl_games_<model>)
   --no-conda                    Use the current python environment
@@ -123,6 +124,7 @@ BASE_MODEL_REPO_ID="StarVLA/Qwen3-VL-4B-Instruct-Action"
 CHECKPOINT_LOAD="auto"
 CHECKPOINT_HF_REPO_ID=""
 INITIALIZATION_HF_REPO_ID=""
+INITIALIZATION_LOCAL_DIR=""
 INITIALIZATION_CHECKPOINT_FILENAME=""
 CONDA_ENV_NAME=""
 USE_CONDA="true"
@@ -181,6 +183,7 @@ while [[ $# -gt 0 ]]; do
     --base-model-repo-id) BASE_MODEL_REPO_ID="$2"; shift 2 ;;
     --checkpoint-load) CHECKPOINT_LOAD="$2"; shift 2 ;;
     --checkpoint-hf-repo-id) CHECKPOINT_HF_REPO_ID="$2"; shift 2 ;;
+    --initialization-local-dir) INITIALIZATION_LOCAL_DIR="$2"; shift 2 ;;
     --initialization-hf-repo-id) INITIALIZATION_HF_REPO_ID="$2"; shift 2 ;;
     --initialization-checkpoint-filename) INITIALIZATION_CHECKPOINT_FILENAME="$2"; shift 2 ;;
     --conda-env) CONDA_ENV_NAME="$2"; shift 2 ;;
@@ -296,6 +299,14 @@ case "$INIT_MODE_LOWER" in
         *) echo "No default bridge initializer for model '${MODEL}'." >&2; exit 1 ;;
       esac
     fi
+    if [[ -z "$INITIALIZATION_LOCAL_DIR" ]]; then
+      case "$MODEL" in
+        openvla) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen3VL-OFT-Bridge-RT-1" ;;
+        pi0|pi05) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1" ;;
+        gr00t) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen3VL-GR00T-Bridge-RT-1" ;;
+        *) echo "No default bridge initializer local dir for model '${MODEL}'." >&2; exit 1 ;;
+      esac
+    fi
     if [[ -z "$INITIALIZATION_CHECKPOINT_FILENAME" ]]; then
       case "$MODEL" in
         openvla) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_5000_pytorch_model.pt" ;;
@@ -409,6 +420,7 @@ SETUP_JSON="$(
     --checkpoint-local-dir "$CHECKPOINT_LOCAL_DIR" \
     --checkpoint-load "$CHECKPOINT_LOAD" \
     --checkpoint-hf-repo-id "${CHECKPOINT_HF_REPO_ID:-}" \
+    --initialization-local-dir "${INITIALIZATION_LOCAL_DIR:-}" \
     --initialization-hf-repo-id "${INITIALIZATION_HF_REPO_ID:-}" \
     --initialization-checkpoint-filename "${INITIALIZATION_CHECKPOINT_FILENAME:-}" \
     --hf-repo-id "${HF_REPO_ID:-}"

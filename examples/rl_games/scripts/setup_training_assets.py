@@ -145,6 +145,17 @@ def _download_hf_checkpoint_file(repo_id: str, filename: str, checkpoint_dir: Pa
     return Path(local_path), step, None
 
 
+def _resolve_local_initialization_checkpoint(local_dir: str, filename: str) -> tuple[Path | None, int]:
+    if not local_dir or not filename:
+        return None, 0
+    checkpoint_path = (Path(local_dir).expanduser() / filename).resolve()
+    if not checkpoint_path.exists():
+        return None, 0
+    file_match = STEP_FILE_RE.match(checkpoint_path.name)
+    step = int(file_match.group(1)) if file_match else 0
+    return checkpoint_path, step
+
+
 def _is_missing_hf_repo_error(error: str | None) -> bool:
     if not error:
         return False
@@ -407,7 +418,10 @@ def setup_assets(args) -> dict[str, Any]:
             return result
 
     initialization_hf_repo_id = str(getattr(args, "initialization_hf_repo_id", "") or "")
-    if initialization_hf_repo_id and _initialization_mode(args) in {"bridge", "pre-trained", "pretrained"}:
+    initialization_local_dir = str(getattr(args, "initialization_local_dir", "") or "")
+    initialization_checkpoint_filename = str(getattr(args, "initialization_checkpoint_filename", "") or "")
+    has_initialization_source = bool(initialization_local_dir or initialization_hf_repo_id)
+    if has_initialization_source and _initialization_mode(args) in {"bridge", "pre-trained", "pretrained"}:
         if local_ckpt is not None and args.checkpoint_load == "auto":
             result.update({
                 "resume_found": True,
@@ -419,8 +433,35 @@ def setup_assets(args) -> dict[str, Any]:
             })
             return result
 
+        local_init_ckpt, local_init_step = _resolve_local_initialization_checkpoint(
+            initialization_local_dir,
+            initialization_checkpoint_filename,
+        )
+        if local_init_ckpt is not None:
+            result.update({
+                "resume_found": False,
+                "resume_source": None,
+                "resume_kind": None,
+                "resume_checkpoint": None,
+                "resume_step": 0,
+                "checkpoint_local_dir": str(checkpoint_dir),
+                "pretrained_checkpoint": str(local_init_ckpt),
+                "initialization_source": "local",
+                "initialization_local_dir": str(Path(initialization_local_dir).expanduser().resolve()),
+                "initialization_hf_repo_id": initialization_hf_repo_id or None,
+                "initialization_checkpoint_filename": initialization_checkpoint_filename or None,
+                "initialization_step": local_init_step,
+            })
+            return result
+
+        if not initialization_hf_repo_id:
+            raise FileNotFoundError(
+                f"Bridge initialization checkpoint not found under initialization_local_dir="
+                f"{initialization_local_dir!r} with filename={initialization_checkpoint_filename!r}, "
+                "and no initialization_hf_repo_id was provided for download."
+            )
+
         init_dir = checkpoint_dir / "_initialization" / _safe_path_name(initialization_hf_repo_id)
-        initialization_checkpoint_filename = str(getattr(args, "initialization_checkpoint_filename", "") or "")
         if initialization_checkpoint_filename:
             init_ckpt, init_step, init_error = _download_hf_checkpoint_file(
                 initialization_hf_repo_id,
@@ -449,6 +490,7 @@ def setup_assets(args) -> dict[str, Any]:
             "checkpoint_local_dir": str(checkpoint_dir),
             "pretrained_checkpoint": str(init_ckpt),
             "initialization_source": "hf",
+            "initialization_local_dir": initialization_local_dir or None,
             "initialization_hf_repo_id": initialization_hf_repo_id,
             "initialization_checkpoint_filename": initialization_checkpoint_filename or None,
             "initialization_step": init_step,
@@ -547,6 +589,7 @@ def main() -> int:
     parser.add_argument("--checkpoint-local-dir", required=True)
     parser.add_argument("--checkpoint-load", choices=["auto", "none", "local", "hf"], default="auto")
     parser.add_argument("--checkpoint-hf-repo-id", default="")
+    parser.add_argument("--initialization-local-dir", default="")
     parser.add_argument("--initialization-hf-repo-id", default="")
     parser.add_argument("--initialization-checkpoint-filename", default="")
     parser.add_argument("--checkpoint-sync-enabled", default="false")

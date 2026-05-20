@@ -262,7 +262,13 @@ For `workspace_dir: WORKSPACE_DIR`, this means:
 checkpoints/results: WORKSPACE_DIR/results/Checkpoints/<run_id>/
 converted dataset:    WORKSPACE_DIR/playground/Datasets/rl_games/<dataset.converted_name>
 base model weights:   WORKSPACE_DIR/playground/Pretrained_models/Qwen3-VL-4B-Instruct
+bridge initializer:   WORKSPACE_DIR/playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1/checkpoints/steps_50000_pytorch_model.pt
 ```
+
+For bridge initialization, setup checks `initialization.checkpoint_local_dir` first. If the requested
+`initialization.checkpoint_filename` exists there, it is passed to training as
+`trainer.pretrained_checkpoint`; otherwise setup falls back to
+`initialization.checkpoint_hf_repo_id`.
 
 Authentication tokens are read from the shell by default:
 
