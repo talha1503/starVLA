@@ -7,7 +7,7 @@ from typing import Any, TypedDict
 import pytest
 import yaml
 
-from examples.rl_games.scripts import setup_training_assets
+from examples.rl_games.scripts import run_experiment, setup_training_assets
 from starVLA.training.rl_games.action_spec import apply_action_spec
 from starVLA.training.rl_games.alias import MODEL_ALIAS_TO_FRAMEWORK, apply_model_alias
 
@@ -194,6 +194,20 @@ def test_pi05_flappy_single_experiment_uses_qwenpi_v3() -> None:
     cfg = _load_experiment_config(expected["name"])
 
     _assert_pi05_flappy_experiment(cfg, expected)
+
+
+def test_pi05_flappy_single_experiment_forwards_qwenpi_v3_diffusion_width(tmp_path: Path) -> None:
+    expected = EXPECTED_PI05_FLAPPY_EXPERIMENTS["single"]
+    cfg = _load_experiment_config(expected["name"])
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "base_model"),
+        "resume_found": False,
+    }
+
+    cmd = run_experiment._trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert "framework.action_model.diffusion_model_cfg.action_dit_hidden_dim=1024" in cmd
 
 
 def test_pi05_flappy_mixed_experiment_uses_qwenpi_v3() -> None:

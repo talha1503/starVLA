@@ -351,6 +351,7 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         "framework.action_model.noise_beta_beta",
         "framework.action_model.noise_s",
         "framework.action_model.num_timestep_buckets",
+        "framework.action_model.diffusion_model_cfg.action_dit_hidden_dim",
         "framework.action_model.diffusion_model_cfg.dropout",
         "framework.action_model.diffusion_model_cfg.final_dropout",
         "framework.action_model.diffusion_model_cfg.interleave_self_attention",
