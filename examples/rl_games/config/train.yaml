@@ -33,6 +33,7 @@ framework:
     action_dim: 2
     action_env_dim: 2
     state_dim: 1
+    loss_type: l1
     action_horizon: 1
     future_action_window_size: 0
     past_action_window_size: 0
