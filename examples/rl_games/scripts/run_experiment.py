@@ -289,6 +289,7 @@ def _validate_bridge_cfg(cfg: dict[str, Any], config_path: Path) -> None:
             f"active action dim={env_dim}. Use the 7D multibinary layout for bridge mode."
         )
 
+    model = str(_get(cfg, "model", "") or "")
     action_dim = _get(cfg, "framework.action_model.action_dim")
     action_env_dim = _get(cfg, "framework.action_model.action_env_dim")
     state_dim = _get(cfg, "framework.action_model.state_dim")
@@ -298,10 +299,14 @@ def _validate_bridge_cfg(cfg: dict[str, Any], config_path: Path) -> None:
         raise ValueError(
             f"{config_path}: bridge framework.action_model.action_env_dim must be {env_dim}, got {action_env_dim}"
         )
-    if state_dim not in (None, "") and int(state_dim) != 7:
-        raise ValueError(f"{config_path}: bridge framework.action_model.state_dim must be 7, got {state_dim}")
-    if not _as_bool(_get(cfg, "train_data.include_state", False)):
-        raise ValueError(f"{config_path}: bridge train_data.include_state must be true")
+    if model == "openvla":
+        if _as_bool(_get(cfg, "train_data.include_state", False)):
+            raise ValueError(f"{config_path}: openvla bridge train_data.include_state must be false")
+    else:
+        if state_dim not in (None, "") and int(state_dim) != 7:
+            raise ValueError(f"{config_path}: bridge framework.action_model.state_dim must be 7, got {state_dim}")
+        if not _as_bool(_get(cfg, "train_data.include_state", False)):
+            raise ValueError(f"{config_path}: bridge train_data.include_state must be true")
 
 
 def _optional_int_list(value: Any) -> list[int] | None:
@@ -417,6 +422,7 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         "framework.action_model.action_dim",
         "framework.action_model.action_env_dim",
         "framework.action_model.state_dim",
+        "framework.action_model.loss_type",
         "framework.action_model.action_horizon",
         "framework.action_model.future_action_window_size",
         "framework.action_model.past_action_window_size",

@@ -113,7 +113,7 @@ def _extract_image_observation(obs: Any) -> Any:
     return obs
 
 
-def _resize_rgb(raw_obs: Any, image_size: int) -> np.ndarray:
+def _resize_rgb(raw_obs: Any, image_size: int, *, prefer_area: bool = False) -> np.ndarray:
     raw_obs = _extract_image_observation(raw_obs)
     if raw_obs is None:
         return np.zeros((image_size, image_size, 3), dtype=np.uint8)
@@ -126,6 +126,13 @@ def _resize_rgb(raw_obs: Any, image_size: int) -> np.ndarray:
         raw_obs = np.repeat(raw_obs, 3, axis=2)
     if raw_obs.shape[:2] == (image_size, image_size):
         return raw_obs
+    if prefer_area:
+        try:
+            import cv2  # noqa: WPS433
+
+            return cv2.resize(raw_obs, (image_size, image_size), interpolation=cv2.INTER_AREA)
+        except ImportError:
+            pass
     return np.array(Image.fromarray(raw_obs).resize((image_size, image_size), Image.BILINEAR))
 
 
@@ -186,6 +193,8 @@ class _TaskEvaluator:
         self.default_prompt = str(getattr(self.env_eval_cfg, "task_description", "") or "")
         self.image_size = int(getattr(self.env_eval_cfg, "image_size", 84))
         self.frameskip = max(1, int(getattr(self.env_eval_cfg, "frameskip", 1)))
+        vla_data_cfg = getattr(getattr(cfg, "datasets", None), "vla_data", None)
+        self.include_state = bool(getattr(vla_data_cfg, "include_state", False))
         self.state_dim = int(getattr(cfg.framework.action_model, "state_dim", 1) or 1)
 
     def _make_env(self):
@@ -193,7 +202,8 @@ class _TaskEvaluator:
             import flappy_bird_gymnasium  # noqa: F401
             import gymnasium as gym
 
-            return gym.make("FlappyBird-v0")
+            os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+            return gym.make("FlappyBird-v0", render_mode="rgb_array", use_lidar=False)
 
         if self.task == "demon_attack":
             import ale_py  # noqa: F401
@@ -243,6 +253,14 @@ class _TaskEvaluator:
     def _uses_native_frameskip(self) -> bool:
         return self.task in {"demon_attack", "deadly_corridor"}
 
+    def _model_observation(self, env, obs):
+        if self.task != "flappy":
+            return obs
+        frame = env.render()
+        if frame is None:
+            return obs
+        return frame
+
     def _decode_action(self, raw_action: np.ndarray, runtime_button_order: Optional[List[str]] = None):
         if self.task == "flappy":
             return decode_discrete_argmax(raw_action, 2)
@@ -290,18 +308,24 @@ class _TaskEvaluator:
         )
         for episode in episode_iter:
             obs, _ = env.reset()
+            model_obs = self._model_observation(env, obs)
             queue.reset()
             done = False
             total_reward = 0.0
             steps = 0
 
             while not done and steps < max_steps:
-                obs_rgb = _resize_rgb(obs, image_size=self.image_size)
+                obs_rgb = _resize_rgb(
+                    model_obs,
+                    image_size=self.image_size,
+                    prefer_area=self.task == "flappy",
+                )
                 example = {
                     "image": [Image.fromarray(obs_rgb)],
                     "lang": prompt,
-                    "state": np.zeros((1, self.state_dim), dtype=np.float32),
                 }
+                if self.include_state:
+                    example["state"] = np.zeros((1, self.state_dim), dtype=np.float32)
                 output = model.predict_action(examples=[example])
                 actions = output["normalized_actions"]
                 if actions.ndim != 3:
@@ -320,6 +344,7 @@ class _TaskEvaluator:
                     step_reward += float(reward)
                     if terminated or truncated:
                         break
+                model_obs = self._model_observation(env, obs)
 
                 total_reward += step_reward
                 steps += 1

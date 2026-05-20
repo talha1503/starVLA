@@ -406,55 +406,6 @@ def setup_assets(args) -> dict[str, Any]:
             })
             return result
 
-    initialization_hf_repo_id = str(getattr(args, "initialization_hf_repo_id", "") or "")
-    if initialization_hf_repo_id and _initialization_mode(args) in {"bridge", "pre-trained", "pretrained"}:
-        if local_ckpt is not None and args.checkpoint_load == "auto":
-            result.update({
-                "resume_found": True,
-                "resume_source": "local",
-                "resume_kind": local_kind,
-                "resume_checkpoint": str(local_ckpt),
-                "resume_step": local_step,
-                "checkpoint_local_dir": str(checkpoint_dir),
-            })
-            return result
-
-        init_dir = checkpoint_dir / "_initialization" / _safe_path_name(initialization_hf_repo_id)
-        initialization_checkpoint_filename = str(getattr(args, "initialization_checkpoint_filename", "") or "")
-        if initialization_checkpoint_filename:
-            init_ckpt, init_step, init_error = _download_hf_checkpoint_file(
-                initialization_hf_repo_id,
-                initialization_checkpoint_filename,
-                init_dir,
-            )
-            init_kind = "model" if init_ckpt is not None else None
-        else:
-            init_ckpt, init_step, init_kind, init_error = _download_latest_hf_checkpoint(initialization_hf_repo_id, init_dir)
-        if init_ckpt is None:
-            raise RuntimeError(
-                f"Could not download bridge initialization checkpoint from {initialization_hf_repo_id}: "
-                f"{init_error or 'no checkpoint files found'}"
-            )
-        if init_kind == "state":
-            raise ValueError(
-                f"Bridge initialization expected model weights, but {initialization_hf_repo_id} resolved "
-                f"to a full training-state directory: {init_ckpt}"
-            )
-        result.update({
-            "resume_found": False,
-            "resume_source": None,
-            "resume_kind": None,
-            "resume_checkpoint": None,
-            "resume_step": 0,
-            "checkpoint_local_dir": str(checkpoint_dir),
-            "pretrained_checkpoint": str(init_ckpt),
-            "initialization_source": "hf",
-            "initialization_hf_repo_id": initialization_hf_repo_id,
-            "initialization_checkpoint_filename": initialization_checkpoint_filename or None,
-            "initialization_step": init_step,
-        })
-        return result
-
     hf_repo_id = args.checkpoint_hf_repo_id or args.hf_repo_id
     if args.checkpoint_load in {"auto", "hf"} and hf_repo_id:
         hf_ckpt, hf_step, hf_kind, hf_error = _download_latest_hf_checkpoint(hf_repo_id, checkpoint_dir)
@@ -502,6 +453,44 @@ def setup_assets(args) -> dict[str, Any]:
                 )
             else:
                 result["checkpoint_hf_warning"] = hf_error
+
+    initialization_hf_repo_id = str(getattr(args, "initialization_hf_repo_id", "") or "")
+    if initialization_hf_repo_id and _initialization_mode(args) in {"bridge", "pre-trained", "pretrained"}:
+        init_dir = checkpoint_dir / "_initialization" / _safe_path_name(initialization_hf_repo_id)
+        initialization_checkpoint_filename = str(getattr(args, "initialization_checkpoint_filename", "") or "")
+        if initialization_checkpoint_filename:
+            init_ckpt, init_step, init_error = _download_hf_checkpoint_file(
+                initialization_hf_repo_id,
+                initialization_checkpoint_filename,
+                init_dir,
+            )
+            init_kind = "model" if init_ckpt is not None else None
+        else:
+            init_ckpt, init_step, init_kind, init_error = _download_latest_hf_checkpoint(initialization_hf_repo_id, init_dir)
+        if init_ckpt is None:
+            raise RuntimeError(
+                f"Could not download bridge initialization checkpoint from {initialization_hf_repo_id}: "
+                f"{init_error or 'no checkpoint files found'}"
+            )
+        if init_kind == "state":
+            raise ValueError(
+                f"Bridge initialization expected model weights, but {initialization_hf_repo_id} resolved "
+                f"to a full training-state directory: {init_ckpt}"
+            )
+        result.update({
+            "resume_found": False,
+            "resume_source": None,
+            "resume_kind": None,
+            "resume_checkpoint": None,
+            "resume_step": 0,
+            "checkpoint_local_dir": str(checkpoint_dir),
+            "pretrained_checkpoint": str(init_ckpt),
+            "initialization_source": "hf",
+            "initialization_hf_repo_id": initialization_hf_repo_id,
+            "initialization_checkpoint_filename": initialization_checkpoint_filename or None,
+            "initialization_step": init_step,
+        })
+        return result
 
     if local_ckpt is not None:
         result.update({
