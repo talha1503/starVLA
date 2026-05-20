@@ -428,22 +428,23 @@ class VLATrainer(TrainerUtils):
                     }
                 )
 
-            if self.completed_steps % self.config.trainer.eval_interval == 0:
-                step_metrics = self.eval_action_loss(step_metrics)
-            if self._rl_games_eval_runner is not None:
-                eval_every = self._rl_games_eval_runner.interval_steps(default=self.config.trainer.eval_interval)
-                if eval_every > 0 and self.completed_steps % eval_every == 0:
-                    if self._rl_games_eval_runner.is_enabled(stage="mid_train"):
-                        eval_result = self._rl_games_eval_runner.run(
-                            model=self.accelerator.unwrap_model(self.model),
-                            step=self.completed_steps,
-                            stage="mid_train",
-                        )
-                        step_metrics = self._append_rl_games_eval_metrics(
-                            step_metrics=step_metrics,
-                            eval_result=eval_result,
-                            stage="mid_train",
-                        )
+            if self.accelerator.sync_gradients and self.completed_steps > 0:
+                if self.completed_steps % self.config.trainer.eval_interval == 0:
+                    step_metrics = self.eval_action_loss(step_metrics)
+                if self._rl_games_eval_runner is not None:
+                    eval_every = self._rl_games_eval_runner.interval_steps(default=self.config.trainer.eval_interval)
+                    if eval_every > 0 and self.completed_steps % eval_every == 0:
+                        if self._rl_games_eval_runner.is_enabled(stage="mid_train"):
+                            eval_result = self._rl_games_eval_runner.run(
+                                model=self.accelerator.unwrap_model(self.model),
+                                step=self.completed_steps,
+                                stage="mid_train",
+                            )
+                            step_metrics = self._append_rl_games_eval_metrics(
+                                step_metrics=step_metrics,
+                                eval_result=eval_result,
+                                stage="mid_train",
+                            )
 
             step_metrics["timing/data"] = t_end_data - t_start_data
             step_metrics["timing/model"] = t_end_model - t_start_model
