@@ -33,7 +33,9 @@ ACTION_LABELS = [
     "ATTACK",
 ]
 ACTION_DIM = len(ACTION_LABELS)
+BRIDGE_ACTION_DIM = 7
 STATE_DIM = 1
+BRIDGE_STATE_DIM = 7
 FPS = 35
 
 
@@ -105,6 +107,34 @@ def _png_bytes(image: Any) -> bytes:
     return buf.getvalue()
 
 
+def _normalize_action_carrier(action_carrier: str) -> str:
+    carrier = str(action_carrier or "native").lower()
+    if carrier in {"native", "bridge"}:
+        return carrier
+    raise ValueError(f"Unsupported action_carrier={action_carrier!r}; expected native or bridge")
+
+
+def _action_dim(action_carrier: str) -> int:
+    return BRIDGE_ACTION_DIM if _normalize_action_carrier(action_carrier) == "bridge" else ACTION_DIM
+
+
+def _action_labels(action_carrier: str) -> list[str]:
+    # Deadly Corridor already uses the 7D semantic bridge carrier natively.
+    if _normalize_action_carrier(action_carrier) == "native":
+        return list(ACTION_LABELS)
+    return list(ACTION_LABELS)
+
+
+def _state_dim(action_carrier: str) -> int:
+    return BRIDGE_STATE_DIM if _normalize_action_carrier(action_carrier) == "bridge" else STATE_DIM
+
+
+def _state_labels(action_carrier: str) -> list[str]:
+    if _normalize_action_carrier(action_carrier) == "native":
+        return ["state"]
+    return [f"BRIDGE_STATE_{idx}" for idx in range(BRIDGE_STATE_DIM)]
+
+
 def _action_from_text(text: str) -> list[float]:
     normalized = str(text).upper()
     return [1.0 if label in normalized else 0.0 for label in ACTION_LABELS]
@@ -122,6 +152,39 @@ def _action_vector(row: dict[str, Any]) -> list[float]:
     raise ValueError("Deadly Corridor dataset rows must contain `action` or `action_text`")
 
 
+def _select_episode_ids(
+    episode_ids: list[int],
+    episode_latencies: dict[int, int],
+    *,
+    max_episodes: int | None,
+    require_latency_prompt_map: bool,
+) -> list[int]:
+    if max_episodes is None:
+        return episode_ids
+    if not require_latency_prompt_map:
+        return episode_ids[:max_episodes]
+
+    selected: list[int] = []
+    selected_set: set[int] = set()
+    for latency in sorted(set(episode_latencies.values())):
+        for episode_id in episode_ids:
+            if episode_id in selected_set:
+                continue
+            if episode_latencies.get(episode_id) == latency:
+                selected.append(episode_id)
+                selected_set.add(episode_id)
+                break
+
+    target_count = max(max_episodes, len(selected))
+    for episode_id in episode_ids:
+        if len(selected) >= target_count:
+            break
+        if episode_id not in selected_set:
+            selected.append(episode_id)
+            selected_set.add(episode_id)
+    return selected
+
+
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -129,7 +192,16 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def _write_metadata(dataset_dir: Path, *, episode_lengths: list[int], task_prompts: list[str]) -> None:
+def _write_metadata(
+    dataset_dir: Path,
+    *,
+    episode_lengths: list[int],
+    task_prompts: list[str],
+    action_dim: int,
+    action_labels: list[str],
+    state_dim: int,
+    state_labels: list[str],
+) -> None:
     meta_dir = dataset_dir / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
 
@@ -137,7 +209,7 @@ def _write_metadata(dataset_dir: Path, *, episode_lengths: list[int], task_promp
         "state": {
             "game_state": {
                 "start": 0,
-                "end": STATE_DIM,
+                "end": state_dim,
                 "dtype": "float32",
                 "absolute": True,
                 "original_key": "observation.state",
@@ -146,7 +218,7 @@ def _write_metadata(dataset_dir: Path, *, episode_lengths: list[int], task_promp
         "action": {
             "button": {
                 "start": 0,
-                "end": ACTION_DIM,
+                "end": action_dim,
                 "dtype": "float32",
                 "absolute": True,
                 "original_key": "action",
@@ -180,13 +252,13 @@ def _write_metadata(dataset_dir: Path, *, episode_lengths: list[int], task_promp
             },
             "observation.state": {
                 "dtype": "float32",
-                "shape": [STATE_DIM],
-                "names": ["state"],
+                "shape": [state_dim],
+                "names": state_labels,
             },
             "action": {
                 "dtype": "float32",
-                "shape": [ACTION_DIM],
-                "names": ACTION_LABELS,
+                "shape": [action_dim],
+                "names": action_labels,
             },
             "timestamp": {"dtype": "float64", "shape": [1]},
             "episode_index": {"dtype": "int64", "shape": [1]},
@@ -201,7 +273,7 @@ def _write_metadata(dataset_dir: Path, *, episode_lengths: list[int], task_promp
     _write_jsonl(meta_dir / "tasks.jsonl", [{"task_index": idx, "task": prompt} for idx, prompt in enumerate(task_prompts)])
 
 
-def _write_episode(path: Path, rows: list[dict[str, Any]]) -> None:
+def _write_episode(path: Path, rows: list[dict[str, Any]], *, action_dim: int, state_dim: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     table = pa.table(
         {
@@ -210,12 +282,12 @@ def _write_episode(path: Path, rows: list[dict[str, Any]]) -> None:
                 type=pa.struct([("bytes", pa.binary()), ("path", pa.string())]),
             ),
             "observation.state": pa.array(
-                [[0.0] * STATE_DIM for _ in rows],
-                type=pa.list_(pa.float32(), STATE_DIM),
+                [[0.0] * state_dim for _ in rows],
+                type=pa.list_(pa.float32(), state_dim),
             ),
             "action": pa.array(
                 [row["action"] for row in rows],
-                type=pa.list_(pa.float32(), ACTION_DIM),
+                type=pa.list_(pa.float32(), action_dim),
             ),
             "timestamp": pa.array([row["timestamp"] for row in rows], type=pa.float64()),
             "episode_index": pa.array([row["episode_index"] for row in rows], type=pa.int64()),
@@ -237,7 +309,13 @@ def convert_dataset(
     force: bool = False,
     require_latency_prompt_map: bool = False,
     latency_filter: list[int] | None = None,
+    action_carrier: str = "native",
 ) -> dict[str, Any]:
+    action_carrier = _normalize_action_carrier(action_carrier)
+    action_dim = _action_dim(action_carrier)
+    action_labels = _action_labels(action_carrier)
+    state_dim = _state_dim(action_carrier)
+    state_labels = _state_labels(action_carrier)
     val_output_dir = output_dir.with_name(f"{output_dir.name}__val")
     if output_dir.exists() and force:
         shutil.rmtree(output_dir)
@@ -258,6 +336,7 @@ def convert_dataset(
             raise ValueError(f"{dataset_name} has no {split} rows{suffix}")
 
         episode_indices: dict[int, list[tuple[int, int]]] = {}
+        episode_latencies: dict[int, int] = {}
         prompt_to_task_index: dict[str, int] = {}
         task_prompts: list[str] = []
         latency_rows: list[dict[str, Any]] = []
@@ -266,14 +345,20 @@ def convert_dataset(
             episode_idx = int(_row_get(row, ("episode_idx", "episode_index", "episode")))
             timestep = int(_row_get(row, ("t", "frame_index", "frame_idx", "step"), row_idx))
             episode_indices.setdefault(episode_idx, []).append((timestep, row_idx))
+            if require_latency_prompt_map and "latency" in row and row["latency"] is not None:
+                episode_latencies.setdefault(episode_idx, int(row["latency"]))
             prompt = str(row["prompt"])
             if prompt not in prompt_to_task_index:
                 prompt_to_task_index[prompt] = len(task_prompts)
                 task_prompts.append(prompt)
 
         original_episode_ids = sorted(episode_indices)
-        if max_episodes is not None:
-            original_episode_ids = original_episode_ids[:max_episodes]
+        original_episode_ids = _select_episode_ids(
+            original_episode_ids,
+            episode_latencies,
+            max_episodes=max_episodes,
+            require_latency_prompt_map=require_latency_prompt_map,
+        )
         for episode_id in original_episode_ids:
             episode_indices[episode_id].sort(key=lambda item: item[0])
 
@@ -313,9 +398,19 @@ def convert_dataset(
             _write_episode(
                 split_output_dir / f"data/chunk-{episode_chunk:03d}/episode_{new_episode_idx:06d}.parquet",
                 out_rows,
+                action_dim=action_dim,
+                state_dim=state_dim,
             )
 
-        _write_metadata(split_output_dir, episode_lengths=episode_lengths, task_prompts=task_prompts)
+        _write_metadata(
+            split_output_dir,
+            episode_lengths=episode_lengths,
+            task_prompts=task_prompts,
+            action_dim=action_dim,
+            action_labels=action_labels,
+            state_dim=state_dim,
+            state_labels=state_labels,
+        )
 
         if latency_rows:
             try:
@@ -335,9 +430,14 @@ def convert_dataset(
             "split": split,
             "source": dataset_name,
             "format": "starvla_lerobot_v2_image_parquet",
-            "action_labels": ACTION_LABELS,
-            "action_dim": ACTION_DIM,
-            "state_dim": STATE_DIM,
+            "action_labels": action_labels,
+            "action_dim": action_dim,
+            "active_action_dim": ACTION_DIM,
+            "action_carrier": action_carrier,
+            "bridge_action_dim": BRIDGE_ACTION_DIM if action_carrier == "bridge" else None,
+            "state_dim": state_dim,
+            "active_state_dim": STATE_DIM,
+            "state_carrier": action_carrier,
             "latency_filter": latency_filter,
             "episodes": len(episode_lengths),
             "frames": int(sum(episode_lengths)),
@@ -364,6 +464,7 @@ def main() -> int:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--require-latency-prompt-map", "--require_latency_prompt_map", action="store_true")
     parser.add_argument("--latency-filter", "--latency_filter", default=None)
+    parser.add_argument("--action-carrier", "--action_carrier", choices=["native", "bridge"], default="native")
     args = parser.parse_args()
 
     latency_filter = None
@@ -378,6 +479,7 @@ def main() -> int:
         force=args.force,
         require_latency_prompt_map=args.require_latency_prompt_map,
         latency_filter=latency_filter,
+        action_carrier=args.action_carrier,
     )
     print(json.dumps(manifest, indent=2))
     return 0

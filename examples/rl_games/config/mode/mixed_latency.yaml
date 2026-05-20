@@ -1,6 +1,8 @@
 # @package _global_
 
 rl_games:
+  initialization_mode: scratch
+  action_carrier: native
   env_eval:
     latency:
       mode: mixed

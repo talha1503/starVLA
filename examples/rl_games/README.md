@@ -37,6 +37,8 @@ Layered installer (manual control):
 bash examples/rl_games/install/install_stack.sh openvla flappy
 bash examples/rl_games/install/install_stack.sh pi0 demon_attack
 bash examples/rl_games/install/install_stack.sh pi05 flappy
+bash examples/rl_games/install/install_stack.sh gr00t flappy
+bash examples/rl_games/install/install_stack.sh gr00t demon_attack
 bash examples/rl_games/install/install_stack.sh gr00t deadly_corridor
 ```
 
@@ -59,25 +61,22 @@ Available scripts:
 The current training flow is config-driven. Pick one YAML file from:
 
 ```text
-examples/rl_games/experiments/
+examples/rl_games/experiments/<model>/<scratch|bridge>/<single|mixed_latency>/<env>.yaml
 ```
 
-Main OpenVLA configs:
+Available model trees:
 
 ```text
-examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml
-examples/rl_games/experiments/openvla_flappy_single.yaml
-examples/rl_games/experiments/openvla_demon_attack_mixed_latency.yaml
-examples/rl_games/experiments/openvla_demon_attack_single.yaml
-examples/rl_games/experiments/openvla_deadly_corridor_mixed_latency.yaml
-examples/rl_games/experiments/openvla_deadly_corridor_single.yaml
+examples/rl_games/experiments/openvla/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
+examples/rl_games/experiments/pi0/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
+examples/rl_games/experiments/gr00t/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
 ```
 
-pi-0 and pi-0.5-style Flappy configs:
+`scratch` trains with the native task action width. `bridge` starts from the released StarVLA Bridge/RT-1 checkpoints, uses `Qwen/Qwen3-VL-4B-Instruct` as the base backbone, and trains through a shared 7D action/state carrier. Losses and inference are masked to the active task action dimensions: 2 for Flappy, 6 for Demon Attack, and 7 for Deadly Corridor.
+
+Legacy pi-0.5-style Flappy configs:
 
 ```text
-examples/rl_games/experiments/pi0_flappy_mixed_latency.yaml
-examples/rl_games/experiments/pi0_flappy_single.yaml
 examples/rl_games/experiments/pi05_flappy_mixed_latency.yaml
 examples/rl_games/experiments/pi05_flappy_single.yaml
 ```
@@ -97,7 +96,7 @@ Mixed-latency Flappy:
 
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
+  examples/rl_games/experiments/openvla/scratch/mixed_latency/flappy.yaml \
   workspace_dir=WORKSPACE_DIR \
   wandb.entity=WANDB_ENTITY
 ```
@@ -106,7 +105,70 @@ Single-latency Flappy:
 
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/openvla_flappy_single.yaml \
+  examples/rl_games/experiments/openvla/scratch/single/flappy.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+Bridge-mode Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/openvla/bridge/single/flappy.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+GR00T mixed-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/gr00t/scratch/mixed_latency/flappy.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+GR00T single-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/gr00t/scratch/single/flappy.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+GR00T mixed-latency Demon Attack:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/gr00t/scratch/mixed_latency/demon_attack.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+GR00T single-latency Demon Attack:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/gr00t/scratch/single/demon_attack.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+GR00T mixed-latency Deadly Corridor:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/gr00t/scratch/mixed_latency/deadly_corridor.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+GR00T single-latency Deadly Corridor:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/gr00t/scratch/single/deadly_corridor.yaml \
   workspace_dir=WORKSPACE_DIR \
   wandb.entity=WANDB_ENTITY
 ```
@@ -124,7 +186,7 @@ Single-GPU direct backend with a custom run name:
 
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/openvla_flappy_single.yaml \
+  examples/rl_games/experiments/openvla/scratch/single/flappy.yaml \
   run_id=test_qwen3_flappy_gc_none_backend \
   trainer.distributed_backend=none
 ```
@@ -133,7 +195,7 @@ Override any YAML value from the command line:
 
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
+  examples/rl_games/experiments/openvla/scratch/mixed_latency/flappy.yaml \
   workspace_dir=WORKSPACE_DIR \
   run_id=smoke_test \
   trainer.max_train_steps=10 \
@@ -145,7 +207,7 @@ Fast end-to-end preprocessing debug:
 
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
+  examples/rl_games/experiments/openvla/scratch/mixed_latency/flappy.yaml \
   run_id=debug_flappy_mixed_e2e \
   dataset.debug_subset.enabled=true \
   dataset.debug_subset.max_episodes=5 \

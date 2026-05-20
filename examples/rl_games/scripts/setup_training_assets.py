@@ -18,12 +18,17 @@ if str(REPO_ROOT) not in sys.path:
 
 STEP_FILE_RE = re.compile(r"steps_(\d+)_(?:pytorch_model\.pt|model\.safetensors)$")
 STEP_STATE_RE = re.compile(r"steps_(\d+)_state$")
+DEBUG_DATASET_RE = re.compile(r"^(?P<base>.+)(?P<debug>__debug(?:_[A-Za-z0-9_-]+)?_\d+ep)$")
 
 
 def _str2bool(value: str | bool) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _safe_path_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_") or "checkpoint"
 
 
 def _has_files(path: Path) -> bool:
@@ -117,6 +122,29 @@ def _download_latest_hf_checkpoint(repo_id: str, checkpoint_dir: Path) -> tuple[
     return Path(local_path), step, kind, None
 
 
+def _download_hf_checkpoint_file(repo_id: str, filename: str, checkpoint_dir: Path) -> tuple[Path | None, int, str | None]:
+    try:
+        from huggingface_hub import hf_hub_download
+    except Exception as exc:
+        return None, 0, f"huggingface_hub import failed: {exc}"
+
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        local_path = hf_hub_download(
+            repo_id=repo_id,
+            repo_type="model",
+            filename=filename,
+            local_dir=str(checkpoint_dir),
+            local_dir_use_symlinks=False,
+        )
+    except Exception as exc:
+        return None, 0, f"could not download HF checkpoint {filename} from {repo_id}: {exc}"
+
+    file_match = STEP_FILE_RE.match(os.path.basename(filename))
+    step = int(file_match.group(1)) if file_match else 0
+    return Path(local_path), step, None
+
+
 def _is_missing_hf_repo_error(error: str | None) -> bool:
     if not error:
         return False
@@ -181,9 +209,32 @@ def _validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, A
     }
 
 
+def _initialization_mode(args) -> str:
+    return str(getattr(args, "initialization_mode", None) or "scratch").lower()
+
+
+def _action_carrier(args) -> str:
+    configured = str(getattr(args, "action_carrier", "") or "").lower()
+    if configured in {"native", "bridge"}:
+        return configured
+    if _initialization_mode(args) in {"pre-trained", "pretrained", "bridge"}:
+        return "bridge"
+    return "native"
+
+
+def _carrier_dataset_name(data_mix: str, action_carrier: str) -> str:
+    if action_carrier != "bridge" or "__bridge" in data_mix:
+        return data_mix
+    match = DEBUG_DATASET_RE.match(data_mix)
+    if match:
+        return f"{match.group('base')}__bridge{match.group('debug')}"
+    return f"{data_mix}__bridge"
+
+
 def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -> dict[str, Any]:
     data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
-    data_mix = args.converted_dataset_name
+    action_carrier = _action_carrier(args)
+    data_mix = _carrier_dataset_name(args.converted_dataset_name, action_carrier)
     dataset_dir = data_root_dir / data_mix
     eval_data_mix = f"{data_mix}__val"
     eval_dataset_dir = data_root_dir / eval_data_mix
@@ -191,8 +242,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
     mixed_latency = args.mode == "mixed_latency" or str(args.latency_mode or "").lower() == "mixed"
     prompt_map = dataset_dir / "latency_prompt_map.json"
 
-    def _manifest_matches() -> bool:
-        manifest_path = dataset_dir / "manifest.json"
+    def _manifest_matches(dataset_path: Path) -> bool:
+        manifest_path = dataset_path / "manifest.json"
         if not manifest_path.exists():
             return True
         try:
@@ -200,6 +251,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
         except Exception:
             return False
         if args.source_dataset_hf and str(manifest.get("source", "")) != str(args.source_dataset_hf):
+            return False
+        if str(manifest.get("action_carrier", "native")) != action_carrier:
             return False
         expected_latency_filter = getattr(args, "latency_filter", None)
         if expected_latency_filter is not None:
@@ -223,7 +276,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
         force
         or not _dataset_ready(dataset_dir)
         or not _dataset_ready(eval_dataset_dir)
-        or not _manifest_matches()
+        or not _manifest_matches(dataset_dir)
+        or not _manifest_matches(eval_dataset_dir)
         or not _mixed_prompt_map_ready()
     )
     converted = False
@@ -247,6 +301,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
         }
         if "latency_filter" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["latency_filter"] = getattr(args, "latency_filter", None)
+        if "action_carrier" in inspect.signature(convert_dataset).parameters:
+            convert_kwargs["action_carrier"] = action_carrier
         convert_dataset(args.source_dataset_hf, dataset_dir, **convert_kwargs)
         converted = True
         if mixed_latency and not _mixed_prompt_map_ready():
@@ -265,6 +321,7 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
         "data_mix": data_mix,
         "eval_data_mix": eval_data_mix,
         "eval_dataset_dir": str(eval_dataset_dir),
+        "action_carrier": action_carrier,
         "latency_prompt_map_path": str(prompt_map) if prompt_map.exists() else None,
         **validation,
         "eval_dataset_stats_path": eval_validation["dataset_stats_path"],
@@ -311,13 +368,15 @@ def setup_assets(args) -> dict[str, Any]:
         "model": args.model,
         "env": args.env,
         "mode": args.mode,
+        "initialization_mode": _initialization_mode(args),
+        "action_carrier": _action_carrier(args),
     }
 
-    if args.model in {"openvla", "pi0", "pi05"} and args.env == "flappy":
+    if args.model in {"openvla", "pi0", "pi05", "gr00t"} and args.env == "flappy":
         result.update(_ensure_flappy_dataset(args))
-    elif args.model in {"openvla", "pi0"} and args.env == "demon_attack":
+    elif args.model in {"openvla", "pi0", "gr00t"} and args.env == "demon_attack":
         result.update(_ensure_demon_attack_dataset(args))
-    elif args.model in {"openvla", "pi0"} and args.env == "deadly_corridor":
+    elif args.model in {"openvla", "pi0", "gr00t"} and args.env == "deadly_corridor":
         result.update(_ensure_deadly_corridor_dataset(args))
     else:
         data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
@@ -346,6 +405,55 @@ def setup_assets(args) -> dict[str, Any]:
                 "checkpoint_local_dir": str(checkpoint_dir),
             })
             return result
+
+    initialization_hf_repo_id = str(getattr(args, "initialization_hf_repo_id", "") or "")
+    if initialization_hf_repo_id and _initialization_mode(args) in {"bridge", "pre-trained", "pretrained"}:
+        if local_ckpt is not None and args.checkpoint_load == "auto":
+            result.update({
+                "resume_found": True,
+                "resume_source": "local",
+                "resume_kind": local_kind,
+                "resume_checkpoint": str(local_ckpt),
+                "resume_step": local_step,
+                "checkpoint_local_dir": str(checkpoint_dir),
+            })
+            return result
+
+        init_dir = checkpoint_dir / "_initialization" / _safe_path_name(initialization_hf_repo_id)
+        initialization_checkpoint_filename = str(getattr(args, "initialization_checkpoint_filename", "") or "")
+        if initialization_checkpoint_filename:
+            init_ckpt, init_step, init_error = _download_hf_checkpoint_file(
+                initialization_hf_repo_id,
+                initialization_checkpoint_filename,
+                init_dir,
+            )
+            init_kind = "model" if init_ckpt is not None else None
+        else:
+            init_ckpt, init_step, init_kind, init_error = _download_latest_hf_checkpoint(initialization_hf_repo_id, init_dir)
+        if init_ckpt is None:
+            raise RuntimeError(
+                f"Could not download bridge initialization checkpoint from {initialization_hf_repo_id}: "
+                f"{init_error or 'no checkpoint files found'}"
+            )
+        if init_kind == "state":
+            raise ValueError(
+                f"Bridge initialization expected model weights, but {initialization_hf_repo_id} resolved "
+                f"to a full training-state directory: {init_ckpt}"
+            )
+        result.update({
+            "resume_found": False,
+            "resume_source": None,
+            "resume_kind": None,
+            "resume_checkpoint": None,
+            "resume_step": 0,
+            "checkpoint_local_dir": str(checkpoint_dir),
+            "pretrained_checkpoint": str(init_ckpt),
+            "initialization_source": "hf",
+            "initialization_hf_repo_id": initialization_hf_repo_id,
+            "initialization_checkpoint_filename": initialization_checkpoint_filename or None,
+            "initialization_step": init_step,
+        })
+        return result
 
     hf_repo_id = args.checkpoint_hf_repo_id or args.hf_repo_id
     if args.checkpoint_load in {"auto", "hf"} and hf_repo_id:
@@ -422,6 +530,8 @@ def main() -> int:
     parser.add_argument("--model", required=True)
     parser.add_argument("--env", required=True)
     parser.add_argument("--mode", required=True)
+    parser.add_argument("--initialization-mode", default="")
+    parser.add_argument("--action-carrier", choices=["", "native", "bridge"], default="")
     parser.add_argument("--latency-mode", default="")
     parser.add_argument("--source-dataset-hf", default="")
     parser.add_argument("--dataset-local-dir", required=True)
@@ -437,6 +547,8 @@ def main() -> int:
     parser.add_argument("--checkpoint-local-dir", required=True)
     parser.add_argument("--checkpoint-load", choices=["auto", "none", "local", "hf"], default="auto")
     parser.add_argument("--checkpoint-hf-repo-id", default="")
+    parser.add_argument("--initialization-hf-repo-id", default="")
+    parser.add_argument("--initialization-checkpoint-filename", default="")
     parser.add_argument("--checkpoint-sync-enabled", default="false")
     parser.add_argument("--checkpoint-sync-repo-id", default="")
     parser.add_argument("--hf-repo-id", default="")

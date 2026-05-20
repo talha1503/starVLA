@@ -12,7 +12,7 @@ Usage:
 
 Example:
   bash examples/rl_games/scripts/run_experiment.sh \
-    examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
+    examples/rl_games/experiments/openvla/scratch/mixed_latency/flappy.yaml \
     run_id=test_run trainer.max_train_steps=100
 
 Notes:

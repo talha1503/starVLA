@@ -29,6 +29,12 @@ framework:
       norm_type: ada_norm
       positional_embeddings: null
       attention_head_dim: 64
+      # QwenPI overwrites these from the loaded VLM at runtime. They still
+      # need to exist here because the training config is strict/structured.
+      num_layers: null
+      input_embedding_dim: null
+      cross_attention_dim: null
+      num_attention_heads: null
 
 trainer:
   learning_rate:

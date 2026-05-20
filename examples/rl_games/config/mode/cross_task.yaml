@@ -1,6 +1,8 @@
 # @package _global_
 
 rl_games:
+  initialization_mode: scratch
+  action_carrier: native
   task: cross_task
   env_eval:
     latency:

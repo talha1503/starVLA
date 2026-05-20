@@ -285,13 +285,29 @@ def populate_layerwise_dit_cfg(cfg, *, dit_hidden_dim: int, num_dit_layers: int)
     Returns:
         The (mutated) diffusion_model_cfg node.
     """
+    def _force_set(node, key: str, value):
+        # AccessTrackedConfig wraps an OmegaConf node and otherwise rejects
+        # runtime-derived keys when the config is structured. These DiT shape
+        # fields are computed from the loaded VLM, so force-add them.
+        raw_cfg = getattr(node, "_cfg", node)
+        if OmegaConf.is_config(raw_cfg):
+            OmegaConf.update(raw_cfg, key, value, force_add=True)
+            children = getattr(node, "_children", None)
+            if isinstance(children, dict):
+                children.pop(key, None)
+            accessed = getattr(node, "_local_accessed", None)
+            if hasattr(accessed, "add"):
+                accessed.add(key)
+        else:
+            setattr(node, key, value)
+
     dit_cfg = cfg.framework.action_model.diffusion_model_cfg
     head_dim = dit_cfg.get("attention_head_dim", None) or 64
-    dit_cfg.attention_head_dim = head_dim
-    dit_cfg.num_layers = int(num_dit_layers)
-    dit_cfg.input_embedding_dim = int(dit_hidden_dim)
-    dit_cfg.cross_attention_dim = int(dit_hidden_dim)
-    dit_cfg.num_attention_heads = int(dit_hidden_dim) // int(head_dim)
+    _force_set(dit_cfg, "attention_head_dim", head_dim)
+    _force_set(dit_cfg, "num_layers", int(num_dit_layers))
+    _force_set(dit_cfg, "input_embedding_dim", int(dit_hidden_dim))
+    _force_set(dit_cfg, "cross_attention_dim", int(dit_hidden_dim))
+    _force_set(dit_cfg, "num_attention_heads", int(dit_hidden_dim) // int(head_dim))
     return dit_cfg
 
 
