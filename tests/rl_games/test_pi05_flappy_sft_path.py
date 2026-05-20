@@ -60,6 +60,15 @@ def _load_experiment_config(name: str) -> dict[str, Any]:
     return loaded
 
 
+def _load_model_config(name: str) -> dict[str, Any]:
+    path = REPO_ROOT / "examples" / "rl_games" / "config" / "model" / name
+    with path.open("r", encoding="utf-8") as stream:
+        loaded = yaml.safe_load(stream)
+    if not isinstance(loaded, dict):
+        raise TypeError(f"Model config did not load as a mapping: {path}")
+    return loaded
+
+
 def _setup_args(tmp_path: Path, model: str, env: str) -> SimpleNamespace:
     return SimpleNamespace(
         model=model,
@@ -83,6 +92,8 @@ def _assert_pi05_flappy_experiment(cfg: dict[str, Any], expected: ExpectedExperi
     assert cfg["mode"] == expected["mode"]
     assert cfg["run_id"] == expected["run_id"]
     assert cfg["conda"]["env_name"] == "starvla_rl_games_pi05"
+    assert cfg["paths"]["base_model_dir"] == "playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1"
+    assert cfg["base_model"]["repo_id"] == "StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"
     assert cfg["dataset"]["source_hf"] == expected["source_hf"]
     assert cfg["dataset"]["converted_name"] == expected["converted_name"]
     assert cfg["framework"]["name"] == "QwenPI_v3"
@@ -126,6 +137,21 @@ def test_pi05_action_spec_preserves_model_dim_and_sets_env_dim() -> None:
 
     assert cfg.framework.action_model.action_dim == 32
     assert cfg.framework.action_model.action_env_dim == 2
+
+
+def test_pi05_model_config_uses_pi_v3_bridge_base_model() -> None:
+    cfg = _load_model_config("pi05.yaml")
+
+    assert cfg["framework"]["qwenvl"]["base_vlm"] == (
+        "./playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1"
+    )
+
+
+def test_run_train_pi05_default_base_model_is_pi_v3_bridge() -> None:
+    script = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "run_train.sh").read_text(encoding="utf-8")
+
+    assert 'BASE_MODEL_DIR="playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1"' in script
+    assert 'BASE_MODEL_REPO_ID="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"' in script
 
 
 def test_pi05_setup_assets_uses_public_flappy_route_only_for_flappy(

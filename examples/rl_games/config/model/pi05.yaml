@@ -5,6 +5,8 @@ rl_games:
 
 framework:
   name: QwenPI_v3
+  qwenvl:
+    base_vlm: ./playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1
   action_model:
     action_model_type: LayerwiseFM
     action_dim: 32

@@ -250,7 +250,7 @@ paths:
   run_root_dir: results/Checkpoints
   dataset_local_dir: playground/Datasets/rl_games
   dataset_cache_dir: null
-  base_model_dir: playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
+  base_model_dir: playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1
   accelerate_config: starVLA/config/deepseeds/deepspeed_zero2.yaml
 ```
 
@@ -259,7 +259,7 @@ For `workspace_dir: WORKSPACE_DIR`, this means:
 ```text
 checkpoints/results: WORKSPACE_DIR/results/Checkpoints/<run_id>/
 converted dataset:    WORKSPACE_DIR/playground/Datasets/rl_games/<dataset.converted_name>
-base model weights:   WORKSPACE_DIR/playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
+base model weights:   WORKSPACE_DIR/playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1
 ```
 
 Authentication tokens are read from the shell by default:

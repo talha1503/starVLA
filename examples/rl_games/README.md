@@ -81,6 +81,8 @@ examples/rl_games/experiments/pi05_flappy_mixed_latency.yaml
 examples/rl_games/experiments/pi05_flappy_single.yaml
 ```
 
+These pi-0.5 configs download and train from `StarVLA/Qwen3VL-PI_v3-Bridge-RT_1`.
+
 Edit `workspace_dir`, `auth`, `wandb`, `dataset`, `base_model`, `checkpoint`, `launch`, `train_data`, and `trainer` in the YAML. Relative asset paths are resolved under `workspace_dir`.
 
 Authentication tokens are read from `HF_TOKEN` and `WANDB_API_KEY` by default:
