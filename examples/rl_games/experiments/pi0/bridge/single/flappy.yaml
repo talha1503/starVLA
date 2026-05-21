@@ -106,6 +106,7 @@ framework:
     noise_s: 0.999
     num_timestep_buckets: 1000
     diffusion_model_cfg:
+      action_dit_hidden_dim: 1024
       dropout: 0.2
       final_dropout: true
       interleave_self_attention: true
