@@ -196,6 +196,21 @@ class _TaskEvaluator:
         vla_data_cfg = getattr(getattr(cfg, "datasets", None), "vla_data", None)
         self.include_state = bool(getattr(vla_data_cfg, "include_state", False))
         self.state_dim = int(getattr(cfg.framework.action_model, "state_dim", 1) or 1)
+        self.deadly_multibinary_threshold = self._resolve_deadly_multibinary_threshold()
+
+    def _resolve_deadly_multibinary_threshold(self) -> float:
+        deadly_cfg = getattr(self.env_eval_cfg, "deadly", None)
+        explicit = getattr(deadly_cfg, "multibinary_threshold", None) if deadly_cfg is not None else None
+        if explicit is not None:
+            return float(explicit)
+
+        action_cfg = getattr(getattr(self.cfg, "framework", None), "action_model", None)
+        loss_type = str(getattr(action_cfg, "loss_type", "") or "").lower()
+        if loss_type in {"multibinary_bce", "bce", "binary_cross_entropy"}:
+            # BCE-with-logits outputs are thresholded at the zero logit, not at
+            # probability-space 0.5. Flow/regression models keep the 0.5 target threshold.
+            return 0.0
+        return 0.5
 
     def _make_env(self):
         if self.task == "flappy":
@@ -269,7 +284,7 @@ class _TaskEvaluator:
         if self.task == "deadly_corridor":
             layout = str(getattr(self.env_eval_cfg.deadly, "action_layout", "multibinary_7"))
             if layout == "multibinary_7":
-                semantic = decode_deadly_multibinary_7(raw_action)
+                semantic = decode_deadly_multibinary_7(raw_action, threshold=self.deadly_multibinary_threshold)
             elif layout == "factorized_11":
                 semantic = _factorized_to_semantic_buttons(decode_deadly_factorized_11(raw_action))
             else:
