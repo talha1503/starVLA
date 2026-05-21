@@ -105,6 +105,7 @@ def _assert_pi05_flappy_experiment(cfg: dict[str, Any], expected: ExpectedExperi
     assert cfg["framework"]["action_model"]["state_dim"] == 7
     assert cfg["framework"]["action_model"]["action_horizon"] == 1
     assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["action_dit_hidden_dim"] == 1024
+    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["output_dim"] == 1024
     assert cfg["rl_games"]["model_alias"] == "pi-0.5"
     assert cfg["rl_games"]["initialization_mode"] == "bridge"
     assert cfg["rl_games"]["action_carrier"] == "bridge"
@@ -240,6 +241,7 @@ def test_pi05_flappy_single_experiment_forwards_qwenpi_v3_diffusion_width(tmp_pa
     cmd = run_experiment._trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
     assert "framework.action_model.diffusion_model_cfg.action_dit_hidden_dim=1024" in cmd
+    assert "framework.action_model.diffusion_model_cfg.output_dim=1024" in cmd
 
 
 def test_pi05_flappy_single_setup_resolves_local_initialization_dir(tmp_path: Path) -> None:
