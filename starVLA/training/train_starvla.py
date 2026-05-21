@@ -38,6 +38,7 @@ from starVLA.dataloader import build_dataloader
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
 from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias
+from starVLA.training.train_step_events import should_run_step_interval_event
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
 
@@ -428,12 +429,21 @@ class VLATrainer(TrainerUtils):
                     }
                 )
 
-            if self.accelerator.sync_gradients and self.completed_steps > 0:
-                if self.completed_steps % self.config.trainer.eval_interval == 0:
+            gradients_synced = bool(self.accelerator.sync_gradients)
+            if gradients_synced:
+                if should_run_step_interval_event(
+                    completed_steps=self.completed_steps,
+                    interval=self.config.trainer.eval_interval,
+                    gradients_synced=gradients_synced,
+                ):
                     step_metrics = self.eval_action_loss(step_metrics)
                 if self._rl_games_eval_runner is not None:
                     eval_every = self._rl_games_eval_runner.interval_steps(default=self.config.trainer.eval_interval)
-                    if eval_every > 0 and self.completed_steps % eval_every == 0:
+                    if eval_every > 0 and should_run_step_interval_event(
+                        completed_steps=self.completed_steps,
+                        interval=eval_every,
+                        gradients_synced=gradients_synced,
+                    ):
                         if self._rl_games_eval_runner.is_enabled(stage="mid_train"):
                             eval_result = self._rl_games_eval_runner.run(
                                 model=self.accelerator.unwrap_model(self.model),
@@ -448,9 +458,18 @@ class VLATrainer(TrainerUtils):
 
             step_metrics["timing/data"] = t_end_data - t_start_data
             step_metrics["timing/model"] = t_end_model - t_start_model
-            self._log_metrics(step_metrics)
+            if should_run_step_interval_event(
+                completed_steps=self.completed_steps,
+                interval=self.config.trainer.logging_frequency,
+                gradients_synced=gradients_synced,
+            ):
+                self._log_metrics(step_metrics)
 
-            if self.completed_steps % self.config.trainer.save_interval == 0 and self.completed_steps > 0:
+            if should_run_step_interval_event(
+                completed_steps=self.completed_steps,
+                interval=self.config.trainer.save_interval,
+                gradients_synced=gradients_synced,
+            ):
                 self._save_checkpoint()
 
             if self.completed_steps >= self.config.trainer.max_train_steps:
