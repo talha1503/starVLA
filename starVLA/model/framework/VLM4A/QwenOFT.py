@@ -26,6 +26,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from PIL import Image
 
 from deployment.model_server.tools.image_tools import to_pil_preserve
@@ -84,6 +85,8 @@ class QwenOFTDefaultConfig:
             "future_action_window_size": 8,
             # How many past steps included in action chunk (usually 0)
             "past_action_window_size": 0,
+            # Loss over predicted actions. Supported: "l1", "discrete_ce".
+            "loss_type": "l1",
         }
     )
 
@@ -129,6 +132,7 @@ class Qwenvl_OFT(baseframework):
         self.chunk_len = self.action_horizon
         self.action_dim = int(self.config.framework.action_model.action_dim)
         self.action_env_dim = int(getattr(self.config.framework.action_model, "action_env_dim", self.action_dim))
+        self.action_loss_type = str(getattr(self.config.framework.action_model, "loss_type", "l1")).lower()
         # self.hidden_dim = config.framework.action_model.action_hidden_dim
 
         self.action_token = "🔍"  # TODO also can add spacail token to Qwen, but too complex
@@ -136,6 +140,38 @@ class Qwenvl_OFT(baseframework):
 
         # L1 loss
         self.l1_loss = nn.L1Loss()
+
+    def _compute_action_loss(self, pred_actions: torch.Tensor, actions_target: torch.Tensor) -> torch.Tensor:
+        effective_dim = min(self.action_env_dim, pred_actions.shape[-1], actions_target.shape[-1])
+        if effective_dim <= 0:
+            raise ValueError(
+                f"Invalid action_env_dim={self.action_env_dim} for predicted shape={pred_actions.shape} "
+                f"and target shape={actions_target.shape}"
+            )
+
+        if self.action_loss_type in {"discrete_ce", "ce", "cross_entropy"}:
+            if effective_dim < 2:
+                raise ValueError(
+                    f"action_model.loss_type={self.action_loss_type!r} requires at least 2 action classes, "
+                    f"got effective_dim={effective_dim}"
+                )
+            logits = pred_actions[..., :effective_dim]
+            target_class = actions_target[..., :effective_dim].argmax(dim=-1).long()
+            return F.cross_entropy(
+                logits.reshape(-1, effective_dim),
+                target_class.reshape(-1),
+            )
+
+        if self.action_loss_type not in {"l1", "mae"}:
+            raise ValueError(
+                f"Unsupported action_model.loss_type={self.action_loss_type!r}; "
+                "expected one of: l1, discrete_ce"
+            )
+
+        return self.l1_loss(
+            pred_actions[..., :effective_dim],
+            actions_target[..., :effective_dim],
+        )
 
     def _forward_qwen_last_hidden(self, qwen_inputs: dict) -> torch.Tensor:
         """
@@ -222,16 +258,7 @@ class Qwenvl_OFT(baseframework):
             )  # [B, T_full, action_dim]
             actions_target = actions[:, -self.action_horizon :, :]  # (B, action_horizon, action_dim)
 
-            effective_dim = min(self.action_env_dim, pred_actions.shape[-1], actions_target.shape[-1])
-            if effective_dim <= 0:
-                raise ValueError(
-                    f"Invalid action_env_dim={self.action_env_dim} for predicted shape={pred_actions.shape} "
-                    f"and target shape={actions_target.shape}"
-                )
-            action_loss = self.l1_loss(
-                pred_actions[..., :effective_dim],
-                actions_target[..., :effective_dim],
-            )
+            action_loss = self._compute_action_loss(pred_actions, actions_target)
 
         return {"action_loss": action_loss}
 

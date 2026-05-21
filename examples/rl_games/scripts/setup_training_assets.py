@@ -417,12 +417,26 @@ def setup_assets(args) -> dict[str, Any]:
             })
             return result
 
-    initialization_hf_repo_id = str(getattr(args, "initialization_hf_repo_id", "") or "")
-    initialization_local_dir = str(getattr(args, "initialization_local_dir", "") or "")
-    initialization_checkpoint_filename = str(getattr(args, "initialization_checkpoint_filename", "") or "")
-    has_initialization_source = bool(initialization_local_dir or initialization_hf_repo_id)
-    if has_initialization_source and _initialization_mode(args) in {"bridge", "pre-trained", "pretrained"}:
-        if local_ckpt is not None and args.checkpoint_load == "auto":
+    hf_repo_id = args.checkpoint_hf_repo_id or args.hf_repo_id
+    if args.checkpoint_load in {"auto", "hf"} and hf_repo_id:
+        hf_ckpt, hf_step, hf_kind, hf_error = _download_latest_hf_checkpoint(hf_repo_id, checkpoint_dir)
+        hf_is_better = (
+            args.checkpoint_load == "hf"
+            or local_ckpt is None
+            or hf_step > local_step
+            or (hf_step == local_step and hf_kind == "state" and local_kind != "state")
+        )
+        if hf_ckpt is not None and hf_is_better:
+            result.update({
+                "resume_found": True,
+                "resume_source": "hf",
+                "resume_kind": hf_kind,
+                "resume_checkpoint": str(hf_ckpt),
+                "resume_step": hf_step,
+                "checkpoint_local_dir": str(checkpoint_dir),
+            })
+            return result
+        if local_ckpt is not None:
             result.update({
                 "resume_found": True,
                 "resume_source": "local",
@@ -431,8 +445,42 @@ def setup_assets(args) -> dict[str, Any]:
                 "resume_step": local_step,
                 "checkpoint_local_dir": str(checkpoint_dir),
             })
+            if hf_ckpt is not None:
+                result["checkpoint_hf_status"] = (
+                    f"local checkpoint step {local_step} is newer than or equal to HF step {hf_step}; using local"
+                )
             return result
+        if hf_error:
+            sync_repo_id = str(getattr(args, "checkpoint_sync_repo_id", "") or "")
+            sync_enabled = _str2bool(getattr(args, "checkpoint_sync_enabled", False))
+            if (
+                args.checkpoint_load == "auto"
+                and sync_enabled
+                and sync_repo_id == hf_repo_id
+            ):
+                result["checkpoint_hf_status"] = (
+                    f"HF resume repo {hf_repo_id} was not available during auto-resume; "
+                    "starting from local/base model and using it as the checkpoint sync destination"
+                )
+            else:
+                result["checkpoint_hf_warning"] = hf_error
 
+    if local_ckpt is not None:
+        result.update({
+            "resume_found": True,
+            "resume_source": "local",
+            "resume_kind": local_kind,
+            "resume_checkpoint": str(local_ckpt),
+            "resume_step": local_step,
+            "checkpoint_local_dir": str(checkpoint_dir),
+        })
+        return result
+
+    initialization_hf_repo_id = str(getattr(args, "initialization_hf_repo_id", "") or "")
+    initialization_local_dir = str(getattr(args, "initialization_local_dir", "") or "")
+    initialization_checkpoint_filename = str(getattr(args, "initialization_checkpoint_filename", "") or "")
+    has_initialization_source = bool(initialization_local_dir or initialization_hf_repo_id)
+    if has_initialization_source and _initialization_mode(args) in {"bridge", "pre-trained", "pretrained"}:
         local_init_ckpt, local_init_step = _resolve_local_initialization_checkpoint(
             initialization_local_dir,
             initialization_checkpoint_filename,
@@ -494,65 +542,6 @@ def setup_assets(args) -> dict[str, Any]:
             "initialization_hf_repo_id": initialization_hf_repo_id,
             "initialization_checkpoint_filename": initialization_checkpoint_filename or None,
             "initialization_step": init_step,
-        })
-        return result
-
-    hf_repo_id = args.checkpoint_hf_repo_id or args.hf_repo_id
-    if args.checkpoint_load in {"auto", "hf"} and hf_repo_id:
-        hf_ckpt, hf_step, hf_kind, hf_error = _download_latest_hf_checkpoint(hf_repo_id, checkpoint_dir)
-        hf_is_better = (
-            args.checkpoint_load == "hf"
-            or local_ckpt is None
-            or hf_step > local_step
-            or (hf_step == local_step and hf_kind == "state" and local_kind != "state")
-        )
-        if hf_ckpt is not None and hf_is_better:
-            result.update({
-                "resume_found": True,
-                "resume_source": "hf",
-                "resume_kind": hf_kind,
-                "resume_checkpoint": str(hf_ckpt),
-                "resume_step": hf_step,
-                "checkpoint_local_dir": str(checkpoint_dir),
-            })
-            return result
-        if local_ckpt is not None:
-            result.update({
-                "resume_found": True,
-                "resume_source": "local",
-                "resume_kind": local_kind,
-                "resume_checkpoint": str(local_ckpt),
-                "resume_step": local_step,
-                "checkpoint_local_dir": str(checkpoint_dir),
-            })
-            if hf_ckpt is not None:
-                result["checkpoint_hf_status"] = (
-                    f"local checkpoint step {local_step} is newer than or equal to HF step {hf_step}; using local"
-                )
-            return result
-        if hf_error:
-            sync_repo_id = str(getattr(args, "checkpoint_sync_repo_id", "") or "")
-            sync_enabled = _str2bool(getattr(args, "checkpoint_sync_enabled", False))
-            if (
-                args.checkpoint_load == "auto"
-                and sync_enabled
-                and sync_repo_id == hf_repo_id
-            ):
-                result["checkpoint_hf_status"] = (
-                    f"HF resume repo {hf_repo_id} was not available during auto-resume; "
-                    "starting from local/base model and using it as the checkpoint sync destination"
-                )
-            else:
-                result["checkpoint_hf_warning"] = hf_error
-
-    if local_ckpt is not None:
-        result.update({
-            "resume_found": True,
-            "resume_source": "local",
-            "resume_kind": local_kind,
-            "resume_checkpoint": str(local_ckpt),
-            "resume_step": local_step,
-            "checkpoint_local_dir": str(checkpoint_dir),
         })
         return result
 
