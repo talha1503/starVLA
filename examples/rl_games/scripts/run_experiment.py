@@ -254,7 +254,7 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         setup_force=str(_as_bool(_get(cfg, "dataset.setup_force", False))).lower(),
         verify_rows=int(_get(cfg, "dataset.verify_rows", 200)),
         max_episodes=max_episodes,
-        latency_filter=_optional_int_list(_get(cfg, "dataset.latency_filter")),
+        latency_raw_frame_filter=_optional_int_list(_get(cfg, "dataset.latency_raw_frame_filter")),
         base_model_dir=_resolve_path(_get(cfg, "framework.qwenvl.base_vlm"), workspace_dir),
         base_model_repo_id=_get(cfg, "base_model.repo_id"),
         checkpoint_local_dir=checkpoint_dir,

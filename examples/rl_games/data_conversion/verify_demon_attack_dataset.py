@@ -36,7 +36,7 @@ def verify_dataset(
 ) -> bool:
     try:
         for columns in (
-            ["prompt", "action_id", "action_text", "latency", "latency_ms"],
+            ["prompt", "action_id", "action_text", "latency_raw_frames", "latency_ms"],
             ["prompt", "action_id", "action_text"],
             ["prompt", "action_id"],
             None,

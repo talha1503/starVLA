@@ -320,10 +320,10 @@ def convert_lerobot_dataset(
             out_rows = []
             for frame_idx, row in enumerate(episode):
                 prompt = str(row["prompt"])
-                if "latency" in ds_full.column_names and row.get("latency") is not None:
+                if "latency_raw_frames" in ds_full.column_names and row.get("latency_raw_frames") is not None:
                     latency_rows.append(
                         {
-                            "latency": row["latency"],
+                            "latency_raw_frames": row["latency_raw_frames"],
                             "latency_ms": row.get("latency_ms"),
                             "prompt": prompt,
                         }

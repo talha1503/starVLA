@@ -1,6 +1,6 @@
 # Workspace root for relative assets and outputs. Use an absolute path or set
 # WORKSPACE_DIR in the shell.
-workspace_dir: WORKSPACE_DIR
+workspace_dir: /home/lixinyuan/latency-sensitive-bench
 
 # Launcher-only: run_experiment.sh reads this before Python starts.
 conda:
@@ -26,13 +26,13 @@ wandb_project: starVLA_rl_games
 
 # Launcher-only paths. Training paths live in the Hydra-aligned sections below.
 paths:
-  dataset_cache_dir: null
+  dataset_cache_dir: outputs/hf_datasets_cache
   accelerate_config: starVLA/config/deepseeds/deepspeed_zero2.yaml
 
 # Setup-only dataset source/conversion controls.
 dataset:
-  source_hf: latency-sensitive-bench/deadly_corridor_mixed_latency_parquet
-  latency_filter: [0]
+  source_hf: /home/lixinyuan/latency-sensitive-bench/outputs/deadly_corridor_fixed_2_latency
+  latency_raw_frame_filter: null
   force_download: false
   setup_force: false
   verify_rows: 200
@@ -45,7 +45,7 @@ dataset:
 # Hydra training dataset config. These names match config/train.yaml exactly.
 datasets:
   vla_data:
-    data_root_dir: playground/Datasets/rl_games
+    data_root_dir: outputs/deadly_corridor_fixed_2_latency
     data_mix: deadly_corridor_train
     action_type: discrete
     sequential_step_sampling: false

@@ -213,10 +213,10 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
             return False
         if args.source_dataset_hf and str(manifest.get("source", "")) != str(args.source_dataset_hf):
             return False
-        expected_latency_filter = getattr(args, "latency_filter", None)
-        if expected_latency_filter is not None:
-            manifest_latency_filter = manifest.get("latency_filter")
-            if manifest_latency_filter != [int(value) for value in expected_latency_filter]:
+        expected_latency_raw_frame_filter = getattr(args, "latency_raw_frame_filter", None)
+        if expected_latency_raw_frame_filter is not None:
+            manifest_latency_raw_frame_filter = manifest.get("latency_raw_frame_filter")
+            if manifest_latency_raw_frame_filter != [int(value) for value in expected_latency_raw_frame_filter]:
                 return False
         return True
 
@@ -257,14 +257,14 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
             "force": rebuild,
             "require_latency_prompt_map": mixed_latency,
         }
-        if "latency_filter" in inspect.signature(convert_dataset).parameters:
-            convert_kwargs["latency_filter"] = getattr(args, "latency_filter", None)
+        if "latency_raw_frame_filter" in inspect.signature(convert_dataset).parameters:
+            convert_kwargs["latency_raw_frame_filter"] = getattr(args, "latency_raw_frame_filter", None)
         convert_dataset(args.source_dataset_hf, dataset_dir, **convert_kwargs)
         converted = True
         if mixed_latency and not _mixed_prompt_map_ready():
             raise ValueError(
                 f"mixed-latency dataset conversion did not create a usable prompt map: {prompt_map}. "
-                "Check that the selected training episodes contain latency/prompt columns for more than one latency."
+                "Check that the selected training episodes contain latency_raw_frames/prompt columns for more than one latency."
             )
 
     validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=data_mix)
@@ -443,7 +443,7 @@ def main() -> int:
     parser.add_argument("--setup-force", default="false")
     parser.add_argument("--verify-rows", type=int, default=200)
     parser.add_argument("--max-episodes", type=int, default=None)
-    parser.add_argument("--latency-filter", default=None)
+    parser.add_argument("--latency-raw-frame-filter", default=None)
     parser.add_argument("--base-model-dir", required=True)
     parser.add_argument("--base-model-repo-id", default=None)
     parser.add_argument("--checkpoint-local-dir", required=True)
@@ -457,10 +457,12 @@ def main() -> int:
         args.dataset_cache_dir = None
     if args.base_model_repo_id == "":
         args.base_model_repo_id = None
-    if isinstance(args.latency_filter, str) and args.latency_filter:
-        args.latency_filter = [int(item) for item in args.latency_filter.split(",") if item.strip()]
-    elif args.latency_filter == "":
-        args.latency_filter = None
+    if isinstance(args.latency_raw_frame_filter, str) and args.latency_raw_frame_filter:
+        args.latency_raw_frame_filter = [
+            int(item) for item in args.latency_raw_frame_filter.split(",") if item.strip()
+        ]
+    elif args.latency_raw_frame_filter == "":
+        args.latency_raw_frame_filter = None
 
     with contextlib.redirect_stdout(sys.stderr):
         result = setup_assets(args)

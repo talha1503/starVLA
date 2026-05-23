@@ -71,9 +71,9 @@ def verify_dataset(
             dataset_name,
             cache_dir,
             (
-                ["prompt", "action_text", "latency", "latency_ms"],
-                ["prompt", "action", "latency", "latency_ms"],
-                ["prompt", "actions", "latency", "latency_ms"],
+                ["prompt", "action_text", "latency_raw_frames", "latency_ms"],
+                ["prompt", "action", "latency_raw_frames", "latency_ms"],
+                ["prompt", "actions", "latency_raw_frames", "latency_ms"],
                 ["prompt", "action_text"],
                 ["prompt", "action"],
                 ["prompt", "actions"],
@@ -102,8 +102,8 @@ def verify_dataset(
                 dataset_name,
                 cache_dir,
                 (
-                    ["split", "prompt", "latency", "latency_ms"],
-                    ["prompt", "latency", "latency_ms"],
+                    ["split", "prompt", "latency_raw_frames", "latency_ms"],
+                    ["prompt", "latency_raw_frames", "latency_ms"],
                     None,
                 ),
             )

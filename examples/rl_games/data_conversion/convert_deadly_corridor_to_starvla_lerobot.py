@@ -36,13 +36,11 @@ def _row_get(row: dict[str, Any], names: tuple[str, ...], default: Any = None) -
     return default
 
 
-def _filter_latency(ds, latency_filter: list[int] | None):
-    if not latency_filter:
+def _filter_latency(ds, latency_raw_frame_filter: list[int] | None):
+    if not latency_raw_frame_filter:
         return ds
-    if "latency" not in ds.column_names:
-        raise ValueError("latency_filter was requested, but the dataset has no `latency` column")
-    allowed = {int(value) for value in latency_filter}
-    return ds.filter(lambda row: int(row["latency"]) in allowed)
+    allowed = {int(value) for value in latency_raw_frame_filter}
+    return ds.filter(lambda row: int(row["latency_raw_frames"]) in allowed)
 
 
 def _action_from_text(text: str) -> list[float]:
@@ -76,20 +74,24 @@ def _reward(row: dict[str, Any]) -> float:
     return float(_row_get(row, ("reward", "rewards"), 0.0))
 
 
-def _spec(latency_filter: list[int] | None) -> LeRobotDatasetSpec:
+def _spec(latency_raw_frame_filter: list[int] | None) -> LeRobotDatasetSpec:
     return LeRobotDatasetSpec(
         display_name="Deadly Corridor",
         action_labels=ACTION_LABELS,
         fps=FPS,
-        meta_columns=("episode_idx", "t", "prompt", "latency", "latency_ms"),
+        meta_columns=("episode_idx", "t", "prompt", "latency_raw_frames", "latency_ms"),
         action=_action_vector,
         row_index=_row_index,
         done=_done,
         reward=_reward,
-        filter_dataset=lambda ds: _filter_latency(ds, latency_filter),
+        filter_dataset=lambda ds: _filter_latency(ds, latency_raw_frame_filter),
         load_split_retry_without_columns=True,
-        empty_split_suffix=lambda: f" after latency_filter={latency_filter}" if latency_filter else "",
-        manifest_extra=lambda: {"latency_filter": latency_filter},
+        empty_split_suffix=lambda: (
+            f" after latency_raw_frame_filter={latency_raw_frame_filter}"
+            if latency_raw_frame_filter
+            else ""
+        ),
+        manifest_extra=lambda: {"latency_raw_frame_filter": latency_raw_frame_filter},
     )
 
 
@@ -101,12 +103,12 @@ def convert_dataset(
     max_episodes: int | None = None,
     force: bool = False,
     require_latency_prompt_map: bool = False,
-    latency_filter: list[int] | None = None,
+    latency_raw_frame_filter: list[int] | None = None,
 ) -> dict[str, Any]:
     return convert_lerobot_dataset(
         dataset_name,
         output_dir,
-        spec=_spec(latency_filter),
+        spec=_spec(latency_raw_frame_filter),
         cache_dir=cache_dir,
         max_episodes=max_episodes,
         force=force,
@@ -122,12 +124,12 @@ def main() -> int:
     parser.add_argument("--max-episodes", "--max_episodes", type=int, default=None)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--require-latency-prompt-map", "--require_latency_prompt_map", action="store_true")
-    parser.add_argument("--latency-filter", "--latency_filter", default=None)
+    parser.add_argument("--latency-raw-frame-filter", "--latency_raw_frame_filter", default=None)
     args = parser.parse_args()
 
-    latency_filter = None
-    if args.latency_filter:
-        latency_filter = [int(item) for item in args.latency_filter.split(",") if item.strip()]
+    latency_raw_frame_filter = None
+    if args.latency_raw_frame_filter:
+        latency_raw_frame_filter = [int(item) for item in args.latency_raw_frame_filter.split(",") if item.strip()]
 
     manifest = convert_dataset(
         args.dataset_name,
@@ -136,7 +138,7 @@ def main() -> int:
         max_episodes=args.max_episodes,
         force=args.force,
         require_latency_prompt_map=args.require_latency_prompt_map,
-        latency_filter=latency_filter,
+        latency_raw_frame_filter=latency_raw_frame_filter,
     )
     print(json.dumps(manifest, indent=2))
     return 0
