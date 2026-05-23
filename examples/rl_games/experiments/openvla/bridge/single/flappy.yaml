@@ -49,6 +49,7 @@ dataset:
 
 # Bridge mode starts from a released Bridge/RT-1 StarVLA checkpoint.
 initialization:
+  checkpoint_local_dir: playground/Pretrained_models/Qwen3VL-OFT-Bridge-RT-1
   checkpoint_hf_repo_id: StarVLA/Qwen3VL-OFT-Bridge-RT-1
   checkpoint_filename: checkpoints/steps_5000_pytorch_model.pt
 

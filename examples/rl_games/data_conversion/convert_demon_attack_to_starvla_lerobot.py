@@ -31,6 +31,28 @@ BRIDGE_STATE_DIM = 7
 FPS = 30
 
 
+def _local_parquet_files(dataset_name: str, split: str) -> list[str] | None:
+    dataset_path = Path(dataset_name).expanduser()
+    if not dataset_path.exists():
+        return None
+    if dataset_path.is_file():
+        if dataset_path.suffix != ".parquet":
+            raise ValueError(f"dataset_name={dataset_name!r} exists but is not a parquet file")
+        return [str(dataset_path)]
+
+    parquet_files = sorted(dataset_path.rglob("*.parquet"))
+    if len(parquet_files) == 0:
+        raise FileNotFoundError(f"dataset_name={dataset_name!r} exists but contains no parquet files")
+
+    split_markers = {"train"} if split == "train" else {"validation", "val", "test"}
+    split_files = [
+        parquet_file
+        for parquet_file in parquet_files
+        if any(marker in part.lower() for marker in split_markers for part in parquet_file.relative_to(dataset_path).parts)
+    ]
+    return [str(parquet_file) for parquet_file in (split_files or parquet_files)]
+
+
 def _load_split(dataset_name: str, split: str, cache_dir: str | None = None, columns: list[str] | None = None):
     split_values = {"train"} if split == "train" else {"validation", "val", "test"}
 
@@ -38,6 +60,19 @@ def _load_split(dataset_name: str, split: str, cache_dir: str | None = None, col
         if "split" in ds.column_names:
             return ds.filter(lambda row: str(row["split"]).lower() in split_values)
         return ds
+
+    local_files = _local_parquet_files(dataset_name, split)
+    if local_files is not None:
+        load_columns = list(columns) if columns is not None else None
+        if load_columns is not None and "split" not in load_columns:
+            load_columns.append("split")
+        try:
+            ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=load_columns)
+        except (ValueError, KeyError):
+            if columns is None:
+                raise
+            ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=columns)
+        return _filter_internal_split(ds)
 
     if split == "train":
         try:
