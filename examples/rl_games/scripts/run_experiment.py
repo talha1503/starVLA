@@ -397,7 +397,6 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         "rl_games.env_eval.latency.mode": _get(cfg, "rl_games.latency_mode"),
         "rl_games.env_eval.frameskip": _get(cfg, "rl_games.frameskip"),
         "rl_games.env_eval.image_size": _get(cfg, "rl_games.image_size"),
-        "rl_games.env_eval.task_description": _get(cfg, "rl_games.task_description"),
     }
     for key, value in optional.items():
         if value not in (None, ""):

@@ -4,7 +4,7 @@ import json
 import os
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List
 
 import numpy as np
 from PIL import Image
@@ -129,9 +129,7 @@ def _resize_rgb(raw_obs: Any, image_size: int) -> np.ndarray:
     return np.array(Image.fromarray(raw_obs).resize((image_size, image_size), Image.BILINEAR))
 
 
-def _load_latency_prompt_map(path: Optional[str]) -> Dict[int, Dict[str, Any]]:
-    if not path:
-        return {}
+def _load_latency_prompt_map(path: str) -> Dict[int, Dict[str, Any]]:
     with open(path, "r", encoding="utf-8") as handle:
         raw = json.load(handle)
     out: Dict[int, Dict[str, Any]] = {}
@@ -183,7 +181,6 @@ class _TaskEvaluator:
         self.task = task
         self.cfg = cfg
         self.env_eval_cfg = cfg.rl_games.env_eval
-        self.default_prompt = str(getattr(self.env_eval_cfg, "task_description", "") or "")
         self.image_size = int(getattr(self.env_eval_cfg, "image_size", 84))
         self.frameskip = max(1, int(getattr(self.env_eval_cfg, "frameskip", 1)))
         self.state_dim = int(getattr(cfg.framework.action_model, "state_dim", 1) or 1)
@@ -395,25 +392,6 @@ class RlGamesEvalRunner:
             return int(stage_cfg.max_steps_per_episode)
         return int(getattr(env_eval, "max_episode_steps", 2000))
 
-    def _resolve_prompt(self, latency: int, mapping: Dict[int, Dict[str, Any]]) -> str:
-        if latency in mapping:
-            return str(mapping[latency]["prompt"])
-        prompt = str(getattr(self.cfg.rl_games.env_eval, "task_description", "") or "")
-        if prompt:
-            return prompt
-        task = str(getattr(self.cfg.rl_games, "task", "flappy"))
-        if task == "flappy":
-            return "You are playing Flappy Bird. Pass through the pipe gaps and stay alive. Choose the action: NOOP, FLAP."
-        if task == "demon_attack":
-            return "You are playing Demon Attack from a single game image. Choose exactly one action from: NOOP, FIRE, RIGHT, LEFT, RIGHTFIRE, LEFTFIRE."
-        if task == "deadly_corridor":
-            return (
-                "You are playing Deadly Corridor in VizDoom. Your goal is to survive the corridor, "
-                "fight enemies, and reach the green armor vest at the far end. The available actions are: "
-                "MOVE_FORWARD, MOVE_BACKWARD, MOVE_LEFT, MOVE_RIGHT, TURN_LEFT, TURN_RIGHT, and ATTACK."
-            )
-        return "Act optimally in the current environment."
-
     def _get_tasks(self) -> List[str]:
         task = str(getattr(self.cfg.rl_games, "task", "flappy"))
         if task != "cross_task":
@@ -460,7 +438,7 @@ class RlGamesEvalRunner:
         for task_name, latency in rollout_iter:
             rollout_iter.set_postfix({"task": task_name, "latency": latency})
             task_eval = _TaskEvaluator(task=task_name, cfg=self.cfg)
-            prompt = self._resolve_prompt(latency=latency, mapping=latency_prompt_map)
+            prompt = str(latency_prompt_map[int(latency)]["prompt"])
             metrics = task_eval.run_latency(
                 model=model,
                 latency=latency,

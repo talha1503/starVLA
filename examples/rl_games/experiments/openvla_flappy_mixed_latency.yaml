@@ -110,11 +110,9 @@ trainer:
 rl_games:
   task: flappy
   model_alias: openvla
-  task_description: ""
   frameskip: 1
   image_size: 84
 
-  # Used as the default prompt map for all eval stages.
   latency_prompt_map_path: null
 
   # Global switch for environment rollout eval.
