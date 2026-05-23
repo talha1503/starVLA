@@ -17,29 +17,89 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 class ExpectedExperimentConfig(TypedDict):
     name: str
+    env: str
     mode: str
     run_id: str
     source_hf: str
     converted_name: str
     latencies: list[int]
+    action_env_dim: int
+    latency_filter: list[int] | None
+    deadly_action_layout: str | None
 
 
-EXPECTED_PI05_FLAPPY_EXPERIMENTS: dict[str, ExpectedExperimentConfig] = {
-    "single": {
+EXPECTED_PI05_BRIDGE_EXPERIMENTS: dict[str, ExpectedExperimentConfig] = {
+    "flappy_single": {
         "name": "pi05/bridge/single/flappy.yaml",
+        "env": "flappy",
         "mode": "single",
         "run_id": "pi05_flappy_single",
         "source_hf": "talha1503/flappy_bird_zero_latency_parquet",
         "converted_name": "flappy_train",
         "latencies": [0],
+        "action_env_dim": 2,
+        "latency_filter": None,
+        "deadly_action_layout": None,
     },
-    "mixed_latency": {
+    "flappy_mixed_latency": {
         "name": "pi05/bridge/mixed_latency/flappy.yaml",
+        "env": "flappy",
         "mode": "mixed_latency",
         "run_id": "pi05_flappy_mixed_latency",
         "source_hf": "talha1503/flappy_bird_mixed_latency_parquet",
         "converted_name": "flappy_mixed_latency_train",
         "latencies": [0, 1, 2, 3, 4, 5],
+        "action_env_dim": 2,
+        "latency_filter": None,
+        "deadly_action_layout": None,
+    },
+    "demon_attack_single": {
+        "name": "pi05/bridge/single/demon_attack.yaml",
+        "env": "demon_attack",
+        "mode": "single",
+        "run_id": "pi05_demon_attack_bridge_single",
+        "source_hf": "talha1503/demon_attack_zero_latency_parquet",
+        "converted_name": "demon_attack_train",
+        "latencies": [0],
+        "action_env_dim": 6,
+        "latency_filter": None,
+        "deadly_action_layout": None,
+    },
+    "demon_attack_mixed_latency": {
+        "name": "pi05/bridge/mixed_latency/demon_attack.yaml",
+        "env": "demon_attack",
+        "mode": "mixed_latency",
+        "run_id": "pi05_demon_attack_bridge_mixed_latency",
+        "source_hf": "talha1503/demon_attack_mixed_latency_parquet",
+        "converted_name": "demon_attack_mixed_latency_train",
+        "latencies": [0, 1, 2, 3, 4, 5],
+        "action_env_dim": 6,
+        "latency_filter": None,
+        "deadly_action_layout": None,
+    },
+    "deadly_corridor_single": {
+        "name": "pi05/bridge/single/deadly_corridor.yaml",
+        "env": "deadly_corridor",
+        "mode": "single",
+        "run_id": "pi05_deadly_corridor_bridge_single",
+        "source_hf": "latency-sensitive-bench/deadly_corridor_mixed_latency_parquet",
+        "converted_name": "deadly_corridor_train",
+        "latencies": [0],
+        "action_env_dim": 7,
+        "latency_filter": [0],
+        "deadly_action_layout": "multibinary_7",
+    },
+    "deadly_corridor_mixed_latency": {
+        "name": "pi05/bridge/mixed_latency/deadly_corridor.yaml",
+        "env": "deadly_corridor",
+        "mode": "mixed_latency",
+        "run_id": "pi05_deadly_corridor_bridge_mixed_latency",
+        "source_hf": "latency-sensitive-bench/deadly_corridor_mixed_latency_parquet",
+        "converted_name": "deadly_corridor_mixed_latency_train",
+        "latencies": [0, 1, 2, 3, 4, 5],
+        "action_env_dim": 7,
+        "latency_filter": None,
+        "deadly_action_layout": "multibinary_7",
     },
 }
 
@@ -86,9 +146,9 @@ def _setup_args(tmp_path: Path, model: str, env: str) -> SimpleNamespace:
     )
 
 
-def _assert_pi05_flappy_experiment(cfg: dict[str, Any], expected: ExpectedExperimentConfig) -> None:
+def _assert_pi05_bridge_experiment(cfg: dict[str, Any], expected: ExpectedExperimentConfig) -> None:
     assert cfg["model"] == "pi05"
-    assert cfg["env"] == "flappy"
+    assert cfg["env"] == expected["env"]
     assert cfg["mode"] == expected["mode"]
     assert cfg["run_id"] == expected["run_id"]
     assert cfg["conda"]["env_name"] == "starvla_rl_games_pi05"
@@ -99,9 +159,10 @@ def _assert_pi05_flappy_experiment(cfg: dict[str, Any], expected: ExpectedExperi
     assert cfg["initialization"]["checkpoint_filename"] == "checkpoints/steps_50000_pytorch_model.pt"
     assert cfg["dataset"]["source_hf"] == expected["source_hf"]
     assert cfg["dataset"]["converted_name"] == expected["converted_name"]
+    assert cfg["dataset"].get("latency_filter") == expected["latency_filter"]
     assert cfg["framework"]["name"] == "QwenPI_v3"
     assert cfg["framework"]["action_model"]["action_dim"] == 7
-    assert cfg["framework"]["action_model"]["action_env_dim"] == 2
+    assert cfg["framework"]["action_model"]["action_env_dim"] == expected["action_env_dim"]
     assert cfg["framework"]["action_model"]["state_dim"] == 7
     assert cfg["framework"]["action_model"]["action_horizon"] == 1
     assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["action_dit_hidden_dim"] == 1024
@@ -109,6 +170,8 @@ def _assert_pi05_flappy_experiment(cfg: dict[str, Any], expected: ExpectedExperi
     assert cfg["rl_games"]["model_alias"] == "pi-0.5"
     assert cfg["rl_games"]["initialization_mode"] == "bridge"
     assert cfg["rl_games"]["action_carrier"] == "bridge"
+    assert cfg["rl_games"]["task"] == expected["env"]
+    assert cfg["rl_games"].get("deadly_action_layout") == expected["deadly_action_layout"]
     assert cfg["rl_games"]["latencies"] == expected["latencies"]
 
 
@@ -161,7 +224,7 @@ def test_run_train_pi05_bridge_initializer_matches_official_pi_v3_checkpoint() -
     assert 'pi05) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_50000_pytorch_model.pt" ;;' in script
 
 
-def test_pi05_setup_assets_uses_public_flappy_route_only_for_flappy(
+def test_pi05_setup_assets_routes_all_rl_games_environments(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -212,25 +275,33 @@ def test_pi05_setup_assets_uses_public_flappy_route_only_for_flappy(
     pi0_flappy = setup_training_assets.setup_assets(_setup_args(tmp_path, "pi0", "flappy"))
     openvla_flappy = setup_training_assets.setup_assets(_setup_args(tmp_path, "openvla", "flappy"))
     pi05_demon_attack = setup_training_assets.setup_assets(_setup_args(tmp_path, "pi05", "demon_attack"))
+    pi05_deadly_corridor = setup_training_assets.setup_assets(_setup_args(tmp_path, "pi05", "deadly_corridor"))
     pi05_flappy = setup_training_assets.setup_assets(_setup_args(tmp_path, "pi05", "flappy"))
 
     assert pi0_flappy["data_mix"] == "pi0_flappy_train"
     assert openvla_flappy["data_mix"] == "openvla_flappy_train"
-    assert pi05_demon_attack["data_mix"] is None
-    assert "pi05:demon_attack:demon_attack" not in calls
+    assert pi05_demon_attack["data_mix"] == "pi05_demon_attack_train"
+    assert pi05_demon_attack["eval_data_mix"] == "pi05_demon_attack_eval"
+    assert pi05_deadly_corridor["data_mix"] == "pi05_deadly_corridor_train"
+    assert pi05_deadly_corridor["eval_data_mix"] == "pi05_deadly_corridor_eval"
+    assert "pi05:demon_attack:demon_attack" in calls
+    assert "pi05:deadly_corridor:deadly_corridor" in calls
     assert pi05_flappy["data_mix"] == "pi05_flappy_train"
     assert "pi05:flappy:flappy" in calls
 
 
-def test_pi05_flappy_single_experiment_uses_qwenpi_v3() -> None:
-    expected = EXPECTED_PI05_FLAPPY_EXPERIMENTS["single"]
+@pytest.mark.parametrize("expected", EXPECTED_PI05_BRIDGE_EXPERIMENTS.values(), ids=EXPECTED_PI05_BRIDGE_EXPERIMENTS.keys())
+def test_pi05_bridge_experiments_use_qwenpi_v3(expected: ExpectedExperimentConfig) -> None:
     cfg = _load_experiment_config(expected["name"])
 
-    _assert_pi05_flappy_experiment(cfg, expected)
+    _assert_pi05_bridge_experiment(cfg, expected)
 
 
-def test_pi05_flappy_single_experiment_forwards_qwenpi_v3_diffusion_width(tmp_path: Path) -> None:
-    expected = EXPECTED_PI05_FLAPPY_EXPERIMENTS["single"]
+@pytest.mark.parametrize("expected", EXPECTED_PI05_BRIDGE_EXPERIMENTS.values(), ids=EXPECTED_PI05_BRIDGE_EXPERIMENTS.keys())
+def test_pi05_bridge_experiments_forward_qwenpi_v3_command_overrides(
+    expected: ExpectedExperimentConfig,
+    tmp_path: Path,
+) -> None:
     cfg = _load_experiment_config(expected["name"])
     setup = {
         "dataset_local_dir": str(tmp_path / "datasets"),
@@ -242,10 +313,13 @@ def test_pi05_flappy_single_experiment_forwards_qwenpi_v3_diffusion_width(tmp_pa
 
     assert "framework.action_model.diffusion_model_cfg.action_dit_hidden_dim=1024" in cmd
     assert "framework.action_model.diffusion_model_cfg.output_dim=1024" in cmd
+    assert f"framework.action_model.action_env_dim={expected['action_env_dim']}" in cmd
+    if expected["deadly_action_layout"] is not None:
+        assert f"rl_games.env_eval.deadly.action_layout={expected['deadly_action_layout']}" in cmd
 
 
 def test_pi05_flappy_single_setup_resolves_local_initialization_dir(tmp_path: Path) -> None:
-    expected = EXPECTED_PI05_FLAPPY_EXPERIMENTS["single"]
+    expected = EXPECTED_PI05_BRIDGE_EXPERIMENTS["flappy_single"]
     cfg = _load_experiment_config(expected["name"])
 
     setup_args = run_experiment._setup_namespace(cfg, tmp_path, "results/Checkpoints")
@@ -346,9 +420,3 @@ def test_pi05_setup_assets_falls_back_to_hf_when_local_initialization_is_missing
     assert setup["initialization_local_dir"] == str(missing_local_repo)
     assert setup["initialization_step"] == 50000
 
-
-def test_pi05_flappy_mixed_experiment_uses_qwenpi_v3() -> None:
-    expected = EXPECTED_PI05_FLAPPY_EXPERIMENTS["mixed_latency"]
-    cfg = _load_experiment_config(expected["name"])
-
-    _assert_pi05_flappy_experiment(cfg, expected)

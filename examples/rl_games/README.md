@@ -69,17 +69,21 @@ Available model trees:
 ```text
 examples/rl_games/experiments/openvla/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
 examples/rl_games/experiments/pi0/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
-examples/rl_games/experiments/pi05/bridge/{single,mixed_latency}/flappy.yaml
+examples/rl_games/experiments/pi05/bridge/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
 examples/rl_games/experiments/gr00t/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
 ```
 
 `scratch` trains with the native task action width. `bridge` starts from the released StarVLA Bridge/RT-1 checkpoints, uses `Qwen/Qwen3-VL-4B-Instruct` as the base backbone, and trains through a shared 7D action/state carrier. Losses and inference are masked to the active task action dimensions: 2 for Flappy, 6 for Demon Attack, and 7 for Deadly Corridor.
 
-pi-0.5 Bridge Flappy configs:
+pi-0.5 Bridge configs:
 
 ```text
 examples/rl_games/experiments/pi05/bridge/mixed_latency/flappy.yaml
 examples/rl_games/experiments/pi05/bridge/single/flappy.yaml
+examples/rl_games/experiments/pi05/bridge/mixed_latency/demon_attack.yaml
+examples/rl_games/experiments/pi05/bridge/single/demon_attack.yaml
+examples/rl_games/experiments/pi05/bridge/mixed_latency/deadly_corridor.yaml
+examples/rl_games/experiments/pi05/bridge/single/deadly_corridor.yaml
 ```
 
 These pi-0.5 configs use `Qwen/Qwen3-VL-4B-Instruct` as the base backbone and initialize from `StarVLA/Qwen3VL-PI_v3-Bridge-RT_1`. Setup first checks the local initializer at `playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1/checkpoints/steps_50000_pytorch_model.pt`; if it is missing, it falls back to the Hugging Face repo.
@@ -181,6 +185,24 @@ pi-0.5-style mixed-latency Flappy:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/pi05/bridge/mixed_latency/flappy.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0.5-style single-latency Demon Attack:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi05/bridge/single/demon_attack.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0.5-style single-latency Deadly Corridor:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi05/bridge/single/deadly_corridor.yaml \
   workspace_dir=WORKSPACE_DIR \
   wandb.entity=WANDB_ENTITY
 ```
