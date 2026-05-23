@@ -28,7 +28,7 @@ paths:
   accelerate_config: starVLA/config/deepseeds/deepspeed_zero2.yaml
 
 dataset:
-  source_hf: latency-sensitive-bench/deadly_corridor_mixed_latency_parquet
+  source_hf: talha1503/deadly_corridor_zero_latency_parquet_v2
   converted_name: deadly_corridor_train
   latency_filter: [0]
   force_download: false
