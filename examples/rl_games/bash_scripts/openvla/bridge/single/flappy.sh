@@ -12,7 +12,6 @@ bash examples/rl_games/scripts/run_experiment.sh \
     wandb.entity="talha1503" \
     checkpoint.hf_repo_id="talha1503/openvla_bridge_flappy_single_latency_exp1" \
     checkpoint.sync_enabled=true \
-    checkpoint.sync_repo_id="talha1503/openvla_bridge_flappy_single_latency_exp1" \
     trainer.max_train_steps=5000 \
     trainer.num_warmup_steps=0 \
     trainer.save_interval=10 \
@@ -25,4 +24,5 @@ bash examples/rl_games/scripts/run_experiment.sh \
     post_train_eval.enabled=true \
     post_train_eval.latencies=[0,1,2,3,4,5,6,7] \
     post_train_eval.num_episodes=20 \
-    post_train_eval.max_steps_per_episode=3600
+    post_train_eval.max_steps_per_episode=3600 \
+    dataset.debug_subset.enabled=true
