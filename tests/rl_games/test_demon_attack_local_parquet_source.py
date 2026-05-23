@@ -49,3 +49,20 @@ def test_convert_demon_attack_resolves_local_parquet_directory(
 
     assert train_files == [str(train_dir / "part-000.parquet")]
     assert validation_files == [str(validation_dir / "part-000.parquet")]
+
+
+def test_convert_demon_attack_returns_absolute_local_parquet_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    convert_demon_attack: ModuleType,
+) -> None:
+    dataset_dir = tmp_path / "dataset"
+    train_dir = dataset_dir / "train"
+    train_dir.mkdir(parents=True)
+    parquet_file = train_dir / "part-000.parquet"
+    parquet_file.touch()
+    monkeypatch.chdir(tmp_path)
+
+    train_files = convert_demon_attack._local_parquet_files("dataset", "train")
+
+    assert train_files == [str(parquet_file)]

@@ -35,6 +35,7 @@ def _local_parquet_files(dataset_name: str, split: str) -> list[str] | None:
     dataset_path = Path(dataset_name).expanduser()
     if not dataset_path.exists():
         return None
+    dataset_path = dataset_path.resolve(strict=True)
     if dataset_path.is_file():
         if dataset_path.suffix != ".parquet":
             raise ValueError(f"dataset_name={dataset_name!r} exists but is not a parquet file")
