@@ -16,7 +16,7 @@ bash examples/rl_games/scripts/run_experiment.sh \
     checkpoint.local_keep_last_n=2 \
     trainer.max_train_steps=5000 \
     trainer.num_warmup_steps=0 \
-    trainer.save_interval=1000 \
+    trainer.save_interval=10 \
     trainer.eval_interval=500 \
     trainer.logging_frequency=1 \
     trainer.gradient_accumulation_steps=16 \
