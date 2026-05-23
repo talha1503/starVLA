@@ -12,6 +12,9 @@ hydra:
   job:
     chdir: false
 
+# Canonical Hydra training schema. Experiment YAMLs should use these same
+# field names for training config; run_experiment.py no longer translates
+# legacy launcher aliases into different Hydra paths.
 run_id: starvla_rl_games
 run_root_dir: results/Checkpoints
 output_dir: null
@@ -22,6 +25,8 @@ wandb_project: starVLA_rl_games
 is_debug: false
 version_id: "0.21"
 
+# Model/framework config. Model-specific config groups may override parts of
+# this tree, and experiment YAMLs can override these exact paths.
 framework:
   name: QwenOFT
   qwenvl:
@@ -44,6 +49,8 @@ framework:
     future_action_window_size: 0
     past_action_window_size: 0
 
+# Training dataset config. per_device_batch_size is the micro batch size per
+# process/device.
 datasets:
   vla_data:
     dataset_py: lerobot_datasets
@@ -58,6 +65,7 @@ datasets:
     obs_image_size: [84, 84]
     video_backend: torchvision_av
 
+# Trainer loop, optimization, checkpoint-save, and dataloader-eval settings.
 trainer:
   max_train_steps: 2000
   num_warmup_steps: 100
@@ -71,7 +79,7 @@ trainer:
   lr_scheduler_type: cosine_with_min_lr
   scheduler_specific_kwargs:
     min_lr: 1.0e-06
-  freeze_modules: ''
+  freeze_modules: ""
   loss_scale:
     vla: 1.0
     vlm: 0.1

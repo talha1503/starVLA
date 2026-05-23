@@ -70,7 +70,7 @@ examples/rl_games/experiments/openvla_deadly_corridor_mixed_latency.yaml
 examples/rl_games/experiments/openvla_deadly_corridor_single.yaml
 ```
 
-Edit `workspace_dir`, `auth`, `wandb`, `dataset`, `base_model`, `checkpoint`, `launch`, `train_data`, and `trainer` in the YAML. Relative asset paths are resolved under `workspace_dir`.
+Edit `workspace_dir`, `auth`, `dataset`, `datasets`, `base_model`, `checkpoint`, `launch`, `framework`, and `trainer` in the YAML. Relative asset paths are resolved under `workspace_dir`.
 
 Authentication tokens are read from `HF_TOKEN` and `WANDB_API_KEY` by default:
 
@@ -87,7 +87,7 @@ Mixed-latency Flappy:
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
   workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
+  wandb_entity=WANDB_ENTITY
 ```
 
 Single-latency Flappy:
@@ -96,7 +96,7 @@ Single-latency Flappy:
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/openvla_flappy_single.yaml \
   workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
+  wandb_entity=WANDB_ENTITY
 ```
 
 Single-GPU direct backend with a custom run name:
@@ -129,10 +129,10 @@ bash examples/rl_games/scripts/run_experiment.sh \
   dataset.debug_subset.enabled=true \
   dataset.debug_subset.max_episodes=5 \
   trainer.max_train_steps=2 \
-  trainer.batch_size=1 \
+  datasets.vla_data.per_device_batch_size=1 \
   trainer.distributed_backend=none \
-  rl_games.mid_train_eval.enabled=false \
-  rl_games.post_train_eval.enabled=false
+  rl_games.env_eval.mid_train.enabled=false \
+  rl_games.env_eval.post_train.enabled=false
 ```
 
 Debug subsets are written to separate converted dataset folders, for example
@@ -149,29 +149,30 @@ Deadly Corridor uses the mixed-latency HF dataset for both modes. The single
 config filters it to `dataset.latency_filter: [0]`, while the mixed config
 keeps all latencies and requires `latency_prompt_map.json`.
 
-Checkpoint fields have separate meanings: `checkpoint.hf_repo_id` is the resume/download source, while `checkpoint.sync_repo_id` is the upload destination when `checkpoint.sync_enabled: true`. The trainer saves full Accelerate training-state directories (`steps_<N>_state/`) for exact resume, including optimizer/scheduler state, and also saves lightweight model files for convenience. A missing `sync_repo_id` repo is created during sync if Hugging Face auth is available. `checkpoint.hf_keep_last_n: 0` keeps all uploaded HF checkpoints.
+Checkpoint fields have separate meanings: `checkpoint.hf_repo_id` is the resume/download source, while `checkpoint.sync.repo_id` is the upload destination when `checkpoint.sync.enabled: true`. The trainer saves full Accelerate training-state directories (`steps_<N>_state/`) for exact resume, including optimizer/scheduler state, and also saves lightweight model files for convenience. A missing `checkpoint.sync.repo_id` repo is created during sync if Hugging Face auth is available. `checkpoint.sync.keep_last_n: 0` keeps all uploaded HF checkpoints.
 
 Environment rollout eval is controlled in the `rl_games` block:
 
 ```yaml
 rl_games:
-  env_eval_enabled: true
-
-  mid_train_eval:
+  env_eval:
     enabled: true
-    interval_steps: 100
-    latencies: [0, 1, 2, 3, 4, 5]
-    num_episodes: 5
-    max_steps_per_episode: 2000
 
-  post_train_eval:
-    enabled: true
-    latencies: [0, 1, 2, 3, 4, 5]
-    num_episodes: 5
-    max_steps_per_episode: 2000
+    mid_train:
+      enabled: true
+      interval_steps: 100
+      latencies: [0, 1, 2, 3, 4, 5]
+      num_episodes: 5
+      max_steps_per_episode: 2000
+
+    post_train:
+      enabled: true
+      latencies: [0, 1, 2, 3, 4, 5]
+      num_episodes: 5
+      max_steps_per_episode: 2000
 ```
 
-This is separate from `trainer.eval_interval`. `trainer.eval_interval` runs the trainer's action-model eval; `rl_games.mid_train_eval` and `rl_games.post_train_eval` run the current model in the actual environment.
+This is separate from `trainer.eval_interval`. `trainer.eval_interval` runs the trainer's action-model eval; `rl_games.env_eval.mid_train` and `rl_games.env_eval.post_train` run the current model in the actual environment.
 
 The launcher activates the conda env from the config, then downloads/prepares the dataset, writes dataset statistics, downloads the base model if needed, checks local/Hugging Face checkpoints, and launches training.
 
