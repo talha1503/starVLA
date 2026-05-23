@@ -318,7 +318,6 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         "trainer.max_grad_norm",
         "trainer.weight_decay",
         "trainer.gradient_clipping",
-        "trainer.optimizer.name",
         "trainer.optimizer.betas",
         "trainer.optimizer.eps",
         "trainer.optimizer.weight_decay",

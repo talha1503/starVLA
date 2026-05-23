@@ -71,7 +71,7 @@ trainer:
   eval_num_batches: 20
   logging_frequency: 10
   gradient_accumulation_steps: 1
-  batch_size: 4
+  batch_size: 32
   learning_rate:
     base: 2.0e-05
     qwen_vl_interface: 1.0e-05
@@ -86,11 +86,6 @@ trainer:
   max_grad_norm: 1.0
   weight_decay: 0.0
   gradient_clipping: 1.0
-  optimizer:
-    name: AdamW
-    betas: [0.9, 0.95]
-    eps: 1.0e-08
-    weight_decay: 1.0e-08
   save_format: pt
 
 rl_games:
@@ -100,7 +95,7 @@ rl_games:
   image_size: 84
   deadly_action_layout: multibinary_7
   latency_prompt_map_path: null
-  env_eval_enabled: true
+  env_eval_enabled: false
 
   mid_train_eval:
     enabled: false
