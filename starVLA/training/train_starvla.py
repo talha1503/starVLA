@@ -38,6 +38,7 @@ from starVLA.dataloader import build_dataloader
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
 from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias
+from starVLA.training.rl_games.auth import login_training_services
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
 
@@ -429,6 +430,10 @@ class VLATrainer(TrainerUtils):
                 )
 
             if self.accelerator.sync_gradients and self.completed_steps > 0:
+                if self.completed_steps % self.config.trainer.save_interval == 0:
+                    self._save_checkpoint()
+
+            if self.accelerator.sync_gradients and self.completed_steps > 0:
                 if self.completed_steps % self.config.trainer.eval_interval == 0:
                     step_metrics = self.eval_action_loss(step_metrics)
                 if self._rl_games_eval_runner is not None:
@@ -449,9 +454,6 @@ class VLATrainer(TrainerUtils):
             step_metrics["timing/data"] = t_end_data - t_start_data
             step_metrics["timing/model"] = t_end_model - t_start_model
             self._log_metrics(step_metrics)
-
-            if self.completed_steps % self.config.trainer.save_interval == 0 and self.completed_steps > 0:
-                self._save_checkpoint()
 
             if self.completed_steps >= self.config.trainer.max_train_steps:
                 break
@@ -575,6 +577,8 @@ class VLATrainer(TrainerUtils):
 
 def main(cfg) -> None:
     logger.info("VLA Training :: Warming Up")
+    if hasattr(cfg, "rl_games"):
+        login_training_services(cfg, workspace_dir=getattr(cfg, "workspace_dir", None))
     apply_model_alias(cfg)
     apply_action_spec(cfg)
 

@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import os
 import shutil
+import logging
 from dataclasses import dataclass
 from typing import List, Optional
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -28,9 +32,14 @@ class CheckpointSyncManager:
         self._saved.append(CheckpointRecord(step=step, state_path=state_path, model_path=model_path))
         self._saved.sort(key=lambda record: record.step)
         self._prune_local_checkpoints()
-        if self._sync_enabled and self._hf_repo_id:
-            self._sync_to_hf(state_path=state_path, model_path=model_path)
-            self._prune_hf_checkpoints()
+        if not self._sync_enabled:
+            logger.info("HF checkpoint sync disabled; skipping upload for step %s", step)
+            return
+        if not self._hf_repo_id:
+            logger.warning("HF checkpoint sync enabled but checkpoint.sync.repo_id is empty; skipping upload")
+            return
+        self._sync_to_hf(state_path=state_path, model_path=model_path)
+        self._prune_hf_checkpoints()
 
     def _prune_local_checkpoints(self) -> None:
         if self._local_keep_last_n <= 0:
@@ -53,12 +62,14 @@ class CheckpointSyncManager:
         # Lazy-import and soft-fail to avoid hard dependency for local-only users.
         try:
             from huggingface_hub import HfApi, upload_file, upload_folder
-        except Exception:
+        except Exception as exc:
+            logger.warning("HF checkpoint sync skipped: could not import huggingface_hub: %s", exc)
             return
         try:
             api = HfApi()
             api.create_repo(repo_id=self._hf_repo_id, repo_type="model", exist_ok=True)
             if state_path and os.path.isdir(state_path):
+                logger.info("Uploading checkpoint state folder to HF: %s -> %s", state_path, self._hf_repo_id)
                 upload_folder(
                     folder_path=state_path,
                     path_in_repo=os.path.basename(state_path),
@@ -66,14 +77,17 @@ class CheckpointSyncManager:
                     repo_type="model",
                 )
             if model_path and os.path.isfile(model_path):
+                logger.info("Uploading checkpoint model file to HF: %s -> %s", model_path, self._hf_repo_id)
                 upload_file(
                     path_or_fileobj=model_path,
                     path_in_repo=os.path.basename(model_path),
                     repo_id=self._hf_repo_id,
                     repo_type="model",
                 )
-        except Exception:
+            logger.info("HF checkpoint sync completed for repo %s", self._hf_repo_id)
+        except Exception as exc:
             # Non-fatal by design.
+            logger.warning("HF checkpoint sync failed for repo %s: %s", self._hf_repo_id, exc)
             return
 
     def _prune_hf_checkpoints(self) -> None:
@@ -81,7 +95,8 @@ class CheckpointSyncManager:
             return
         try:
             from huggingface_hub import HfApi
-        except Exception:
+        except Exception as exc:
+            logger.warning("HF checkpoint pruning skipped: could not import huggingface_hub: %s", exc)
             return
         try:
             api = HfApi()
@@ -112,5 +127,6 @@ class CheckpointSyncManager:
                         repo_id=self._hf_repo_id,
                         repo_type="model",
                     )
-        except Exception:
+        except Exception as exc:
+            logger.warning("HF checkpoint pruning failed for repo %s: %s", self._hf_repo_id, exc)
             return

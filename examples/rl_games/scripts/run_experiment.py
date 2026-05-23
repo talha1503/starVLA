@@ -18,6 +18,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from examples.rl_games.scripts.setup_training_assets import setup_assets
+from starVLA.training.rl_games.auth import login_training_services
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -107,46 +108,8 @@ def _workspace_dir(cfg: dict[str, Any]) -> Path:
     return REPO_ROOT
 
 
-def _strip_env_quotes(value: str) -> str:
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        return value[1:-1]
-    return value
-
-
-def _load_env_file(path: Path) -> None:
-    if not path.exists():
-        raise FileNotFoundError(f"Auth env file not found: {path}")
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export "):].strip()
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if not key:
-            continue
-        os.environ[key] = _strip_env_quotes(value)
-
-
 def _load_auth_env(cfg: dict[str, Any], workspace_dir: Path) -> None:
-    env_file = _get(cfg, "auth.env_file")
-    if env_file not in (None, ""):
-        _load_env_file(Path(_repo_or_workspace_path(env_file, workspace_dir)))
-
-    hf_token_env = str(_get(cfg, "auth.hf_token_env", "HF_TOKEN") or "HF_TOKEN")
-    hf_token = os.environ.get(hf_token_env)
-    if hf_token:
-        os.environ.setdefault("HF_TOKEN", hf_token)
-        os.environ.setdefault("HUGGINGFACE_HUB_TOKEN", hf_token)
-
-    wandb_key_env = str(_get(cfg, "auth.wandb_api_key_env", "WANDB_API_KEY") or "WANDB_API_KEY")
-    wandb_key = os.environ.get(wandb_key_env)
-    if wandb_key:
-        os.environ.setdefault("WANDB_API_KEY", wandb_key)
+    login_training_services(cfg, workspace_dir=workspace_dir, repo_root=REPO_ROOT)
 
 
 def _latencies_expr(values: Any) -> str | None:

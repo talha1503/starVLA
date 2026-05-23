@@ -22,6 +22,11 @@ wandb_project: starVLA_rl_games
 is_debug: false
 version_id: "0.21"
 
+auth:
+  env_file: null
+  hf_token_env: HF_TOKEN
+  wandb_api_key_env: WANDB_API_KEY
+
 framework:
   name: QwenOFT
   qwenvl:
