@@ -10,6 +10,7 @@ from typing import Iterable, Optional
 
 
 STEP_FILE_RE = re.compile(r"steps_(\d+)_(?:pytorch_model\.pt|model\.safetensors)$")
+STEP_LORA_ADAPTER_RE = re.compile(r"steps_(\d+)_lora_adapter$")
 
 
 def _str2bool(value: str) -> bool:
@@ -93,6 +94,11 @@ def _find_latest_local_checkpoint(checkpoint_local_dir: Path) -> tuple[Optional[
         return None, 0
     candidates: list[tuple[int, Path]] = []
     for item in checkpoint_local_dir.iterdir():
+        if item.is_dir():
+            match = STEP_LORA_ADAPTER_RE.match(item.name)
+            if match:
+                candidates.append((int(match.group(1)), item))
+            continue
         if not item.is_file():
             continue
         match = STEP_FILE_RE.match(item.name)
@@ -108,7 +114,7 @@ def _find_latest_local_checkpoint(checkpoint_local_dir: Path) -> tuple[Optional[
 
 def _download_latest_hf_checkpoint(checkpoint_hf_repo_id: str, checkpoint_local_dir: Path) -> tuple[Optional[Path], int]:
     try:
-        from huggingface_hub import HfApi, hf_hub_download
+        from huggingface_hub import HfApi, hf_hub_download, snapshot_download
     except Exception as exc:
         raise RuntimeError("huggingface_hub is required for checkpoint_mode=hf") from exc
 
@@ -116,6 +122,11 @@ def _download_latest_hf_checkpoint(checkpoint_hf_repo_id: str, checkpoint_local_
     files = api.list_repo_files(repo_id=checkpoint_hf_repo_id, repo_type="model")
     candidates: list[tuple[int, str]] = []
     for file_path in files:
+        first_part = file_path.split("/", 1)[0]
+        lora_match = STEP_LORA_ADAPTER_RE.match(first_part)
+        if lora_match:
+            candidates.append((int(lora_match.group(1)), first_part))
+            continue
         file_name = os.path.basename(file_path)
         match = STEP_FILE_RE.match(file_name)
         if not match:
@@ -128,13 +139,23 @@ def _download_latest_hf_checkpoint(checkpoint_hf_repo_id: str, checkpoint_local_
     candidates.sort(key=lambda x: x[0])
     step, chosen_repo_path = candidates[-1]
     checkpoint_local_dir.mkdir(parents=True, exist_ok=True)
-    local_path = hf_hub_download(
-        repo_id=checkpoint_hf_repo_id,
-        repo_type="model",
-        filename=chosen_repo_path,
-        local_dir=str(checkpoint_local_dir),
-        local_dir_use_symlinks=False,
-    )
+    if STEP_LORA_ADAPTER_RE.match(chosen_repo_path):
+        snapshot_download(
+            repo_id=checkpoint_hf_repo_id,
+            repo_type="model",
+            allow_patterns=[f"{chosen_repo_path}/**"],
+            local_dir=str(checkpoint_local_dir),
+            local_dir_use_symlinks=False,
+        )
+        local_path = checkpoint_local_dir / chosen_repo_path
+    else:
+        local_path = hf_hub_download(
+            repo_id=checkpoint_hf_repo_id,
+            repo_type="model",
+            filename=chosen_repo_path,
+            local_dir=str(checkpoint_local_dir),
+            local_dir_use_symlinks=False,
+        )
     return Path(local_path), step
 
 

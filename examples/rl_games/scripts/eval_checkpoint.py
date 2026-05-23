@@ -10,6 +10,7 @@ import wandb
 from omegaconf import OmegaConf
 
 from starVLA.model.framework.base_framework import build_framework
+from starVLA.model.framework.peft_checkpoint import is_lora_adapter_checkpoint, load_lora_adapter_checkpoint
 from starVLA.model.framework.share_tools import apply_config_compat
 from starVLA.training.rl_games import RlGamesEvalRunner, apply_action_spec, apply_model_alias
 
@@ -48,13 +49,19 @@ def _resolve_checkpoint(run_dir: Path, checkpoint: str | None, step: int | None)
     if step is not None:
         pt = checkpoint_dir / f"steps_{step}_pytorch_model.pt"
         st = checkpoint_dir / f"steps_{step}_model.safetensors"
+        lora = checkpoint_dir / f"steps_{step}_lora_adapter"
         if pt.exists():
             return pt, step
         if st.exists():
             return st, step
+        if lora.exists():
+            return lora, step
         raise FileNotFoundError(f"No checkpoint found for step={step} in {checkpoint_dir}")
 
     candidates = []
+    for dir_path in checkpoint_dir.glob("steps_*_lora_adapter"):
+        s = _step_from_name(dir_path.name)
+        candidates.append((s, dir_path))
     for file_path in checkpoint_dir.glob("steps_*_pytorch_model.pt"):
         s = _step_from_name(file_path.name)
         candidates.append((s, file_path))
@@ -76,6 +83,12 @@ def _step_from_name(name: str) -> int:
 
 def _load_model(cfg, checkpoint_path: Path):
     model = build_framework(cfg)
+    if is_lora_adapter_checkpoint(checkpoint_path):
+        model = load_lora_adapter_checkpoint(model, checkpoint_path)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = model.to(device)
+        model.eval()
+        return model
     if checkpoint_path.suffix == ".safetensors":
         from safetensors.torch import load_file
 

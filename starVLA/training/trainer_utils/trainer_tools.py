@@ -512,6 +512,10 @@ class TrainerUtils:
             if state_match and os.path.isdir(path):
                 checkpoints.append((name, int(state_match.group(1)), 1))
                 continue
+            lora_match = re.match(r"steps_(\d+)_lora_adapter$", name)
+            if lora_match and os.path.isdir(path):
+                checkpoints.append((name, int(lora_match.group(1)), 0))
+                continue
             file_match = re.match(r"steps_(\d+)_(?:pytorch_model\.pt|model\.safetensors)$", name)
             if file_match and os.path.isfile(path):
                 checkpoints.append((name, int(file_match.group(1)), 0))

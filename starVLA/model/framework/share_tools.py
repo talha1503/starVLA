@@ -317,13 +317,18 @@ def read_model_config(pretrained_checkpoint):
         FileNotFoundError: If checkpoint or required JSON files are missing.
         AssertionError: If file suffix or structure invalid.
     """
-    if os.path.isfile(pretrained_checkpoint):
+    if os.path.isfile(pretrained_checkpoint) or os.path.isdir(pretrained_checkpoint):
         overwatch.info(f"Loading from local checkpoint path `{(checkpoint_pt := Path(pretrained_checkpoint))}`")
 
-        # [Validate] Checkpoint Path should look like
-        # `.../<RUN_ID>/checkpoints/<CHECKPOINT_PATH>.pt|.safetensors`
-        assert checkpoint_pt.suffix in {".pt", ".safetensors"}
-        run_dir = checkpoint_pt.parents[1]
+        if checkpoint_pt.is_file():
+            # [Validate] Checkpoint Path should look like
+            # `.../<RUN_ID>/checkpoints/<CHECKPOINT_PATH>.pt|.safetensors`
+            assert checkpoint_pt.suffix in {".pt", ".safetensors"}
+            run_dir = checkpoint_pt.parents[1]
+        elif checkpoint_pt.name == "final_model":
+            run_dir = checkpoint_pt.parent
+        else:
+            run_dir = checkpoint_pt.parents[1]
 
         # Get paths for `config.json`, `dataset_statistics.json` and pretrained checkpoint
         config_json, dataset_statistics_json = run_dir / "config.json", run_dir / "dataset_statistics.json"
@@ -366,13 +371,18 @@ def read_mode_config(pretrained_checkpoint):
             vla_cfg (dict)
             norm_stats (dict)
     """
-    if os.path.isfile(pretrained_checkpoint):
+    if os.path.isfile(pretrained_checkpoint) or os.path.isdir(pretrained_checkpoint):
         overwatch.info(f"Loading from local checkpoint path `{(checkpoint_pt := Path(pretrained_checkpoint))}`")
 
-        # [Validate] Checkpoint Path should look like
-        # `.../<RUN_ID>/checkpoints/<CHECKPOINT_PATH>.pt|.safetensors`
-        assert checkpoint_pt.suffix in {".pt", ".safetensors"}
-        run_dir = checkpoint_pt.parents[1]
+        if checkpoint_pt.is_file():
+            # [Validate] Checkpoint Path should look like
+            # `.../<RUN_ID>/checkpoints/<CHECKPOINT_PATH>.pt|.safetensors`
+            assert checkpoint_pt.suffix in {".pt", ".safetensors"}
+            run_dir = checkpoint_pt.parents[1]
+        elif checkpoint_pt.name == "final_model":
+            run_dir = checkpoint_pt.parent
+        else:
+            run_dir = checkpoint_pt.parents[1]
 
         # Get paths for `config.json`, `dataset_statistics.json` and pretrained checkpoint
         config_yaml, dataset_statistics_json = run_dir / "config.yaml", run_dir / "dataset_statistics.json"

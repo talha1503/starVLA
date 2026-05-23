@@ -18,6 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 
 STEP_FILE_RE = re.compile(r"steps_(\d+)_(?:pytorch_model\.pt|model\.safetensors)$")
 STEP_STATE_RE = re.compile(r"steps_(\d+)_state$")
+STEP_LORA_ADAPTER_RE = re.compile(r"steps_(\d+)_lora_adapter$")
 
 
 def _str2bool(value: str | bool) -> bool:
@@ -53,6 +54,11 @@ def _find_latest_local_checkpoint(checkpoint_dir: Path) -> tuple[Path | None, in
             match = STEP_STATE_RE.match(item.name)
             if match:
                 candidates.append((int(match.group(1)), 1, item, "state"))
+                continue
+            match = STEP_LORA_ADAPTER_RE.match(item.name)
+            if match:
+                candidates.append((int(match.group(1)), 0, item, "model"))
+                continue
         elif item.is_file():
             match = STEP_FILE_RE.match(item.name)
             if match:
@@ -85,6 +91,12 @@ def _download_latest_hf_checkpoint(repo_id: str, checkpoint_dir: Path) -> tuple[
                 candidates.append((int(state_match.group(1)), 1, first_part, "state"))
                 seen_state_dirs.add(first_part)
             continue
+        lora_match = STEP_LORA_ADAPTER_RE.match(first_part)
+        if lora_match:
+            if first_part not in seen_state_dirs:
+                candidates.append((int(lora_match.group(1)), 0, first_part, "model"))
+                seen_state_dirs.add(first_part)
+            continue
         file_match = STEP_FILE_RE.match(os.path.basename(file_path))
         if file_match:
             candidates.append((int(file_match.group(1)), 0, file_path, "model"))
@@ -95,7 +107,7 @@ def _download_latest_hf_checkpoint(repo_id: str, checkpoint_dir: Path) -> tuple[
     step, _, chosen, kind = candidates[-1]
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     try:
-        if kind == "state":
+        if kind == "state" or STEP_LORA_ADAPTER_RE.match(chosen):
             snapshot_download(
                 repo_id=repo_id,
                 repo_type="model",

@@ -27,7 +27,7 @@ import torch
 import torch.distributed as dist
 import wandb
 from accelerate import Accelerator, DeepSpeedPlugin
-from accelerate.utils import set_seed
+from accelerate.utils import DistributedType, set_seed
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -36,6 +36,13 @@ from transformers import AutoProcessor, get_scheduler
 # Local Modules
 from starVLA.dataloader import build_dataloader
 from starVLA.model.framework.base_framework import build_framework
+from starVLA.model.framework.peft_checkpoint import (
+    is_lora_adapter_checkpoint,
+    is_lora_enabled,
+    load_lora_adapter_checkpoint,
+    lora_adapter_checkpoint_path,
+    save_lora_adapter_checkpoint,
+)
 from starVLA.model.framework.share_tools import apply_config_compat
 from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
@@ -140,6 +147,7 @@ class VLATrainer(TrainerUtils):
         self.completed_steps = 0
         self.total_batch_size = self._calculate_total_batch_size()
         self._checkpoint_sync_manager = CheckpointSyncManager(cfg=self.config)
+        self._save_lora_adapter_checkpoints = is_lora_enabled(self.config)
         self._rl_games_eval_runner = None
         self._pending_full_state_resume = None
         if hasattr(self.config, "rl_games") and hasattr(self.config.rl_games, "env_eval"):
@@ -249,7 +257,13 @@ class VLATrainer(TrainerUtils):
                 resume_from_checkpoint, self.completed_steps = self._get_latest_checkpoint(self.checkpoint_dir)
             if resume_from_checkpoint:
                 self.resume_from_checkpoint = resume_from_checkpoint
-                if os.path.isdir(self.resume_from_checkpoint):
+                if is_lora_adapter_checkpoint(self.resume_from_checkpoint):
+                    self.model = load_lora_adapter_checkpoint(self.model, self.resume_from_checkpoint)
+                    logger.info(
+                        f"Resuming LoRA adapter checkpoint: "
+                        f"{self.resume_from_checkpoint}, steps: {self.completed_steps}"
+                    )
+                elif os.path.isdir(self.resume_from_checkpoint):
                     self._pending_full_state_resume = self.resume_from_checkpoint
                     logger.info(
                         f"Will resume full training state from checkpoint: "
@@ -268,7 +282,10 @@ class VLATrainer(TrainerUtils):
 
         if pretrained_checkpoint:
             reload_modules = getattr(self.config.trainer, "reload_modules", None)
-            self.model = self.load_pretrained_backbones(self.model, pretrained_checkpoint, reload_modules=reload_modules)
+            if is_lora_adapter_checkpoint(pretrained_checkpoint):
+                self.model = load_lora_adapter_checkpoint(self.model, pretrained_checkpoint)
+            else:
+                self.model = self.load_pretrained_backbones(self.model, pretrained_checkpoint, reload_modules=reload_modules)
             self.completed_steps = 0
             self.resume_from_checkpoint = pretrained_checkpoint
             logger.info(f"Loaded pretrained checkpoint: {pretrained_checkpoint}, steps: {self.completed_steps}")
@@ -296,10 +313,56 @@ class VLATrainer(TrainerUtils):
         self.accelerator.load_state(checkpoint_path)
         self.accelerator.print(f"Resumed from checkpoint: {checkpoint_path}")
 
+    def _is_deepspeed_zero3(self) -> bool:
+        return (
+            self.accelerator.distributed_type == DistributedType.DEEPSPEED
+            and int(self.accelerator.deepspeed_config["zero_optimization"]["stage"]) == 3
+        )
+
+    def _model_state_dict_for_checkpoint(self):
+        if self._is_deepspeed_zero3():
+            return self.accelerator.get_state_dict(self.model)
+        if self.accelerator.is_main_process:
+            return self.accelerator.get_state_dict(self.model)
+        return None
+
     def _save_checkpoint(self):
         """Save current training state."""
         save_format = getattr(self.config.trainer, "save_format", "pt")
         checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
+        if self._save_lora_adapter_checkpoints:
+            adapter_checkpoint_path = lora_adapter_checkpoint_path(checkpoint_path)
+            if self.accelerator.is_main_process and os.path.exists(adapter_checkpoint_path):
+                shutil.rmtree(adapter_checkpoint_path)
+            self.accelerator.wait_for_everyone()
+            state_dict = self._model_state_dict_for_checkpoint()
+            if self.accelerator.is_main_process:
+                unwrapped_model = self.accelerator.unwrap_model(self.model)
+                saved_file_path = save_lora_adapter_checkpoint(
+                    model=unwrapped_model,
+                    output_dir=adapter_checkpoint_path,
+                    save_format=save_format,
+                    model_state_dict=state_dict,
+                )
+                summary_data = {"steps": self.completed_steps}
+                with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
+                    f.write(json.dumps(summary_data) + "\n")
+                self.accelerator.print(f"✅ LoRA adapter checkpoint saved at {adapter_checkpoint_path}")
+                self._checkpoint_sync_manager.register_local_checkpoint(
+                    step=self.completed_steps,
+                    state_path=None,
+                    model_path=saved_file_path,
+                )
+
+                if isinstance(self.config, AccessTrackedConfig):
+                    logger.info("📊 Saving accessed configuration...")
+                    output_dir = Path(self.config.output_dir)
+                    self.config.save_accessed_config(output_dir / "config.yaml", use_original_values=False)
+                    logger.info("✅ Configuration files saved")
+
+            self.accelerator.wait_for_everyone()
+            return
+
         state_checkpoint_path = checkpoint_path + "_state"
 
         if self.accelerator.is_main_process and os.path.exists(state_checkpoint_path):
@@ -310,10 +373,10 @@ class VLATrainer(TrainerUtils):
         if self.accelerator.is_main_process:
             self.accelerator.print(f"✅ Full training state saved at {state_checkpoint_path}")
 
+        state_dict = self._model_state_dict_for_checkpoint()
         if self.accelerator.is_main_process:
             saved_file_path = None
 
-            state_dict = self.accelerator.get_state_dict(self.model)
             if save_format == "safetensors":
                 from safetensors.torch import save_file
 
@@ -539,19 +602,27 @@ class VLATrainer(TrainerUtils):
 
     def _finalize_training(self):
         """Training end processing."""
+        save_format = getattr(self.config.trainer, "save_format", "pt")
+        state_dict = self._model_state_dict_for_checkpoint()
         if self.accelerator.is_main_process:
-            save_format = getattr(self.config.trainer, "save_format", "pt")
             final_checkpoint = os.path.join(self.config.output_dir, "final_model")
             os.makedirs(final_checkpoint, exist_ok=True)
-            state_dict = self.accelerator.get_state_dict(self.model)
-            if save_format == "safetensors":
-                from safetensors.torch import save_file
-
-                save_file(state_dict, os.path.join(final_checkpoint, "model.safetensors"))
-            elif save_format == "pt":
-                torch.save(state_dict, os.path.join(final_checkpoint, "pytorch_model.pt"))
+            if self._save_lora_adapter_checkpoints:
+                save_lora_adapter_checkpoint(
+                    model=self.accelerator.unwrap_model(self.model),
+                    output_dir=final_checkpoint,
+                    save_format=save_format,
+                    model_state_dict=state_dict,
+                )
             else:
-                raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
+                if save_format == "safetensors":
+                    from safetensors.torch import save_file
+
+                    save_file(state_dict, os.path.join(final_checkpoint, "model.safetensors"))
+                elif save_format == "pt":
+                    torch.save(state_dict, os.path.join(final_checkpoint, "pytorch_model.pt"))
+                else:
+                    raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
             logger.info(f"Training complete. Final model saved at {final_checkpoint}")
             if self._rl_games_eval_runner is not None and self._rl_games_eval_runner.is_enabled(stage="post_train"):
                 eval_result = self._rl_games_eval_runner.run(

@@ -65,6 +65,13 @@ class CheckpointSyncManager:
                     repo_id=self._hf_repo_id,
                     repo_type="model",
                 )
+            if model_path and os.path.isdir(model_path):
+                upload_folder(
+                    folder_path=model_path,
+                    path_in_repo=os.path.basename(model_path),
+                    repo_id=self._hf_repo_id,
+                    repo_type="model",
+                )
             if model_path and os.path.isfile(model_path):
                 upload_file(
                     path_or_fileobj=model_path,
@@ -92,6 +99,13 @@ class CheckpointSyncManager:
                 if first_part.startswith("steps_") and first_part.endswith("_state"):
                     try:
                         step = int(first_part.split("steps_")[1].split("_state")[0])
+                    except Exception:
+                        continue
+                    paths_by_step.setdefault(step, set()).add(file_path)
+                    continue
+                if first_part.startswith("steps_") and first_part.endswith("_lora_adapter"):
+                    try:
+                        step = int(first_part.split("steps_")[1].split("_lora_adapter")[0])
                     except Exception:
                         continue
                     paths_by_step.setdefault(step, set()).add(file_path)
