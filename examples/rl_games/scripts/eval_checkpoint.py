@@ -25,12 +25,16 @@ def _flatten_eval_for_wandb(result, stage: str) -> dict:
     payload[f"{prefix}/total_episodes"] = float(aggregate.get("total_episodes", 0))
     payload[f"{prefix}/mean_reward"] = float(aggregate.get("mean_reward", 0.0))
     payload[f"{prefix}/mean_length"] = float(aggregate.get("mean_length", 0.0))
+    payload[f"{prefix}/std_reward"] = float(aggregate.get("std_reward", 0.0))
+    payload[f"{prefix}/std_length"] = float(aggregate.get("std_length", 0.0))
     payload[f"{prefix}/task_count"] = float(aggregate.get("task_count", 0))
 
     for key, metrics in result.per_latency.items():
         key_slug = key.replace("/", "__")
         payload[f"{prefix}/{key_slug}/mean_reward"] = float(metrics.get("mean_reward", 0.0))
         payload[f"{prefix}/{key_slug}/mean_length"] = float(metrics.get("mean_length", 0.0))
+        payload[f"{prefix}/{key_slug}/std_reward"] = float(metrics.get("std_reward", 0.0))
+        payload[f"{prefix}/{key_slug}/std_length"] = float(metrics.get("std_length", 0.0))
         payload[f"{prefix}/{key_slug}/num_episodes"] = float(metrics.get("num_episodes", 0))
     return payload
 

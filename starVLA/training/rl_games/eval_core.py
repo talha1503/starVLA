@@ -375,11 +375,17 @@ class _TaskEvaluator:
         env.close()
         mean_reward = float(np.mean(rewards)) if rewards else 0.0
         mean_length = float(np.mean(lengths)) if lengths else 0.0
+        std_reward = float(np.std(rewards)) if rewards else 0.0
+        std_length = float(np.std(lengths)) if lengths else 0.0
         return {
             "latency": int(latency),
             "num_episodes": int(num_episodes),
             "mean_reward": mean_reward,
             "mean_length": mean_length,
+            "std_reward": std_reward,
+            "std_length": std_length,
+            "episode_rewards": [float(reward) for reward in rewards],
+            "episode_lengths": [int(length) for length in lengths],
             "decoded_action_hist": dict(action_hist),
         }
 
@@ -481,6 +487,8 @@ class RlGamesEvalRunner:
             "total_episodes": 0,
             "mean_reward": 0.0,
             "mean_length": 0.0,
+            "std_reward": 0.0,
+            "std_length": 0.0,
             "task_count": len(tasks),
         }
 
@@ -513,13 +521,15 @@ class RlGamesEvalRunner:
             key = f"{task_name}/latency_{latency}"
             per_latency[key] = metrics
             aggregate["total_episodes"] += metrics["num_episodes"]
-            all_rewards.append(metrics["mean_reward"])
-            all_lengths.append(metrics["mean_length"])
+            all_rewards.extend(float(reward) for reward in metrics.get("episode_rewards", []))
+            all_lengths.extend(float(length) for length in metrics.get("episode_lengths", []))
 
         if all_rewards:
             aggregate["mean_reward"] = float(np.mean(all_rewards))
+            aggregate["std_reward"] = float(np.std(all_rewards))
         if all_lengths:
             aggregate["mean_length"] = float(np.mean(all_lengths))
+            aggregate["std_length"] = float(np.std(all_lengths))
 
         result = EvalResult(per_latency=per_latency, aggregate=aggregate)
         self._save(result=result, step=step, stage=stage)
