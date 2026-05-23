@@ -274,6 +274,7 @@ def populate_layerwise_dit_cfg(cfg, *, dit_hidden_dim: int, num_dit_layers: int)
         - num_layers           = num_dit_layers
         - input_embedding_dim  = dit_hidden_dim
         - cross_attention_dim  = dit_hidden_dim   (encoder is pre-projected)
+        - output_dim           = dit_hidden_dim   (DiT latent projection)
         - num_attention_heads  = dit_hidden_dim // attention_head_dim
                                  (uses existing attention_head_dim if set, else 64)
 
@@ -307,6 +308,7 @@ def populate_layerwise_dit_cfg(cfg, *, dit_hidden_dim: int, num_dit_layers: int)
     _force_set(dit_cfg, "num_layers", int(num_dit_layers))
     _force_set(dit_cfg, "input_embedding_dim", int(dit_hidden_dim))
     _force_set(dit_cfg, "cross_attention_dim", int(dit_hidden_dim))
+    _force_set(dit_cfg, "output_dim", int(dit_hidden_dim))
     _force_set(dit_cfg, "num_attention_heads", int(dit_hidden_dim) // int(head_dim))
     return dit_cfg
 
