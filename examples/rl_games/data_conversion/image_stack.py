@@ -10,6 +10,10 @@ IMAGE_STACK_ORDER = "oldest_to_newest"
 IMAGE_STACK_SOURCE = "policy_observation_frame_stack"
 
 
+def latest_image_from_stack(row: dict[str, Any]) -> Any:
+    return row["image_stack"][-1]
+
+
 def image_column(index: int) -> str:
     return f"observation.image_stack_{index:02d}"
 

@@ -6,10 +6,8 @@ import json
 import sys
 from collections import defaultdict
 
-from examples.rl_games.data_conversion.verify_flappy_dataset import (
-    _load_train_split,
-    build_latency_prompt_map,
-)
+from examples.rl_games.data_conversion.latency_prompt_map import build_latency_prompt_map
+from examples.rl_games.data_conversion.verify_flappy_dataset import _load_train_split
 
 
 EXPECTED_ACTIONS = ["NOOP", "FIRE", "RIGHT", "LEFT", "RIGHTFIRE", "LEFTFIRE"]
