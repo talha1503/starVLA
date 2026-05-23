@@ -47,6 +47,23 @@ class CheckpointSyncManager:
         self._sync_to_hf(state_path=state_path)
         self._prune_hf_checkpoints()
 
+    def sync_eval_result(self, eval_path: str | None, stage: str, step: int) -> None:
+        if not eval_path or not os.path.isfile(eval_path):
+            return
+        if not self._sync_enabled:
+            logger.info("HF checkpoint sync disabled; skipping eval result upload for step %s", step)
+            return
+        if not self._hf_repo_id:
+            logger.warning("HF checkpoint sync enabled but checkpoint.sync.repo_id is empty; skipping eval result upload")
+            return
+        if not self._hf_token:
+            logger.warning(
+                "HF checkpoint sync enabled for %s but HF_TOKEN/HUGGINGFACE_HUB_TOKEN is not set; skipping eval result upload",
+                self._hf_repo_id,
+            )
+            return
+        self._sync_eval_to_hf(eval_path=eval_path, stage=stage, step=step)
+
     def _prune_local_checkpoints(self) -> None:
         if self._local_keep_last_n <= 0:
             return
@@ -87,6 +104,28 @@ class CheckpointSyncManager:
         except Exception as exc:
             # Non-fatal by design.
             logger.warning("HF checkpoint sync failed for repo %s: %s", self._hf_repo_id, exc)
+            return
+
+    def _sync_eval_to_hf(self, eval_path: str, stage: str, step: int) -> None:
+        try:
+            from huggingface_hub import HfApi, upload_file
+        except Exception as exc:
+            logger.warning("HF eval sync skipped: could not import huggingface_hub: %s", exc)
+            return
+        try:
+            api = HfApi(token=self._hf_token)
+            api.create_repo(repo_id=self._hf_repo_id, repo_type="model", exist_ok=True)
+            path_in_repo = f"eval/{stage}/step_{int(step)}.json"
+            logger.info("Uploading eval result to HF: %s -> %s/%s", eval_path, self._hf_repo_id, path_in_repo)
+            upload_file(
+                path_or_fileobj=eval_path,
+                path_in_repo=path_in_repo,
+                repo_id=self._hf_repo_id,
+                repo_type="model",
+                token=self._hf_token,
+            )
+        except Exception as exc:
+            logger.warning("HF eval sync failed for repo %s: %s", self._hf_repo_id, exc)
             return
 
     def _prune_hf_checkpoints(self) -> None:

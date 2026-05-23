@@ -22,7 +22,7 @@ bash examples/rl_games/scripts/run_experiment.sh \
     trainer.gradient_accumulation_steps=16 \
     trainer.batch_size=16 \
     rl_games.mid_train_eval.interval_steps=500 \
-    rl_games.mid_train_eval.num_episodes=20 \
+    rl_games.mid_train_eval.num_episodes=10 \
     rl_games.mid_train_eval.max_steps_per_episode=3600 \
     rl_games.post_train_eval.enabled=true \
     rl_games.post_train_eval.latencies=[0,1,2,3,4,5,6,7] \

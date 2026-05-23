@@ -438,6 +438,11 @@ class VLATrainer(TrainerUtils):
                                 eval_result=eval_result,
                                 stage="mid_train",
                             )
+                            self._checkpoint_sync_manager.sync_eval_result(
+                                eval_path=eval_result.path,
+                                stage="mid_train",
+                                step=self.completed_steps,
+                            )
 
             step_metrics["timing/data"] = t_end_data - t_start_data
             step_metrics["timing/model"] = t_end_model - t_start_model
@@ -546,6 +551,11 @@ class VLATrainer(TrainerUtils):
                     step_metrics={},
                     eval_result=eval_result,
                     stage="post_train",
+                )
+                self._checkpoint_sync_manager.sync_eval_result(
+                    eval_path=eval_result.path,
+                    stage="post_train",
+                    step=self.completed_steps,
                 )
                 wandb.log(final_metrics, step=self.completed_steps)
 
