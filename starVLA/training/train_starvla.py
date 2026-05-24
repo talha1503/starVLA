@@ -464,6 +464,13 @@ class VLATrainer(TrainerUtils):
         """Execute training loop."""
         self._log_training_config()
         self._create_data_iterators()
+        if self.completed_steps == 0:
+            batch_vla = self._get_next_batch()
+            with torch.no_grad():
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    output_dict = self.model.forward(batch_vla)
+                    action_loss = output_dict["action_loss"]
+            self._log_metrics({"train/loss": action_loss.item()})
         progress_bar = tqdm(
             total=self.config.trainer.max_train_steps,
             initial=self.completed_steps,
