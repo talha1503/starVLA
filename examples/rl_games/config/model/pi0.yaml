@@ -5,15 +5,18 @@ rl_games:
 
 framework:
   name: QwenPI
+  qwenvl:
+    base_vlm: ./playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action
   action_model:
-    action_model_type: LayerwiseFM
-    action_dim: 32
+    action_model_type: DiT-Qwen
+    hidden_size: 1024
+    action_dim: 7
     action_env_dim: 2
     state_dim: 7
     action_horizon: 16
     future_action_window_size: 15
     past_action_window_size: 0
-    repeated_diffusion_steps: 2
+    repeated_diffusion_steps: 8
     num_inference_timesteps: 4
     num_target_vision_tokens: 32
     add_pos_embed: true
@@ -22,20 +25,17 @@ framework:
     noise_beta_beta: 1.0
     noise_s: 0.999
     num_timestep_buckets: 1000
+    action_hidden_dim: 2048
     diffusion_model_cfg:
-      action_dit_hidden_dim: null
+      cross_attention_dim: 2048
+      num_layers: 16
+      output_dim: 1024
       dropout: 0.2
       final_dropout: true
       interleave_self_attention: true
       norm_type: ada_norm
       positional_embeddings: null
       attention_head_dim: 64
-      # QwenPI overwrites these from the loaded VLM at runtime. They still
-      # need to exist here because the training config is strict/structured.
-      num_layers: null
-      input_embedding_dim: null
-      cross_attention_dim: null
-      num_attention_heads: null
 
 trainer:
   learning_rate:

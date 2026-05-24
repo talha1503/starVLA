@@ -188,6 +188,7 @@ class FlowmatchingActionHeadConfig(PretrainedConfig):
 
 
 DiTConfig = {
+    "DiT-Qwen": {"input_embedding_dim": 2048, "attention_head_dim": 64, "num_attention_heads": 32},
     "DiT-B": {"input_embedding_dim": 768, "attention_head_dim": 64, "num_attention_heads": 12},
     "DiT-L": {"input_embedding_dim": 1536, "attention_head_dim": 48, "num_attention_heads": 32},
 }

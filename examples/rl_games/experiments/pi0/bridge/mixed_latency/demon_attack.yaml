@@ -24,7 +24,7 @@ paths:
   run_root_dir: results/Checkpoints
   dataset_local_dir: playground/Datasets/rl_games
   dataset_cache_dir: null
-  base_model_dir: playground/Pretrained_models/Qwen3-VL-4B-Instruct
+  base_model_dir: playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action
   accelerate_config: starVLA/config/deepseeds/deepspeed_zero2.yaml
 
 dataset:
@@ -41,11 +41,12 @@ dataset:
 
 # Bridge mode starts from a released Bridge/RT-1 StarVLA checkpoint.
 initialization:
-  checkpoint_hf_repo_id: StarVLA/Qwen3VL-PI_v3-Bridge-RT_1
-  checkpoint_filename: checkpoints/steps_50000_pytorch_model.pt
+  checkpoint_local_dir: playground/Pretrained_models/Qwen-PI-Bridge-RT-1
+  checkpoint_hf_repo_id: StarVLA/Qwen-PI-Bridge-RT-1
+  checkpoint_filename: checkpoints/steps_30000_pytorch_model.pt
 
 base_model:
-  repo_id: Qwen/Qwen3-VL-4B-Instruct
+  repo_id: StarVLA/Qwen2.5-VL-3B-Instruct-Action
 
 checkpoint:
   load: auto
@@ -69,19 +70,21 @@ train_data:
   video_backend: torchvision_av
 
 framework:
-  name: QwenPI_v3
+  name: QwenPI
   qwenvl:
+    base_vlm: StarVLA/Qwen2.5-VL-3B-Instruct-Action
     attn_implementation: flash_attention_2
     enable_gradient_checkpointing: true
   action_model:
-    action_model_type: LayerwiseFM
+    action_model_type: DiT-Qwen
+    hidden_size: 1024
     action_dim: 7
     action_env_dim: 6
     state_dim: 7
     action_horizon: 1
     future_action_window_size: 0
     past_action_window_size: 0
-    repeated_diffusion_steps: 2
+    repeated_diffusion_steps: 8
     num_inference_timesteps: 4
     num_target_vision_tokens: 32
     add_pos_embed: true
@@ -91,13 +94,16 @@ framework:
     noise_s: 0.999
     num_timestep_buckets: 1000
     diffusion_model_cfg:
-      action_dit_hidden_dim: 1024
+      cross_attention_dim: 2048
+      num_layers: 16
+      output_dim: 1024
       dropout: 0.2
       final_dropout: true
       interleave_self_attention: true
       norm_type: ada_norm
       positional_embeddings: null
       attention_head_dim: 64
+    action_hidden_dim: 2048
 
 trainer:
   max_train_steps: 2000
@@ -145,13 +151,13 @@ rl_games:
     interval_steps: 100
     latencies: [0, 1, 2, 3, 4, 5]
     num_episodes: 5
-    max_steps_per_episode: 2000
+    max_steps_per_episode: 3600
 
   post_train_eval:
     enabled: true
     latencies: [0, 1, 2, 3, 4, 5]
     num_episodes: 5
-    max_steps_per_episode: 2000
+    max_steps_per_episode: 3600
 
   latency_mode: mixed
   latencies: [0, 1, 2, 3, 4, 5]

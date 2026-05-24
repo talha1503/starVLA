@@ -24,7 +24,14 @@ IGNORE_INDEX = -100
 
 from starVLA.model.framework.base_framework import baseframework
 from starVLA.model.framework.share_tools import merge_framework_config, populate_layerwise_dit_cfg
-from starVLA.model.modules.action_model.LayerwiseFM_ActionHeader import LayerwiseFlowmatchingActionHead, get_action_model
+from starVLA.model.modules.action_model.GR00T_ActionHeader import (
+    FlowmatchingActionHead,
+    get_action_model as get_flow_action_model,
+)
+from starVLA.model.modules.action_model.LayerwiseFM_ActionHeader import (
+    LayerwiseFlowmatchingActionHead,
+    get_action_model as get_layerwise_action_model,
+)
 from starVLA.model.modules.vlm import get_vlm_model
 from starVLA.model.tools import FRAMEWORK_REGISTRY
 from starVLA.training.trainer_utils.trainer_tools import resize_images
@@ -148,15 +155,28 @@ class Qwen_PI(baseframework):
         self.config.framework.qwenvl.vl_hidden_dim = llm_hidden_size
         self.config.framework.qwenvl.num_vl_layers = num_vl_layers
 
-        # QwenPI: DiT runs at the LLM hidden size (no compression).  Tell the
-        # action head exactly that — the head itself does not look at qwenvl.*.
-        populate_layerwise_dit_cfg(
-            self.config,
-            dit_hidden_dim=llm_hidden_size,
-            num_dit_layers=num_vl_layers,
-        )
+        action_model_type = str(self.config.framework.action_model.action_model_type)
+        self._uses_layerwise_action_head = action_model_type == "LayerwiseFM"
 
-        self.action_model: LayerwiseFlowmatchingActionHead = get_action_model(config=self.config)
+        if self._uses_layerwise_action_head:
+            # QwenPI: DiT runs at the LLM hidden size (no compression).  Tell the
+            # action head exactly that — the head itself does not look at qwenvl.*.
+            populate_layerwise_dit_cfg(
+                self.config,
+                dit_hidden_dim=llm_hidden_size,
+                num_dit_layers=num_vl_layers,
+            )
+            self.action_model: LayerwiseFlowmatchingActionHead | FlowmatchingActionHead = get_layerwise_action_model(
+                config=self.config
+            )
+        elif action_model_type == "DiT-Qwen":
+            self.config.framework.action_model.diffusion_model_cfg.cross_attention_dim = llm_hidden_size
+            self.action_model = get_flow_action_model(config=self.config)
+        else:
+            raise ValueError(
+                f"Unsupported QwenPI action_model_type={action_model_type!r}. "
+                "Expected 'LayerwiseFM' or 'DiT-Qwen'."
+            )
 
         # `action_horizon` is the single source of truth for chunk length.
         # Legacy aliases (`future_action_window_size`, `past_action_window_size`)
@@ -192,6 +212,23 @@ class Qwen_PI(baseframework):
             vl_embs_list = list(qwenvl_outputs.hidden_states[-expected_layers:])
         return vl_embs_list
 
+    def _encode_last_hidden_state(
+        self, batch_images: List, instructions: List[str]
+    ) -> torch.Tensor:
+        """Run QwenVL and return the last hidden state for the legacy PI Action DiT."""
+        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(
+            images=batch_images, instructions=instructions
+        )
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            qwenvl_outputs = self.qwen_vl_interface(
+                **qwen_inputs,
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            last_hidden = qwenvl_outputs.hidden_states[-1]
+        return last_hidden
+
     def forward(
         self,
         examples: List[dict] = None,
@@ -214,8 +251,12 @@ class Qwen_PI(baseframework):
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
 
         # Step 1: encode through QwenVL
-        vl_embs_list = self._encode_vl_hidden_states(batch_images, instructions)
-        base_hidden = vl_embs_list[-1]
+        if self._uses_layerwise_action_head:
+            vl_embs_list = self._encode_vl_hidden_states(batch_images, instructions)
+            base_hidden = vl_embs_list[-1]
+        else:
+            vl_embs_list = None
+            base_hidden = self._encode_last_hidden_state(batch_images, instructions)
 
         # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):
@@ -231,21 +272,30 @@ class Qwen_PI(baseframework):
                 if self.config and hasattr(self.config, "framework")
                 else 4
             )
-            repeated_diffusion_steps = 2  # NO repeat for big action FM
+            if self._uses_layerwise_action_head:
+                repeated_diffusion_steps = 2  # NO repeat for big action FM
             actions_target_repeated = actions_target.repeat(repeated_diffusion_steps, 1, 1)
-            # Repeat features for each layer
-            vl_embs_list_repeated = [h.repeat(repeated_diffusion_steps, 1, 1) for h in vl_embs_list]
 
             state_repeated = None
             if state is not None:
                 state = torch.tensor(np.array(state), device=base_hidden.device, dtype=base_hidden.dtype)
                 state_repeated = state.repeat(repeated_diffusion_steps, 1, 1)
 
-            action_loss = self.action_model(
-                vl_embs_list_repeated,
-                actions_target_repeated,
-                state_repeated,
-            )  # (B, chunk_len, action_dim)
+            if self._uses_layerwise_action_head:
+                # Repeat features for each layer
+                vl_embs_list_repeated = [h.repeat(repeated_diffusion_steps, 1, 1) for h in vl_embs_list]
+                action_loss = self.action_model(
+                    vl_embs_list_repeated,
+                    actions_target_repeated,
+                    state_repeated,
+                )  # (B, chunk_len, action_dim)
+            else:
+                last_hidden_repeated = base_hidden.repeat(repeated_diffusion_steps, 1, 1)
+                action_loss = self.action_model(
+                    last_hidden_repeated,
+                    actions_target_repeated,
+                    state_repeated,
+                )  # (B, chunk_len, action_dim)
 
         return {"action_loss": action_loss}
 
@@ -280,8 +330,12 @@ class Qwen_PI(baseframework):
             batch_images = resize_images(batch_images, target_size=train_obs_image_size)
 
         # Step 1: encode through QwenVL
-        vl_embs_list = self._encode_vl_hidden_states(batch_images, instructions)
-        base_hidden = vl_embs_list[-1]
+        if self._uses_layerwise_action_head:
+            vl_embs_list = self._encode_vl_hidden_states(batch_images, instructions)
+            base_hidden = vl_embs_list[-1]
+        else:
+            vl_embs_list = None
+            base_hidden = self._encode_last_hidden_state(batch_images, instructions)
 
         state = (
             torch.from_numpy(np.array(state)).to(base_hidden.device, dtype=base_hidden.dtype)
@@ -290,9 +344,14 @@ class Qwen_PI(baseframework):
         )
         # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):
-            pred_actions = self.action_model.predict_action(
-                vl_embs_list, state
-            )  # (B, chunk_len, action_dim)
+            if self._uses_layerwise_action_head:
+                pred_actions = self.action_model.predict_action(
+                    vl_embs_list, state
+                )  # (B, chunk_len, action_dim)
+            else:
+                pred_actions = self.action_model.predict_action(
+                    base_hidden, state
+                )  # (B, chunk_len, action_dim)
 
         normalized_actions = pred_actions.detach().cpu().numpy()
         return {"normalized_actions": normalized_actions}

@@ -169,14 +169,14 @@ rl_games:
     interval_steps: 100
     latencies: [0]
     num_episodes: 5
-    max_steps_per_episode: 2000
+    max_steps_per_episode: 3600
 
   # Runs once after training completes. This can be larger/more exhaustive.
   post_train_eval:
     enabled: true
     latencies: [0]
     num_episodes: 5
-    max_steps_per_episode: 2000
+    max_steps_per_episode: 3600
 
   latency_mode: single
   latencies: [0]

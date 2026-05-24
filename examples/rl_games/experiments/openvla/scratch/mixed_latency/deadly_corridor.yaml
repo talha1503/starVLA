@@ -108,13 +108,13 @@ rl_games:
     interval_steps: 100
     latencies: [0, 1, 2, 3, 4, 5]
     num_episodes: 5
-    max_steps_per_episode: 2000
+    max_steps_per_episode: 3600
 
   post_train_eval:
     enabled: true
     latencies: [0, 1, 2, 3, 4, 5]
     num_episodes: 5
-    max_steps_per_episode: 2000
+    max_steps_per_episode: 3600
 
   latency_mode: mixed
   latencies: [0, 1, 2, 3, 4, 5]

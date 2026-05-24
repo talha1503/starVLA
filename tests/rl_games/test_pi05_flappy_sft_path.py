@@ -129,6 +129,10 @@ def _load_model_config(name: str) -> dict[str, Any]:
     return loaded
 
 
+def _load_command(name: str) -> str:
+    return (REPO_ROOT / "commands" / name).read_text(encoding="utf-8")
+
+
 def _setup_args(tmp_path: Path, model: str, env: str) -> SimpleNamespace:
     return SimpleNamespace(
         model=model,
@@ -187,6 +191,95 @@ def test_pi05_alias_resolves_to_qwenpi_v3() -> None:
     assert cfg.framework.name == "QwenPI_v3"
 
 
+def test_pi0_bridge_alias_resolves_to_qwenpi() -> None:
+    cfg = _namespace({
+        "rl_games": {
+            "model_alias": "pi-0",
+            "initialization_mode": "bridge",
+            "action_carrier": "bridge",
+        },
+        "framework": {"name": "QwenPI_v3"},
+    })
+
+    apply_model_alias(cfg)
+
+    assert MODEL_ALIAS_TO_FRAMEWORK["pi-0"] == "QwenPI"
+    assert cfg.framework.name == "QwenPI"
+
+
+def test_pi0_bridge_flappy_uses_released_qwen_pi_initializer() -> None:
+    cfg = _load_experiment_config("pi0/bridge/single/flappy.yaml")
+
+    assert cfg["framework"]["name"] == "QwenPI"
+    assert cfg["framework"]["qwenvl"]["base_vlm"] == "StarVLA/Qwen2.5-VL-3B-Instruct-Action"
+    assert cfg["framework"]["action_model"]["action_model_type"] == "DiT-Qwen"
+    assert cfg["framework"]["action_model"]["hidden_size"] == 1024
+    assert cfg["framework"]["action_model"]["action_hidden_dim"] == 2048
+    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["cross_attention_dim"] == 2048
+    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["num_layers"] == 16
+    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["output_dim"] == 1024
+    assert cfg["paths"]["base_model_dir"] == "playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action"
+    assert cfg["base_model"]["repo_id"] == "StarVLA/Qwen2.5-VL-3B-Instruct-Action"
+    assert cfg["initialization"]["checkpoint_local_dir"] == "playground/Pretrained_models/Qwen-PI-Bridge-RT-1"
+    assert cfg["initialization"]["checkpoint_hf_repo_id"] == "StarVLA/Qwen-PI-Bridge-RT-1"
+    assert cfg["initialization"]["checkpoint_filename"] == "checkpoints/steps_30000_pytorch_model.pt"
+    assert cfg["rl_games"]["model_alias"] == "pi-0"
+
+
+@pytest.mark.parametrize(
+    ("name", "env", "action_env_dim"),
+    [
+        ("pi0/bridge/single/flappy.yaml", "flappy", 2),
+        ("pi0/bridge/mixed_latency/flappy.yaml", "flappy", 2),
+        ("pi0/bridge/single/demon_attack.yaml", "demon_attack", 6),
+        ("pi0/bridge/mixed_latency/demon_attack.yaml", "demon_attack", 6),
+        ("pi0/bridge/single/deadly_corridor.yaml", "deadly_corridor", 7),
+        ("pi0/bridge/mixed_latency/deadly_corridor.yaml", "deadly_corridor", 7),
+    ],
+)
+def test_pi0_bridge_experiments_use_released_qwen_pi_design(
+    name: str,
+    env: str,
+    action_env_dim: int,
+) -> None:
+    cfg = _load_experiment_config(name)
+
+    assert cfg["model"] == "pi0"
+    assert cfg["env"] == env
+    assert cfg["paths"]["base_model_dir"] == "playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action"
+    assert cfg["base_model"]["repo_id"] == "StarVLA/Qwen2.5-VL-3B-Instruct-Action"
+    assert cfg["initialization"]["checkpoint_hf_repo_id"] == "StarVLA/Qwen-PI-Bridge-RT-1"
+    assert cfg["initialization"]["checkpoint_filename"] == "checkpoints/steps_30000_pytorch_model.pt"
+    assert cfg["framework"]["name"] == "QwenPI"
+    assert cfg["framework"]["qwenvl"]["base_vlm"] == "StarVLA/Qwen2.5-VL-3B-Instruct-Action"
+    assert cfg["framework"]["action_model"]["action_model_type"] == "DiT-Qwen"
+    assert cfg["framework"]["action_model"]["action_dim"] == 7
+    assert cfg["framework"]["action_model"]["action_env_dim"] == action_env_dim
+    assert cfg["framework"]["action_model"]["state_dim"] == 7
+    assert cfg["framework"]["action_model"]["hidden_size"] == 1024
+    assert cfg["framework"]["action_model"]["action_hidden_dim"] == 2048
+    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["cross_attention_dim"] == 2048
+    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["num_layers"] == 16
+    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["output_dim"] == 1024
+    assert cfg["rl_games"]["model_alias"] == "pi-0"
+
+
+def test_pi0_model_config_uses_released_qwen_pi_design() -> None:
+    cfg = _load_model_config("pi0.yaml")
+
+    assert cfg["framework"]["name"] == "QwenPI"
+    assert cfg["framework"]["qwenvl"]["base_vlm"] == (
+        "./playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action"
+    )
+    assert cfg["framework"]["action_model"]["action_model_type"] == "DiT-Qwen"
+    assert cfg["framework"]["action_model"]["hidden_size"] == 1024
+    assert cfg["framework"]["action_model"]["action_dim"] == 7
+    assert cfg["framework"]["action_model"]["repeated_diffusion_steps"] == 8
+    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["cross_attention_dim"] == 2048
+    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["num_layers"] == 16
+    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["output_dim"] == 1024
+
+
 def test_pi05_action_spec_preserves_model_dim_and_sets_env_dim() -> None:
     cfg = _namespace({
         "rl_games": {
@@ -219,9 +312,49 @@ def test_pi05_model_config_uses_qwen3_base_backbone() -> None:
 def test_run_train_pi05_bridge_initializer_matches_official_pi_v3_checkpoint() -> None:
     script = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "run_train.sh").read_text(encoding="utf-8")
 
-    assert 'pi0|pi05) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1" ;;' in script
+    assert 'pi05) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1" ;;' in script
     assert 'pi05) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1" ;;' in script
     assert 'pi05) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_50000_pytorch_model.pt" ;;' in script
+
+
+def test_run_train_pi0_bridge_initializer_matches_released_qwen_pi_checkpoint() -> None:
+    script = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "run_train.sh").read_text(encoding="utf-8")
+
+    assert 'pi0) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen-PI-Bridge-RT-1" ;;' in script
+    assert 'pi0) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen-PI-Bridge-RT-1" ;;' in script
+    assert 'pi0) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_30000_pytorch_model.pt" ;;' in script
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "train_flappy_pi0.sh",
+        "train_demon_attack_pi0.sh",
+        "train_deadly_corridor_pi0.sh",
+    ],
+)
+def test_pi0_commands_use_released_qwen_pi_bridge_initializer(name: str) -> None:
+    command = _load_command(name)
+
+    assert "paths.base_model_dir=playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action" in command
+    assert "base_model.repo_id=StarVLA/Qwen2.5-VL-3B-Instruct-Action" in command
+    assert "initialization.checkpoint_local_dir=playground/Pretrained_models/Qwen-PI-Bridge-RT-1" in command
+    assert "initialization.checkpoint_hf_repo_id=StarVLA/Qwen-PI-Bridge-RT-1" in command
+    assert "initialization.checkpoint_filename=checkpoints/steps_30000_pytorch_model.pt" in command
+    assert "Qwen3VL-PI_v3-Bridge-RT_1" not in command
+
+
+def test_rl_games_yaml_eval_max_steps_are_3600() -> None:
+    paths = sorted((REPO_ROOT / "examples" / "rl_games").rglob("*.yaml"))
+    mismatches: list[str] = []
+    for path in paths:
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if "max_steps_per_episode:" in line or "max_episode_steps:" in line:
+                value = line.split(":", 1)[1].strip()
+                if value != "3600":
+                    mismatches.append(f"{path.relative_to(REPO_ROOT)}:{line_number}:{line.strip()}")
+
+    assert mismatches == []
 
 
 def test_pi05_setup_assets_routes_all_rl_games_environments(
@@ -419,4 +552,3 @@ def test_pi05_setup_assets_falls_back_to_hf_when_local_initialization_is_missing
     assert setup["initialization_source"] == "hf"
     assert setup["initialization_local_dir"] == str(missing_local_repo)
     assert setup["initialization_step"] == 50000
-
