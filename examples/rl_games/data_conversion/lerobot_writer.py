@@ -11,6 +11,8 @@ from typing import Any
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+from datasets import Image as DatasetImage
+from datasets import Sequence as DatasetSequence
 from datasets import load_dataset
 from PIL import Image
 from tqdm import tqdm
@@ -85,8 +87,13 @@ def load_split(
     retry_without_columns: bool = False,
 ):
     split_values = {"train"} if split == "train" else {"validation", "val", "test"}
+    physical_split_files = (Path(dataset_name) / "train.parquet").is_file() and (
+        Path(dataset_name) / "val.parquet"
+    ).is_file()
 
-    def _filter_internal_split(ds):
+    def _maybe_filter_split(ds):
+        if physical_split_files:
+            return ds
         if "split" in ds.column_names:
             return ds.filter(lambda row: str(row["split"]).lower() in split_values)
         return ds
@@ -94,23 +101,23 @@ def load_split(
     if split == "train":
         try:
             ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=columns)
-            return _filter_internal_split(ds)
+            return _maybe_filter_split(ds)
         except (ValueError, KeyError):
             if retry_without_columns and columns is not None:
-                return _filter_internal_split(load_dataset(dataset_name, split="train", cache_dir=cache_dir))
+                return _maybe_filter_split(load_dataset(dataset_name, split="train", cache_dir=cache_dir))
             pass
     else:
         for candidate in ("validation", "val", "test"):
             try:
                 ds = load_dataset(dataset_name, split=candidate, cache_dir=cache_dir, columns=columns)
                 if len(ds) > 0:
-                    return _filter_internal_split(ds)
+                    return _maybe_filter_split(ds)
             except (ValueError, KeyError):
                 if retry_without_columns and columns is not None:
                     try:
                         ds = load_dataset(dataset_name, split=candidate, cache_dir=cache_dir)
                         if len(ds) > 0:
-                            return _filter_internal_split(ds)
+                            return _maybe_filter_split(ds)
                     except (ValueError, KeyError):
                         continue
                 else:
@@ -126,7 +133,7 @@ def load_split(
             ds_all = load_dataset(dataset_name, split="train", cache_dir=cache_dir)
         else:
             raise
-    return ds_all.filter(lambda row: str(row["split"]).lower() in split_values)
+    return _maybe_filter_split(ds_all)
 
 
 def png_bytes(image: Any) -> bytes:
@@ -136,6 +143,21 @@ def png_bytes(image: Any) -> bytes:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def image_entry_bytes(image: Any) -> bytes:
+    if isinstance(image, dict):
+        image_bytes = image.get("bytes")
+        if image_bytes is not None:
+            return image_bytes
+        image_path = image.get("path")
+        if image_path is not None:
+            return Path(image_path).read_bytes()
+    return png_bytes(image)
+
+
+def _decode_image_stack_as_bytes(ds):
+    return ds.cast_column("image_stack", DatasetSequence(DatasetImage(decode=False)))
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -309,6 +331,7 @@ def convert_lerobot_dataset(
             ),
             spec,
         )
+        ds_full = _decode_image_stack_as_bytes(ds_full)
         image_stack_size = len(ds_full[0]["image_stack"])
         episode_lengths: list[int] = []
 
@@ -328,7 +351,7 @@ def convert_lerobot_dataset(
                             "prompt": prompt,
                         }
                     )
-                image_stack_bytes = [png_bytes(image) for image in row["image_stack"]]
+                image_stack_bytes = [image_entry_bytes(image) for image in row["image_stack"]]
                 out_rows.append(
                     {
                         "image_bytes": image_stack_bytes[-1],

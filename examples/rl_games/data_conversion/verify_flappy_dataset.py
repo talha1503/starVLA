@@ -20,14 +20,14 @@ EXPECTED_PROMPT = (
 def _load_train_split(dataset_name: str, cache_dir: str | None, columns: list[str] | None = None):
     from datasets import load_dataset
 
-    def _filter_internal_split(ds):
+    def _maybe_filter_split(ds):
         if "split" in ds.column_names:
             return ds.filter(lambda row: str(row["split"]).lower() == "train")
         return ds
 
     try:
         ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=columns)
-        return _filter_internal_split(ds)
+        return _maybe_filter_split(ds)
     except (ValueError, KeyError):
         load_columns = list(columns or [])
         if "split" not in load_columns:

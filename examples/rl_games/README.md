@@ -120,14 +120,12 @@ bash examples/rl_games/scripts/run_experiment.sh \
   trainer.eval_interval=5
 ```
 
-Fast end-to-end preprocessing debug:
+Fast training smoke test:
 
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/openvla_flappy_mixed_latency.yaml \
   run_id=debug_flappy_mixed_e2e \
-  dataset.debug_subset.enabled=true \
-  dataset.debug_subset.max_episodes=5 \
   trainer.max_train_steps=2 \
   datasets.vla_data.per_device_batch_size=1 \
   trainer.distributed_backend=none \
@@ -135,19 +133,46 @@ bash examples/rl_games/scripts/run_experiment.sh \
   rl_games.env_eval.post_train.enabled=false
 ```
 
-Debug subsets are written to separate converted dataset folders, for example
-`flappy_mixed_latency_train__debug_5ep`, so they do not overwrite the full
-preprocessed dataset. The same overrides work for the OpenVLA Demon Attack
-single and mixed-latency experiment YAMLs.
+For debug subsets, prepare a separate LeRobot data mix during the conversion
+stage and set `datasets.vla_data.data_mix` to that converted folder.
 
-The converter also writes a held-out validation LeRobot dataset next to the
+Raw rollout exports and StarVLA training datasets are now separate artifacts.
+First export the canonical raw parquet dataset, then prepare the StarVLA
+LeRobot dataset as a derived artifact:
+
+```bash
+python scripts/rollout_data/export_sf_teacher_dataset.py \
+  --checkpoint-root /path/to/sample_factory_checkpoint \
+  --output-dir /mnt/data/latency_data/outputs/demon_attack_fixed_2_latency \
+  --max-episodes 1000 \
+  --max-steps-per-episode 1000 \
+  --push-to-hub \
+  --hf-repo-id saberrr-zju/demon_attack_fixed_2_latency_raw
+
+python scripts/rollout_data/prepare_starvla_lerobot_dataset.py \
+  /mnt/data/latency_data/outputs/demon_attack_fixed_2_latency \
+  /mnt/data/latency_data/playground/Datasets/rl_games \
+  demon_attack_train \
+  --push-to-hub saberrr-zju/demon_attack_train_lerobot
+```
+
+Training reads only the prepared LeRobot dataset. If it is not already present
+under `datasets.vla_data.data_root_dir`, point `dataset.converted_hf` at the
+converted repo:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/openvla_demon_attack_single.yaml \
+  dataset.converted_hf=saberrr-zju/demon_attack_train_lerobot
+```
+
+The prepared dataset includes a held-out validation LeRobot dataset next to the
 training dataset, for example `flappy_mixed_latency_train__val` or
-`flappy_mixed_latency_train__debug_5ep__val`. The trainer logs `train/loss`,
-`eval/loss`, and `train/grad_norm_pre_clip`.
+`demon_attack_train__val`. The trainer logs `train/loss`, `eval/loss`, and
+`train/grad_norm_pre_clip`.
 
-Deadly Corridor uses raw frame counts for dataset latency. The single config
-can filter with `dataset.latency_raw_frame_filter: [0]`, while the mixed config
-keeps all raw-frame latencies and requires `latency_prompt_map.json`.
+Deadly Corridor latency filtering is part of the LeRobot preparation step. The
+training launcher only reads the converted folder and its `latency_prompt_map.json`.
 
 Checkpoint fields have separate meanings: `checkpoint.hf_repo_id` is the resume/download source, while `checkpoint.sync.repo_id` is the upload destination when `checkpoint.sync.enabled: true`. The trainer saves full Accelerate training-state directories (`steps_<N>_state/`) for exact resume, including optimizer/scheduler state, and also saves lightweight model files for convenience. A missing `checkpoint.sync.repo_id` repo is created during sync if Hugging Face auth is available. `checkpoint.sync.keep_last_n: 0` keeps all uploaded HF checkpoints.
 

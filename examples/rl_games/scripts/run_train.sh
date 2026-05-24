@@ -46,16 +46,10 @@ Options:
   --hf-repo-id <repo>          checkpoint.sync.repo_id
   --hf-keep-last-n <int>       checkpoint.sync.keep_last_n
   --local-keep-last-n <int>    checkpoint.local.keep_last_n
-  --dataset-mode <none|local|hf>  Dataset bootstrap mode (default: none)
   --dataset-local-dir <dir>    Dataset local directory (default: playground/Datasets/rl_games)
-  --dataset-hf-repo-id <repo>  HF dataset repo id for dataset-mode=hf
-  --dataset-allow-patterns <csv>  HF dataset allow patterns (comma-separated)
-  --dataset-required-subdirs <csv> Required subdirs to consider dataset ready (default: train)
-  --dataset-force-download <true|false> Force re-download for dataset-mode=hf
-  --source-dataset-hf <repo>  Raw/source HF dataset repo to verify and convert at setup time
+  --dataset-hf-repo-id <repo>  Converted LeRobot HF dataset repo used when local data is missing
+  --dataset-force-download <true|false> Force re-download of converted LeRobot dataset
   --converted-dataset-name <name> StarVLA dataset subdir/data_mix name (default: flappy_train)
-  --dataset-cache-dir <dir>   HF datasets cache override for verification/conversion
-  --setup-force <true|false>  Force setup-time conversion/model checks (default: false)
   --preprocess-cmd <cmd>       Optional preprocessing command run before training
   --base-model-dir <dir>      Local base model directory
   --base-model-repo-id <repo> HF repo for base model download
@@ -103,16 +97,10 @@ HF_SYNC_ENABLED="false"
 HF_REPO_ID=""
 HF_KEEP_LAST_N="0"
 LOCAL_KEEP_LAST_N="3"
-DATASET_MODE="none"
 DATASET_LOCAL_DIR="playground/Datasets/rl_games"
 DATASET_HF_REPO_ID=""
-DATASET_ALLOW_PATTERNS=""
-DATASET_REQUIRED_SUBDIRS="train"
 DATASET_FORCE_DOWNLOAD="false"
-SOURCE_DATASET_HF=""
 CONVERTED_DATASET_NAME="flappy_train"
-DATASET_CACHE_DIR=""
-SETUP_FORCE="false"
 PREPROCESS_CMD=""
 BASE_MODEL_DIR="playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action"
 BASE_MODEL_REPO_ID="StarVLA/Qwen3-VL-4B-Instruct-Action"
@@ -159,16 +147,10 @@ while [[ $# -gt 0 ]]; do
     --hf-repo-id) HF_REPO_ID="$2"; shift 2 ;;
     --hf-keep-last-n) HF_KEEP_LAST_N="$2"; shift 2 ;;
     --local-keep-last-n) LOCAL_KEEP_LAST_N="$2"; shift 2 ;;
-    --dataset-mode) DATASET_MODE="$2"; shift 2 ;;
     --dataset-local-dir) DATASET_LOCAL_DIR="$2"; shift 2 ;;
     --dataset-hf-repo-id) DATASET_HF_REPO_ID="$2"; shift 2 ;;
-    --dataset-allow-patterns) DATASET_ALLOW_PATTERNS="$2"; shift 2 ;;
-    --dataset-required-subdirs) DATASET_REQUIRED_SUBDIRS="$2"; shift 2 ;;
     --dataset-force-download) DATASET_FORCE_DOWNLOAD="$2"; shift 2 ;;
-    --source-dataset-hf) SOURCE_DATASET_HF="$2"; shift 2 ;;
     --converted-dataset-name) CONVERTED_DATASET_NAME="$2"; shift 2 ;;
-    --dataset-cache-dir) DATASET_CACHE_DIR="$2"; shift 2 ;;
-    --setup-force) SETUP_FORCE="$2"; shift 2 ;;
     --preprocess-cmd) PREPROCESS_CMD="$2"; shift 2 ;;
     --base-model-dir) BASE_MODEL_DIR="$2"; shift 2 ;;
     --base-model-repo-id) BASE_MODEL_REPO_ID="$2"; shift 2 ;;
@@ -226,9 +208,6 @@ WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" && pwd)"
 RUN_ROOT_DIR="$(resolve_workspace_path "$RUN_ROOT_DIR")"
 DATASET_LOCAL_DIR="$(resolve_workspace_path "$DATASET_LOCAL_DIR")"
 BASE_MODEL_DIR="$(resolve_workspace_path "$BASE_MODEL_DIR")"
-if [[ -n "$DATASET_CACHE_DIR" ]]; then
-  DATASET_CACHE_DIR="$(resolve_workspace_path "$DATASET_CACHE_DIR")"
-fi
 if [[ -n "$ACCELERATE_CONFIG" && "$ACCELERATE_CONFIG" != /* && "$ACCELERATE_CONFIG" != "~"* ]]; then
   if [[ -f "$REPO_ROOT/$ACCELERATE_CONFIG" ]]; then
     ACCELERATE_CONFIG="$REPO_ROOT/$ACCELERATE_CONFIG"
@@ -322,12 +301,10 @@ SETUP_JSON="$(
     --env "$ENV_NAME" \
     --mode "$MODE" \
     --latency-mode "${LATENCY_MODE_OVERRIDE:-}" \
-    --source-dataset-hf "${SOURCE_DATASET_HF:-${DATASET_HF_REPO_ID:-}}" \
+    --converted-dataset-hf "${DATASET_HF_REPO_ID:-}" \
     --dataset-local-dir "$DATASET_LOCAL_DIR" \
     --converted-dataset-name "$CONVERTED_DATASET_NAME" \
-    --dataset-cache-dir "${DATASET_CACHE_DIR:-}" \
     --dataset-force-download "${DATASET_FORCE_DOWNLOAD}" \
-    --setup-force "${SETUP_FORCE}" \
     --base-model-dir "$BASE_MODEL_DIR" \
     --base-model-repo-id "${BASE_MODEL_REPO_ID:-}" \
     --checkpoint-local-dir "$CHECKPOINT_LOCAL_DIR" \

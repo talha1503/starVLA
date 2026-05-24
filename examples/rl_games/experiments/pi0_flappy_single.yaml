@@ -26,20 +26,12 @@ wandb_project: starVLA_rl_games
 
 # Launcher-only paths. Training paths live in the Hydra-aligned sections below.
 paths:
-  dataset_cache_dir: null
   accelerate_config: starVLA/config/deepseeds/deepspeed_zero2.yaml
 
-# Setup-only dataset source/conversion controls.
+# Setup-only converted dataset controls.
 dataset:
-  source_hf: talha1503/flappy_bird_zero_latency_parquet
+  converted_hf: null
   force_download: false
-  setup_force: false
-  verify_rows: 200
-  max_episodes: null
-  debug_subset:
-    enabled: false
-    max_episodes: 5
-    suffix: debug
 
 # Hydra training dataset config. These names match config/train.yaml exactly.
 datasets:
