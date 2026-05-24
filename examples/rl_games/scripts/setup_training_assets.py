@@ -75,8 +75,9 @@ def _download_latest_hf_checkpoint(repo_id: str, checkpoint_dir: Path) -> tuple[
     except Exception as exc:
         return None, 0, None, f"huggingface_hub import failed: {exc}"
 
+    hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
     try:
-        files = HfApi().list_repo_files(repo_id=repo_id, repo_type="model")
+        files = HfApi(token=hf_token).list_repo_files(repo_id=repo_id, repo_type="model")
     except Exception as exc:
         return None, 0, None, f"could not list HF checkpoint repo {repo_id}: {exc}"
 
@@ -107,6 +108,7 @@ def _download_latest_hf_checkpoint(repo_id: str, checkpoint_dir: Path) -> tuple[
                 allow_patterns=[f"{chosen}/**"],
                 local_dir=str(checkpoint_dir),
                 local_dir_use_symlinks=False,
+                token=hf_token,
             )
             local_path = checkpoint_dir / chosen
         else:
@@ -116,6 +118,7 @@ def _download_latest_hf_checkpoint(repo_id: str, checkpoint_dir: Path) -> tuple[
                 filename=chosen,
                 local_dir=str(checkpoint_dir),
                 local_dir_use_symlinks=False,
+                token=hf_token,
             )
     except Exception as exc:
         return None, 0, None, f"could not download HF checkpoint {chosen}: {exc}"
@@ -128,6 +131,7 @@ def _download_hf_checkpoint_file(repo_id: str, filename: str, checkpoint_dir: Pa
     except Exception as exc:
         return None, 0, f"huggingface_hub import failed: {exc}"
 
+    hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     try:
         local_path = hf_hub_download(
@@ -136,6 +140,7 @@ def _download_hf_checkpoint_file(repo_id: str, filename: str, checkpoint_dir: Pa
             filename=filename,
             local_dir=str(checkpoint_dir),
             local_dir_use_symlinks=False,
+            token=hf_token,
         )
     except Exception as exc:
         return None, 0, f"could not download HF checkpoint {filename} from {repo_id}: {exc}"
@@ -179,10 +184,12 @@ def _ensure_base_model(model: str, base_model_dir: Path, base_model_repo_id: str
         raise RuntimeError("huggingface_hub is required to download base model weights") from exc
 
     base_model_dir.mkdir(parents=True, exist_ok=True)
+    hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
     snapshot_download(
         repo_id=base_model_repo_id,
         repo_type="model",
         local_dir=str(base_model_dir),
+        token=hf_token,
     )
     info["base_model_downloaded"] = True
     return info

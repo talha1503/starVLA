@@ -28,7 +28,7 @@ paths:
   accelerate_config: starVLA/config/deepseeds/deepspeed_zero2.yaml
 
 dataset:
-  source_hf: talha1503/demon_attack_zero_latency_parquet
+  source_hf: latency-sensitive-bench/demon_attack_fix_latency_0
   converted_name: demon_attack_train
   force_download: false
   setup_force: false

@@ -26,6 +26,10 @@ Options:
   --seed <int>                 Seed override (default: 42)
   --wandb-entity <name>        Wandb entity (default: your_wandb_entity)
   --wandb-project <name>       Wandb project (default: starVLA_rl_games)
+  --auth-env-file <path>       Optional auth.env path (default: auto-detect workspace/auth.env or examples/rl_games/auth.env)
+  --hf-token-env <name>        Env var containing the Hugging Face token (default: HF_TOKEN)
+  --wandb-api-key-env <name>   Env var containing the W&B key (default: WANDB_API_KEY)
+  --no-auth-login              Skip Hugging Face / W&B login
   --max-train-steps <int>      Training steps override (default: 2000)
   --save-interval <int>        Checkpoint save interval (default: 100)
   --eval-interval <int>        In-trainer eval interval (default: 100)
@@ -87,6 +91,11 @@ ACCELERATE_CONFIG="starVLA/config/deepseeds/deepspeed_zero2.yaml"
 SEED="42"
 WANDB_ENTITY="your_wandb_entity"
 WANDB_PROJECT="starVLA_rl_games"
+AUTH_ENV_FILE=""
+AUTH_ENV_FILE_EXPLICIT="false"
+HF_TOKEN_ENV="HF_TOKEN"
+WANDB_API_KEY_ENV="WANDB_API_KEY"
+AUTH_LOGIN="true"
 MAX_TRAIN_STEPS="2000"
 SAVE_INTERVAL="100"
 EVAL_INTERVAL="100"
@@ -147,6 +156,10 @@ while [[ $# -gt 0 ]]; do
     --seed) SEED="$2"; shift 2 ;;
     --wandb-entity) WANDB_ENTITY="$2"; shift 2 ;;
     --wandb-project) WANDB_PROJECT="$2"; shift 2 ;;
+    --auth-env-file) AUTH_ENV_FILE="$2"; AUTH_ENV_FILE_EXPLICIT="true"; shift 2 ;;
+    --hf-token-env) HF_TOKEN_ENV="$2"; shift 2 ;;
+    --wandb-api-key-env) WANDB_API_KEY_ENV="$2"; shift 2 ;;
+    --no-auth-login) AUTH_LOGIN="false"; shift ;;
     --max-train-steps) MAX_TRAIN_STEPS="$2"; shift 2 ;;
     --save-interval) SAVE_INTERVAL="$2"; shift 2 ;;
     --eval-interval) EVAL_INTERVAL="$2"; shift 2 ;;
@@ -234,6 +247,26 @@ resolve_workspace_path() {
   fi
 }
 
+login_auth_services() {
+  if [[ "$AUTH_LOGIN" != "true" ]]; then
+    return
+  fi
+
+  AUTH_ARGS=(
+    --workspace-dir "$WORKSPACE_DIR"
+    --hf-token-env "$HF_TOKEN_ENV"
+    --wandb-api-key-env "$WANDB_API_KEY_ENV"
+  )
+  if [[ -n "$AUTH_ENV_FILE" ]]; then
+    AUTH_ARGS+=(--env-file "$AUTH_ENV_FILE")
+  fi
+  if [[ "$AUTH_ENV_FILE_EXPLICIT" != "true" ]]; then
+    AUTH_ARGS+=(--optional-env-file)
+  fi
+
+  python -m starVLA.training.rl_games.auth "${AUTH_ARGS[@]}"
+}
+
 WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" && pwd)"
 RUN_ROOT_DIR="$(resolve_workspace_path "$RUN_ROOT_DIR")"
 DATASET_LOCAL_DIR="$(resolve_workspace_path "$DATASET_LOCAL_DIR")"
@@ -270,6 +303,8 @@ if [[ "$CONVERTED_DATASET_NAME" == "flappy_train" ]]; then
     CONVERTED_DATASET_NAME="flappy_mixed_latency_train"
   fi
 fi
+
+login_auth_services
 
 DIST_BACKEND_LOWER="$(echo "$DIST_BACKEND" | tr '[:upper:]' '[:lower:]')"
 if [[ "$DIST_BACKEND_LOWER" == "none" ]]; then

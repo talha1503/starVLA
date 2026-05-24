@@ -41,6 +41,7 @@ class ActionLatencyQueue:
 class EvalResult:
     per_latency: Dict[str, Dict]
     aggregate: Dict
+    path: str | None = None
 
 
 def decode_discrete_argmax(action_values: Iterable[float], n_actions: int) -> int:
@@ -386,11 +387,17 @@ class _TaskEvaluator:
         env.close()
         mean_reward = float(np.mean(rewards)) if rewards else 0.0
         mean_length = float(np.mean(lengths)) if lengths else 0.0
+        std_reward = float(np.std(rewards)) if rewards else 0.0
+        std_length = float(np.std(lengths)) if lengths else 0.0
         return {
             "latency": int(latency),
             "num_episodes": int(num_episodes),
             "mean_reward": mean_reward,
             "mean_length": mean_length,
+            "std_reward": std_reward,
+            "std_length": std_length,
+            "episode_rewards": [float(reward) for reward in rewards],
+            "episode_lengths": [int(length) for length in lengths],
             "decoded_action_hist": dict(action_hist),
         }
 
@@ -499,6 +506,8 @@ class RlGamesEvalRunner:
             "total_episodes": 0,
             "mean_reward": 0.0,
             "mean_length": 0.0,
+            "std_reward": 0.0,
+            "std_length": 0.0,
             "task_count": len(tasks),
         }
 
@@ -531,24 +540,28 @@ class RlGamesEvalRunner:
             key = f"{task_name}/latency_{latency}"
             per_latency[key] = metrics
             aggregate["total_episodes"] += metrics["num_episodes"]
-            all_rewards.append(metrics["mean_reward"])
-            all_lengths.append(metrics["mean_length"])
+            all_rewards.extend(float(reward) for reward in metrics.get("episode_rewards", []))
+            all_lengths.extend(float(length) for length in metrics.get("episode_lengths", []))
 
         if all_rewards:
             aggregate["mean_reward"] = float(np.mean(all_rewards))
+            aggregate["std_reward"] = float(np.std(all_rewards))
         if all_lengths:
             aggregate["mean_length"] = float(np.mean(all_lengths))
+            aggregate["std_length"] = float(np.std(all_lengths))
 
         result = EvalResult(per_latency=per_latency, aggregate=aggregate)
-        self._save(result=result, step=step, stage=stage)
+        result.path = self._save(result=result, step=step, stage=stage)
         return result
 
-    def _save(self, result: EvalResult, step: int, stage: str) -> None:
+    def _save(self, result: EvalResult, step: int, stage: str) -> str:
         eval_dir = os.path.join(self.output_dir, "eval", stage)
         os.makedirs(eval_dir, exist_ok=True)
         payload = {
             "per_latency": result.per_latency,
             "aggregate": result.aggregate,
         }
-        with open(os.path.join(eval_dir, f"step_{step}.json"), "w", encoding="utf-8") as handle:
+        output_path = os.path.join(eval_dir, f"step_{step}.json")
+        with open(output_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2)
+        return output_path

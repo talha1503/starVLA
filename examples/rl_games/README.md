@@ -90,14 +90,14 @@ These pi-0.5 configs use `Qwen/Qwen3-VL-4B-Instruct` as the base backbone and in
 
 Edit `workspace_dir`, `auth`, `wandb`, `dataset`, `base_model`, `checkpoint`, `launch`, `train_data`, and `trainer` in the YAML. Relative asset paths are resolved under `workspace_dir`.
 
-Authentication tokens are read from `HF_TOKEN` and `WANDB_API_KEY` by default:
+Authentication tokens are read from `HF_TOKEN` and `WANDB_API_KEY` by default. The RL-games train launchers log into Hugging Face and W&B before asset setup/training when those values are available:
 
 ```bash
 export HF_TOKEN=HF_TOKEN_VALUE
 export WANDB_API_KEY=WANDB_API_KEY_VALUE
 ```
 
-You can also copy `examples/rl_games/auth.env.example` to a private file such as `WORKSPACE_DIR/auth.env`, then set `auth.env_file: auth.env` in the experiment YAML. Do not commit real tokens.
+You can also copy `examples/rl_games/auth.env.example` to a private file such as `WORKSPACE_DIR/auth.env`, then set `auth.env_file: auth.env` in the experiment YAML. If `auth.env_file` is null, the launchers auto-detect `WORKSPACE_DIR/auth.env` and `examples/rl_games/auth.env`. Do not commit real tokens.
 
 Mixed-latency Flappy:
 

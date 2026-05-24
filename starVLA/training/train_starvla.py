@@ -38,6 +38,7 @@ from starVLA.dataloader import build_dataloader
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
 from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias
+from starVLA.training.rl_games.auth import login_training_services
 from starVLA.training.train_step_events import should_run_step_interval_event
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
@@ -299,7 +300,6 @@ class VLATrainer(TrainerUtils):
 
     def _save_checkpoint(self):
         """Save current training state."""
-        save_format = getattr(self.config.trainer, "save_format", "pt")
         checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
         state_checkpoint_path = checkpoint_path + "_state"
 
@@ -312,28 +312,13 @@ class VLATrainer(TrainerUtils):
             self.accelerator.print(f"✅ Full training state saved at {state_checkpoint_path}")
 
         if self.accelerator.is_main_process:
-            saved_file_path = None
-
-            state_dict = self.accelerator.get_state_dict(self.model)
-            if save_format == "safetensors":
-                from safetensors.torch import save_file
-
-                saved_file_path = checkpoint_path + "_model.safetensors"
-                save_file(state_dict, saved_file_path)
-            elif save_format == "pt":
-                saved_file_path = checkpoint_path + "_pytorch_model.pt"
-                torch.save(state_dict, saved_file_path)
-            else:
-                raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
-
             summary_data = {"steps": self.completed_steps}
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
                 f.write(json.dumps(summary_data) + "\n")
-            self.accelerator.print(f"✅ Checkpoint saved at {checkpoint_path}")
+            self.accelerator.print(f"✅ Checkpoint state saved at {state_checkpoint_path}")
             self._checkpoint_sync_manager.register_local_checkpoint(
                 step=self.completed_steps,
                 state_path=state_checkpoint_path,
-                model_path=saved_file_path,
             )
 
             if isinstance(self.config, AccessTrackedConfig):
@@ -371,12 +356,16 @@ class VLATrainer(TrainerUtils):
         step_metrics[f"{prefix}/total_episodes"] = float(aggregate.get("total_episodes", 0))
         step_metrics[f"{prefix}/mean_reward"] = float(aggregate.get("mean_reward", 0.0))
         step_metrics[f"{prefix}/mean_length"] = float(aggregate.get("mean_length", 0.0))
+        step_metrics[f"{prefix}/std_reward"] = float(aggregate.get("std_reward", 0.0))
+        step_metrics[f"{prefix}/std_length"] = float(aggregate.get("std_length", 0.0))
         step_metrics[f"{prefix}/task_count"] = float(aggregate.get("task_count", 0))
 
         for key, metrics in eval_result.per_latency.items():
             key_slug = key.replace("/", "__")
             step_metrics[f"{prefix}/{key_slug}/mean_reward"] = float(metrics.get("mean_reward", 0.0))
             step_metrics[f"{prefix}/{key_slug}/mean_length"] = float(metrics.get("mean_length", 0.0))
+            step_metrics[f"{prefix}/{key_slug}/std_reward"] = float(metrics.get("std_reward", 0.0))
+            step_metrics[f"{prefix}/{key_slug}/std_length"] = float(metrics.get("std_length", 0.0))
             step_metrics[f"{prefix}/{key_slug}/num_episodes"] = float(metrics.get("num_episodes", 0))
         return step_metrics
 
@@ -454,6 +443,11 @@ class VLATrainer(TrainerUtils):
                                 step_metrics=step_metrics,
                                 eval_result=eval_result,
                                 stage="mid_train",
+                            )
+                            self._checkpoint_sync_manager.sync_eval_result(
+                                eval_path=eval_result.path,
+                                stage="mid_train",
+                                step=self.completed_steps,
                             )
 
             step_metrics["timing/data"] = t_end_data - t_start_data
@@ -559,20 +553,12 @@ class VLATrainer(TrainerUtils):
 
     def _finalize_training(self):
         """Training end processing."""
-        if self.accelerator.is_main_process:
-            save_format = getattr(self.config.trainer, "save_format", "pt")
-            final_checkpoint = os.path.join(self.config.output_dir, "final_model")
-            os.makedirs(final_checkpoint, exist_ok=True)
-            state_dict = self.accelerator.get_state_dict(self.model)
-            if save_format == "safetensors":
-                from safetensors.torch import save_file
+        save_interval = int(getattr(self.config.trainer, "save_interval", 0) or 0)
+        if self.completed_steps > 0 and (save_interval <= 0 or self.completed_steps % save_interval != 0):
+            self._save_checkpoint()
 
-                save_file(state_dict, os.path.join(final_checkpoint, "model.safetensors"))
-            elif save_format == "pt":
-                torch.save(state_dict, os.path.join(final_checkpoint, "pytorch_model.pt"))
-            else:
-                raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
-            logger.info(f"Training complete. Final model saved at {final_checkpoint}")
+        if self.accelerator.is_main_process:
+            logger.info(f"Training complete. Final training state is saved under {self.checkpoint_dir}")
             if self._rl_games_eval_runner is not None and self._rl_games_eval_runner.is_enabled(stage="post_train"):
                 eval_result = self._rl_games_eval_runner.run(
                     model=self.accelerator.unwrap_model(self.model),
@@ -584,6 +570,11 @@ class VLATrainer(TrainerUtils):
                     eval_result=eval_result,
                     stage="post_train",
                 )
+                self._checkpoint_sync_manager.sync_eval_result(
+                    eval_path=eval_result.path,
+                    stage="post_train",
+                    step=self.completed_steps,
+                )
                 wandb.log(final_metrics, step=self.completed_steps)
 
         if self.accelerator.is_main_process:
@@ -594,6 +585,8 @@ class VLATrainer(TrainerUtils):
 
 def main(cfg) -> None:
     logger.info("VLA Training :: Warming Up")
+    if hasattr(cfg, "rl_games"):
+        login_training_services(cfg, workspace_dir=getattr(cfg, "workspace_dir", None))
     apply_model_alias(cfg)
     apply_action_spec(cfg)
 
