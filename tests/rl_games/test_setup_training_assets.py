@@ -155,3 +155,72 @@ def test_run_experiment_no_longer_passes_conversion_controls_to_setup():
     ]
     for fragment in bad_fragments:
         assert fragment not in source
+
+
+def test_run_experiment_explicit_null_leaf_overrides_hydra_default():
+    from examples.rl_games.scripts import run_experiment
+
+    cmd = []
+    cfg = {
+        "datasets": {
+            "vla_data": {
+                "obs_image_size": None,
+            },
+        },
+    }
+
+    run_experiment._append_hydra_leaf_overrides(cmd, cfg)
+
+    assert "datasets.vla_data.obs_image_size=null" in cmd
+
+
+def test_run_experiment_omitted_leaf_does_not_override_hydra_default():
+    from examples.rl_games.scripts import run_experiment
+
+    cmd = []
+    cfg = {
+        "datasets": {
+            "vla_data": {
+                "per_device_batch_size": 16,
+            },
+        },
+    }
+
+    run_experiment._append_hydra_leaf_overrides(cmd, cfg)
+
+    assert "datasets.vla_data.obs_image_size=null" not in cmd
+    assert not any(item.startswith("datasets.vla_data.obs_image_size=") for item in cmd)
+
+
+def test_run_experiment_list_leaf_override_still_uses_hydra_list_syntax():
+    from examples.rl_games.scripts import run_experiment
+
+    cmd = []
+    cfg = {
+        "datasets": {
+            "vla_data": {
+                "obs_image_size": [84, 84],
+            },
+        },
+    }
+
+    run_experiment._append_hydra_leaf_overrides(cmd, cfg)
+
+    assert "datasets.vla_data.obs_image_size=[84,84]" in cmd
+
+
+def test_run_experiment_empty_string_leaf_still_does_not_override_hydra_default():
+    from examples.rl_games.scripts import run_experiment
+
+    cmd = []
+    cfg = {
+        "datasets": {
+            "vla_data": {
+                "obs_image_size": "",
+            },
+        },
+    }
+
+    run_experiment._append_hydra_leaf_overrides(cmd, cfg)
+
+    assert not any(item.startswith("datasets.vla_data.obs_image_size=") for item in cmd)

@@ -95,6 +95,15 @@ def _get(cfg: dict[str, Any], path: str, default: Any = None) -> Any:
     return node
 
 
+def _has(cfg: dict[str, Any], path: str) -> bool:
+    node: Any = cfg
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    return True
+
+
 def _as_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -180,6 +189,8 @@ def _load_auth_env(cfg: dict[str, Any], workspace_dir: Path) -> None:
 
 
 def _hydra_value(value: Any) -> str:
+    if value is None:
+        return "null"
     if isinstance(value, bool):
         return str(value).lower()
     if isinstance(value, list):
@@ -193,8 +204,10 @@ def _append_hydra_leaf_overrides(cmd: list[str], cfg: dict[str, Any]) -> None:
     for path in _hydra_config_leaf_paths():
         if path in SETUP_CONTROLLED_HYDRA_PATHS:
             continue
+        if not _has(cfg, path):
+            continue
         value = _get(cfg, path)
-        if value in (None, ""):
+        if value == "":
             continue
         cmd.append(f"{path}={_hydra_value(value)}")
 
