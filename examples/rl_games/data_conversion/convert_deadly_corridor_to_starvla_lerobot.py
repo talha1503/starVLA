@@ -36,11 +36,11 @@ def _row_get(row: dict[str, Any], names: tuple[str, ...], default: Any = None) -
     return default
 
 
-def _filter_latency(ds, latency_raw_frame_filter: list[int] | None):
+def _keep_latency(row: dict[str, Any], latency_raw_frame_filter: list[int] | None) -> bool:
     if not latency_raw_frame_filter:
-        return ds
+        return True
     allowed = {int(value) for value in latency_raw_frame_filter}
-    return ds.filter(lambda row: int(row["latency_raw_frames"]) in allowed)
+    return int(row["latency_raw_frames"]) in allowed
 
 
 def _action_from_text(text: str) -> list[float]:
@@ -84,7 +84,7 @@ def _spec(latency_raw_frame_filter: list[int] | None) -> LeRobotDatasetSpec:
         row_index=_row_index,
         done=_done,
         reward=_reward,
-        filter_dataset=lambda ds: _filter_latency(ds, latency_raw_frame_filter),
+        row_filter=lambda row: _keep_latency(row, latency_raw_frame_filter),
         load_split_retry_without_columns=True,
         empty_split_suffix=lambda: (
             f" after latency_raw_frame_filter={latency_raw_frame_filter}"

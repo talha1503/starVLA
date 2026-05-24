@@ -30,6 +30,7 @@ from examples.rl_games.data_conversion.latency_prompt_map import build_latency_p
 
 
 STATE_DIM = 1
+LOCAL_PARQUET_BATCH_SIZE = 2048
 
 
 def _default_row_index(row: Mapping[str, Any], row_idx: int) -> tuple[int, int]:
@@ -68,7 +69,7 @@ class LeRobotDatasetSpec:
     reward: Callable[[Mapping[str, Any]], float] = _default_reward
     row_extra: Callable[[Mapping[str, Any]], Mapping[str, Any]] = _empty_row_extra
     include_action_id: bool = False
-    filter_dataset: Callable[[Any], Any] | None = None
+    row_filter: Callable[[Mapping[str, Any]], bool] | None = None
     load_split_retry_without_columns: bool = False
     empty_split_suffix: Callable[[], str] = _empty_split_suffix
     manifest_extra: Callable[[], Mapping[str, Any]] = _empty_manifest_extra
@@ -271,9 +272,19 @@ def _sort_episode_indices(episode_indices: dict[int, list[tuple[int, int]]]) -> 
 
 
 def _apply_dataset_filter(ds, spec: LeRobotDatasetSpec):
-    if spec.filter_dataset is None:
+    if spec.row_filter is None:
         return ds
-    return spec.filter_dataset(ds)
+    return ds.filter(spec.row_filter)
+
+
+def _has_local_raw_splits(dataset_name: str) -> bool:
+    dataset_dir = Path(dataset_name)
+    return (dataset_dir / "train.parquet").is_file() and (dataset_dir / "val.parquet").is_file()
+
+
+def _local_raw_split_path(dataset_name: str, split: str) -> Path:
+    split_name = "train" if split == "train" else "val"
+    return Path(dataset_name) / f"{split_name}.parquet"
 
 
 def convert_lerobot_dataset(
@@ -291,6 +302,151 @@ def convert_lerobot_dataset(
         shutil.rmtree(output_dir)
     if val_output_dir.exists() and force:
         shutil.rmtree(val_output_dir)
+
+    def _write_split_outputs(
+        *,
+        split: str,
+        split_output_dir: Path,
+        episode_lengths: list[int],
+        task_prompts: list[str],
+        image_stack_size: int,
+        latency_rows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        write_metadata(
+            split_output_dir,
+            episode_lengths=episode_lengths,
+            task_prompts=task_prompts,
+            image_stack_size=image_stack_size,
+            spec=spec,
+        )
+
+        if latency_rows:
+            try:
+                latency_prompt_map = build_latency_prompt_map(latency_rows)
+                (split_output_dir / "latency_prompt_map.json").write_text(
+                    json.dumps(latency_prompt_map, indent=2),
+                    encoding="utf-8",
+                )
+            except ValueError:
+                if require_latency_prompt_map:
+                    raise
+        elif require_latency_prompt_map:
+            raise ValueError(f"{dataset_name} {split} split has no latency rows; cannot build latency_prompt_map.json")
+
+        manifest = {
+            "dataset_name": split_output_dir.name,
+            "split": split,
+            "source": dataset_name,
+            "format": "starvla_lerobot_v2_image_parquet",
+            "action_labels": list(spec.action_labels),
+            "action_dim": spec.action_dim,
+            "state_dim": STATE_DIM,
+            "image_stack_size": image_stack_size,
+            "image_stack_order": IMAGE_STACK_ORDER,
+            "image_stack_source": IMAGE_STACK_SOURCE,
+            **spec.manifest_extra(),
+            "episodes": len(episode_lengths),
+            "frames": int(sum(episode_lengths)),
+            "task_prompts": task_prompts,
+        }
+        (split_output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return manifest
+
+    def _convert_local_raw_split(split: str, split_output_dir: Path) -> dict[str, Any]:
+        split_output_dir.mkdir(parents=True, exist_ok=True)
+        parquet_file = pq.ParquetFile(_local_raw_split_path(dataset_name, split))
+        prompt_to_task_index: dict[str, int] = {}
+        task_prompts: list[str] = []
+        latency_rows: list[dict[str, Any]] = []
+        episode_lengths: list[int] = []
+        image_stack_size = 0
+        raw_row_idx = 0
+        current_episode_idx: int | None = None
+        current_rows: list[tuple[int, dict[str, Any]]] = []
+
+        def _write_current_episode() -> None:
+            nonlocal image_stack_size, current_rows
+            new_episode_idx = len(episode_lengths)
+            current_rows.sort(key=lambda item: item[0])
+            out_rows = []
+            for frame_idx, (_, row) in enumerate(current_rows):
+                prompt = str(row["prompt"])
+                if prompt not in prompt_to_task_index:
+                    prompt_to_task_index[prompt] = len(task_prompts)
+                    task_prompts.append(prompt)
+                if "latency_raw_frames" in row and row.get("latency_raw_frames") is not None:
+                    latency_rows.append(
+                        {
+                            "latency_raw_frames": row["latency_raw_frames"],
+                            "latency_ms": row.get("latency_ms"),
+                            "prompt": prompt,
+                        }
+                    )
+                image_stack_bytes = [image_entry_bytes(image) for image in row["image_stack"]]
+                image_stack_size = len(image_stack_bytes)
+                out_rows.append(
+                    {
+                        "image_bytes": image_stack_bytes[-1],
+                        "image_stack_bytes": image_stack_bytes,
+                        "action": spec.action(row),
+                        "timestamp": float(frame_idx) / spec.fps,
+                        "episode_index": new_episode_idx,
+                        "frame_index": frame_idx,
+                        "task_index": prompt_to_task_index[prompt],
+                        "done": spec.done(row),
+                        "reward": spec.reward(row),
+                        **spec.row_extra(row),
+                    }
+                )
+            episode_lengths.append(len(out_rows))
+            episode_chunk = new_episode_idx // 1000
+            write_episode(
+                split_output_dir / f"data/chunk-{episode_chunk:03d}/episode_{new_episode_idx:06d}.parquet",
+                out_rows,
+                image_stack_size=image_stack_size,
+                spec=spec,
+            )
+            current_rows = []
+
+        with tqdm(
+            total=parquet_file.metadata.num_rows,
+            desc=f"Converting {spec.display_name} {split} rows",
+        ) as progress:
+            for batch in parquet_file.iter_batches(batch_size=LOCAL_PARQUET_BATCH_SIZE):
+                for row in pa.Table.from_batches([batch]).to_pylist():
+                    if spec.row_filter is None or spec.row_filter(row):
+                        episode_idx, timestep = spec.row_index(row, raw_row_idx)
+                        if current_episode_idx is None:
+                            current_episode_idx = episode_idx
+                        if episode_idx != current_episode_idx:
+                            _write_current_episode()
+                            if max_episodes is not None and len(episode_lengths) >= max_episodes:
+                                progress.update(batch.num_rows)
+                                return _write_split_outputs(
+                                    split=split,
+                                    split_output_dir=split_output_dir,
+                                    episode_lengths=episode_lengths,
+                                    task_prompts=task_prompts,
+                                    image_stack_size=image_stack_size,
+                                    latency_rows=latency_rows,
+                                )
+                            current_episode_idx = episode_idx
+                        current_rows.append((timestep, row))
+                    raw_row_idx += 1
+                progress.update(batch.num_rows)
+
+        if current_rows and (max_episodes is None or len(episode_lengths) < max_episodes):
+            _write_current_episode()
+        if not episode_lengths:
+            raise ValueError(f"{dataset_name} has no {split} rows{spec.empty_split_suffix()}")
+        return _write_split_outputs(
+            split=split,
+            split_output_dir=split_output_dir,
+            episode_lengths=episode_lengths,
+            task_prompts=task_prompts,
+            image_stack_size=image_stack_size,
+            latency_rows=latency_rows,
+        )
 
     def _convert_split(split: str, split_output_dir: Path) -> dict[str, Any]:
         split_output_dir.mkdir(parents=True, exist_ok=True)
@@ -375,48 +531,18 @@ def convert_lerobot_dataset(
                 spec=spec,
             )
 
-        write_metadata(
-            split_output_dir,
+        return _write_split_outputs(
+            split=split,
+            split_output_dir=split_output_dir,
             episode_lengths=episode_lengths,
             task_prompts=task_prompts,
             image_stack_size=image_stack_size,
-            spec=spec,
+            latency_rows=latency_rows,
         )
 
-        if latency_rows:
-            try:
-                latency_prompt_map = build_latency_prompt_map(latency_rows)
-                (split_output_dir / "latency_prompt_map.json").write_text(
-                    json.dumps(latency_prompt_map, indent=2),
-                    encoding="utf-8",
-                )
-            except ValueError:
-                if require_latency_prompt_map:
-                    raise
-        elif require_latency_prompt_map:
-            raise ValueError(f"{dataset_name} {split} split has no latency rows; cannot build latency_prompt_map.json")
-
-        manifest = {
-            "dataset_name": split_output_dir.name,
-            "split": split,
-            "source": dataset_name,
-            "format": "starvla_lerobot_v2_image_parquet",
-            "action_labels": list(spec.action_labels),
-            "action_dim": spec.action_dim,
-            "state_dim": STATE_DIM,
-            "image_stack_size": image_stack_size,
-            "image_stack_order": IMAGE_STACK_ORDER,
-            "image_stack_source": IMAGE_STACK_SOURCE,
-            **spec.manifest_extra(),
-            "episodes": len(episode_lengths),
-            "frames": int(sum(episode_lengths)),
-            "task_prompts": task_prompts,
-        }
-        (split_output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        return manifest
-
-    train_manifest = _convert_split("train", output_dir)
-    val_manifest = _convert_split("validation", val_output_dir)
+    split_converter = _convert_local_raw_split if _has_local_raw_splits(dataset_name) else _convert_split
+    train_manifest = split_converter("train", output_dir)
+    val_manifest = split_converter("validation", val_output_dir)
     train_manifest["validation_dataset_name"] = val_output_dir.name
     train_manifest["validation_episodes"] = val_manifest["episodes"]
     train_manifest["validation_frames"] = val_manifest["frames"]

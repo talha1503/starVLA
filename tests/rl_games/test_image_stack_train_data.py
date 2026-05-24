@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 from datasets import Dataset
 from PIL import Image
@@ -17,6 +18,9 @@ from examples.rl_games.data_conversion.convert_flappy_to_starvla_lerobot import 
     ACTION_LABELS,
     FPS,
     _one_hot,
+)
+from examples.rl_games.data_conversion.convert_deadly_corridor_to_starvla_lerobot import (  # noqa: E402
+    _spec as deadly_corridor_spec,
 )
 from examples.rl_games.data_conversion.image_stack import latest_image_from_stack  # noqa: E402
 from examples.rl_games.data_conversion import lerobot_writer  # noqa: E402
@@ -53,6 +57,37 @@ def _png_bytes(color: tuple[int, int, int]) -> bytes:
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _write_raw_export_parquet(path: Path, rows: list[dict]) -> None:
+    image_stack_type = pa.list_(
+        pa.struct(
+            [
+                ("bytes", pa.binary()),
+                ("path", pa.string()),
+            ]
+        )
+    )
+    pq.write_table(
+        pa.table(
+            {
+                "image_stack": pa.array([row["image_stack"] for row in rows], type=image_stack_type),
+                "split": pa.array([row["split"] for row in rows], type=pa.string()),
+                "prompt": pa.array([row["prompt"] for row in rows], type=pa.string()),
+                "action_id": pa.array([row["action_id"] for row in rows], type=pa.int64()),
+                "action_text": pa.array([row["action_text"] for row in rows], type=pa.string()),
+                "latency_raw_frames": pa.array([row["latency_raw_frames"] for row in rows], type=pa.int64()),
+                "latency_ms": pa.array([row["latency_ms"] for row in rows], type=pa.float64()),
+                "reward": pa.array([row["reward"] for row in rows], type=pa.float64()),
+                "done": pa.array([row["done"] for row in rows], type=pa.bool_()),
+                "episode_idx": pa.array([row["episode_idx"] for row in rows], type=pa.int64()),
+                "t": pa.array([row["t"] for row in rows], type=pa.int64()),
+                "seed": pa.array([row["seed"] for row in rows], type=pa.int64()),
+                "deterministic": pa.array([row["deterministic"] for row in rows], type=pa.bool_()),
+            }
+        ),
+        path,
+    )
 
 
 def test_rl_games_converter_writes_image_stack_video_columns(tmp_path: Path):
@@ -158,6 +193,123 @@ def test_lerobot_writer_converts_stack_frames_and_manifest(monkeypatch, tmp_path
     assert manifest["image_stack_order"] == "oldest_to_newest"
     assert manifest["image_stack_source"] == "policy_observation_frame_stack"
     assert manifest["image_stack_size"] == 2
+
+
+def test_lerobot_writer_converts_local_raw_parquet_without_datasets_cache(monkeypatch, tmp_path: Path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    oldest = _png_bytes((255, 0, 0))
+    newest = _png_bytes((0, 0, 255))
+    val_image = _png_bytes((0, 255, 0))
+
+    _write_raw_export_parquet(
+        raw_dir / "train.parquet",
+        [
+            {
+                "image_stack": [{"bytes": oldest, "path": None}, {"bytes": newest, "path": None}],
+                "split": "train",
+                "prompt": "play",
+                "action_id": 1,
+                "action_text": "flap",
+                "latency_raw_frames": 0,
+                "latency_ms": 0.0,
+                "reward": 1.0,
+                "done": True,
+                "episode_idx": 0,
+                "t": 0,
+                "seed": 11,
+                "deterministic": True,
+            }
+        ],
+    )
+    _write_raw_export_parquet(
+        raw_dir / "val.parquet",
+        [
+            {
+                "image_stack": [{"bytes": val_image, "path": None}, {"bytes": newest, "path": None}],
+                "split": "val",
+                "prompt": "play",
+                "action_id": 0,
+                "action_text": "noop",
+                "latency_raw_frames": 0,
+                "latency_ms": 0.0,
+                "reward": 0.0,
+                "done": True,
+                "episode_idx": 1,
+                "t": 0,
+                "seed": 12,
+                "deterministic": True,
+            }
+        ],
+    )
+
+    def fail_load_dataset(*args, **kwargs):
+        raise AssertionError("local raw parquet conversion must not call datasets.load_dataset")
+
+    monkeypatch.setattr(lerobot_writer, "load_dataset", fail_load_dataset)
+
+    manifest = convert_lerobot_dataset(
+        str(raw_dir),
+        tmp_path / "flappy",
+        spec=FLAPPY_SPEC,
+        max_episodes=1,
+    )
+
+    table = pq.read_table(tmp_path / "flappy/data/chunk-000/episode_000000.parquet")
+    assert table["observation.image"][0].as_py()["bytes"] == newest
+    assert table["observation.image_stack_00"][0].as_py()["bytes"] == oldest
+    assert table["observation.image_stack_01"][0].as_py()["bytes"] == newest
+    assert manifest["frames"] == 1
+    assert manifest["validation_frames"] == 1
+
+
+def test_lerobot_writer_filters_local_raw_parquet_rows(monkeypatch, tmp_path: Path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    image_bytes = _png_bytes((255, 255, 255))
+    base_row = {
+        "image_stack": [{"bytes": image_bytes, "path": None}],
+        "split": "train",
+        "prompt": "move",
+        "action_id": 0,
+        "action_text": "ATTACK",
+        "latency_ms": 0.0,
+        "reward": 1.0,
+        "done": True,
+        "t": 0,
+        "seed": 11,
+        "deterministic": True,
+    }
+    _write_raw_export_parquet(
+        raw_dir / "train.parquet",
+        [
+            {**base_row, "episode_idx": 0, "latency_raw_frames": 1},
+            {**base_row, "episode_idx": 1, "latency_raw_frames": 0},
+        ],
+    )
+    _write_raw_export_parquet(
+        raw_dir / "val.parquet",
+        [
+            {**base_row, "split": "val", "episode_idx": 2, "latency_raw_frames": 0},
+        ],
+    )
+
+    def fail_load_dataset(*args, **kwargs):
+        raise AssertionError("local raw parquet conversion must not call datasets.load_dataset")
+
+    monkeypatch.setattr(lerobot_writer, "load_dataset", fail_load_dataset)
+
+    manifest = convert_lerobot_dataset(
+        str(raw_dir),
+        tmp_path / "deadly_corridor",
+        spec=deadly_corridor_spec([0]),
+    )
+
+    table = pq.read_table(tmp_path / "deadly_corridor/data/chunk-000/episode_000000.parquet")
+    assert table.num_rows == 1
+    assert table["action"][0].as_py()[-1] == 1.0
+    assert manifest["frames"] == 1
+    assert manifest["latency_raw_frame_filter"] == [0]
 
 
 def test_rl_games_train_uses_image_stack_video_keys(tmp_path: Path):
