@@ -46,7 +46,13 @@ from starVLA.model.framework.peft_checkpoint import (
 from starVLA.model.framework.share_tools import apply_config_compat
 from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
-from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
+from starVLA.training.trainer_utils.trainer_tools import (
+    TrainerUtils,
+    build_param_lr_groups,
+    normalize_dotlist_args,
+    setup_optimizer_and_scheduler,
+    total_grad_norm,
+)
 
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -418,15 +424,6 @@ class VLATrainer(TrainerUtils):
             logger.info(f"Step {self.completed_steps}, Loss: {metrics})")
 
     @staticmethod
-    def _total_grad_norm(parameters) -> float:
-        grads = [p.grad.detach() for p in parameters if p.grad is not None]
-        if not grads:
-            return 0.0
-        device = grads[0].device
-        norms = torch.stack([torch.linalg.vector_norm(g.to(device), 2) for g in grads])
-        return float(torch.linalg.vector_norm(norms, 2).item())
-
-    @staticmethod
     def _append_rl_games_eval_metrics(step_metrics: Dict[str, float], eval_result, stage: str) -> Dict[str, float]:
         aggregate = eval_result.aggregate
         prefix = f"rl_games_eval/{stage}"
@@ -515,8 +512,6 @@ class VLATrainer(TrainerUtils):
                             stage="mid_train",
                         )
 
-            step_metrics["timing/data"] = t_end_data - t_start_data
-            step_metrics["timing/model"] = t_end_model - t_start_model
             self._log_metrics(step_metrics)
 
             if self.completed_steps % self.config.trainer.save_interval == 0 and self.completed_steps > 0:
@@ -583,12 +578,19 @@ class VLATrainer(TrainerUtils):
             self.accelerator.backward(total_loss)
 
             grad_norm = None
-            if self.config.trainer.gradient_clipping is not None:
-                grad_norm = self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
-            elif self.accelerator.sync_gradients:
-                grad_norm = self._total_grad_norm(self.model.parameters())
+            if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+                self.optimizer.step()
+                grad_norm = self.model.get_global_grad_norm()
+            else:
+                if self.config.trainer.gradient_clipping is not None:
+                    grad_norm = self.accelerator.clip_grad_norm_(
+                        self.model.parameters(),
+                        self.config.trainer.gradient_clipping,
+                    )
+                elif self.accelerator.sync_gradients:
+                    grad_norm = total_grad_norm(self.model.parameters())
 
-            self.optimizer.step()
+                self.optimizer.step()
             # Only step the LR scheduler when gradients are actually synced
             # (i.e., not mid-accumulation). Without this guard the scheduler
             # runs gradient_accumulation_steps times faster than intended,

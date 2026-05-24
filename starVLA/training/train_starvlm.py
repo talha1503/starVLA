@@ -23,7 +23,7 @@ import torch.distributed as dist
 import wandb
 from accelerate import Accelerator, DeepSpeedPlugin
 from accelerate.logging import get_logger
-from accelerate.utils import set_seed
+from accelerate.utils import DistributedType, set_seed
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -33,7 +33,13 @@ from transformers import AutoProcessor, get_scheduler
 from starVLA.dataloader import build_dataloader
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
-from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
+from starVLA.training.trainer_utils.trainer_tools import (
+    TrainerUtils,
+    build_param_lr_groups,
+    normalize_dotlist_args,
+    setup_optimizer_and_scheduler,
+    total_grad_norm,
+)
 
 deepspeed_plugin = DeepSpeedPlugin()
 accelerator = Accelerator(deepspeed_plugin=deepspeed_plugin)
@@ -280,15 +286,29 @@ class VLAMTrainer(TrainerUtils):
                 vlm_loss = vlm_output.loss * self.config.trainer.loss_scale.vlm
             self.accelerator.backward(vlm_loss)
 
-            if self.config.trainer.gradient_clipping is not None:
-                self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
+            grad_norm = None
+            if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+                self.optimizer.step()
+                grad_norm = self.model.get_global_grad_norm()
+            else:
+                if self.config.trainer.gradient_clipping is not None:
+                    grad_norm = self.accelerator.clip_grad_norm_(
+                        self.model.parameters(),
+                        self.config.trainer.gradient_clipping,
+                    )
+                elif self.accelerator.sync_gradients:
+                    grad_norm = total_grad_norm(self.model.parameters())
 
-            self.optimizer.step()
+                self.optimizer.step()
             # Only step the LR scheduler when gradients are actually synced.
             # See train_starvla.py for full explanation.
             if self.accelerator.sync_gradients:
                 self.lr_scheduler.step()
             log_dict["vlm_loss"] = vlm_loss.item()
+            if grad_norm is not None:
+                if isinstance(grad_norm, torch.Tensor):
+                    grad_norm = grad_norm.detach().float().item()
+                log_dict["train/grad_norm_pre_clip"] = float(grad_norm)
 
         return log_dict
 

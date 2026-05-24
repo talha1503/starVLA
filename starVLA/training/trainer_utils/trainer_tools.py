@@ -85,6 +85,13 @@ def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, to
     return optimizer, lr_scheduler
 
 
+def total_grad_norm(parameters) -> float:
+    grads = [p.grad.detach() for p in parameters if p.grad is not None]
+    device = grads[0].device
+    norms = torch.stack([torch.linalg.vector_norm(g.to(device), 2) for g in grads])
+    return float(torch.linalg.vector_norm(norms, 2).item())
+
+
 def build_param_lr_groups(model, cfg):
     """
     build multiple param groups based on cfg.trainer.learning_rate.
