@@ -217,7 +217,7 @@ def test_pi0_bridge_flappy_uses_released_qwen_pi_initializer() -> None:
     assert cfg["framework"]["action_model"]["action_hidden_dim"] == 2048
     assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["cross_attention_dim"] == 2048
     assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["num_layers"] == 16
-    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["output_dim"] == 1024
+    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["output_dim"] == 2048
     assert cfg["paths"]["base_model_dir"] == "playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action"
     assert cfg["base_model"]["repo_id"] == "StarVLA/Qwen2.5-VL-3B-Instruct-Action"
     assert cfg["initialization"]["checkpoint_local_dir"] == "playground/Pretrained_models/Qwen-PI-Bridge-RT-1"
@@ -260,7 +260,7 @@ def test_pi0_bridge_experiments_use_released_qwen_pi_design(
     assert cfg["framework"]["action_model"]["action_hidden_dim"] == 2048
     assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["cross_attention_dim"] == 2048
     assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["num_layers"] == 16
-    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["output_dim"] == 1024
+    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["output_dim"] == 2048
     assert cfg["rl_games"]["model_alias"] == "pi-0"
 
 
@@ -277,7 +277,7 @@ def test_pi0_model_config_uses_released_qwen_pi_design() -> None:
     assert cfg["framework"]["action_model"]["repeated_diffusion_steps"] == 8
     assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["cross_attention_dim"] == 2048
     assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["num_layers"] == 16
-    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["output_dim"] == 1024
+    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["output_dim"] == 2048
 
 
 def test_pi05_action_spec_preserves_model_dim_and_sets_env_dim() -> None:

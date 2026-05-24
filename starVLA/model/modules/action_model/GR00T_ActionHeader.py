@@ -253,7 +253,7 @@ class FlowmatchingActionHead(nn.Module):
         #   Decoupled from input_embedding_dim so you can use a smaller hidden
         #   for the MLP without changing the DiT latent size.
         # ------------------------------------------------------------------
-        self.hidden_size = config.hidden_size
+        self.hidden_size = int(config.get("action_hidden_dim", config.hidden_size))
 
         self.state_encoder = (
             MLP(

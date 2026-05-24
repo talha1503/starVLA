@@ -75,3 +75,11 @@ def test_qwen_pi_legacy_dit_qwen_action_head_preset_is_available():
     )
 
     assert '"DiT-Qwen": {"input_embedding_dim": 2048, "attention_head_dim": 64, "num_attention_heads": 32}' in source
+
+
+def test_qwen_pi_legacy_action_head_uses_action_hidden_width():
+    source = (REPO_ROOT / "starVLA/model/modules/action_model/GR00T_ActionHeader.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "self.hidden_size = int(config.get(\"action_hidden_dim\", config.hidden_size))" in source
