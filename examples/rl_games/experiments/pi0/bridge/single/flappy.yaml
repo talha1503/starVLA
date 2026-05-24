@@ -111,7 +111,7 @@ framework:
     diffusion_model_cfg:
       cross_attention_dim: 2048
       num_layers: 16
-      output_dim: 2048
+      output_dim: 1024
       dropout: 0.2
       final_dropout: true
       interleave_self_attention: true

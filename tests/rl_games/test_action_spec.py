@@ -83,3 +83,7 @@ def test_qwen_pi_legacy_action_head_uses_action_hidden_width():
     )
 
     assert "self.hidden_size = int(config.get(\"action_hidden_dim\", config.hidden_size))" in source
+    assert "self.action_hidden_dim = int(config.get(\"action_hidden_dim\", self.model.config.output_dim))" in source
+    assert "input_dim=self.action_hidden_dim" in source
+    assert "return_all_hidden_states=self._uses_hidden_action_decoder" in source
+    assert "model_output = all_hidden_states[-1] if self._uses_hidden_action_decoder else projected_output" in source

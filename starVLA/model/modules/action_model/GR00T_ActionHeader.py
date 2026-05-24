@@ -254,6 +254,8 @@ class FlowmatchingActionHead(nn.Module):
         #   for the MLP without changing the DiT latent size.
         # ------------------------------------------------------------------
         self.hidden_size = int(config.get("action_hidden_dim", config.hidden_size))
+        self.action_hidden_dim = int(config.get("action_hidden_dim", self.model.config.output_dim))
+        self._uses_hidden_action_decoder = self.action_hidden_dim != int(self.model.config.output_dim)
 
         self.state_encoder = (
             MLP(
@@ -270,7 +272,7 @@ class FlowmatchingActionHead(nn.Module):
             hidden_size=self.input_embedding_dim,
         )
         self.action_decoder = MLP(
-            input_dim=self.model.config.output_dim,
+            input_dim=self.action_hidden_dim,
             hidden_dim=self.hidden_size,
             output_dim=self.action_dim,
         )
@@ -350,13 +352,19 @@ class FlowmatchingActionHead(nn.Module):
         )
 
         # Join VLM features with state and action embedding along sequence dimension.
-        model_output = self.model(
+        model_result = self.model(
             hidden_states=sa_embs,
             encoder_hidden_states=vl_embs,
             encoder_attention_mask=encoder_attention_mask,
             timestep=t_discretized,
-            return_all_hidden_states=False,  # NOTE (YL): not using flare now
+            return_all_hidden_states=self._uses_hidden_action_decoder,
         )
+        if self._uses_hidden_action_decoder:
+            projected_output, all_hidden_states = model_result
+        else:
+            projected_output = model_result
+            all_hidden_states = None
+        model_output = all_hidden_states[-1] if self._uses_hidden_action_decoder else projected_output
         pred = self.action_decoder(model_output)
         pred_actions = pred[:, -actions.shape[1] :]
 
@@ -407,11 +415,18 @@ class FlowmatchingActionHead(nn.Module):
             )
 
             # Run model forward.
-            model_output = self.model(
+            model_result = self.model(
                 hidden_states=sa_embs,
                 encoder_hidden_states=vl_embs,
                 timestep=timesteps_tensor,
+                return_all_hidden_states=self._uses_hidden_action_decoder,
             )
+            if self._uses_hidden_action_decoder:
+                projected_output, all_hidden_states = model_result
+            else:
+                projected_output = model_result
+                all_hidden_states = None
+            model_output = all_hidden_states[-1] if self._uses_hidden_action_decoder else projected_output
             pred = self.action_decoder(model_output)
 
             pred_velocity = pred[:, -self.action_horizon :]
