@@ -145,6 +145,7 @@ def test_supported_rl_games_config_composes(expected: ExpectedComposition) -> No
     assert cfg.framework.name == expected.framework_name
     assert cfg.rl_games.task == expected.task
     assert cfg.rl_games.action_carrier == expected.action_carrier
+    assert OmegaConf.select(cfg, "framework.qwenvl.base_vlm") not in (None, "")
     assert tuple(OmegaConf.to_container(latency_values, resolve=True)) == expected.latency_values
     assert tuple(OmegaConf.to_container(post_train_latencies, resolve=True)) == (0, 1, 2, 3, 4)
     assert OmegaConf.select(cfg, "rl_games.env_eval.interval_steps") is None
@@ -157,3 +158,28 @@ def test_supported_rl_games_config_composes(expected: ExpectedComposition) -> No
     assert cfg.framework.action_model.action_env_dim == expected.action_env_dim
     assert cfg.base_model.repo_id == expected.base_model_repo_id
     assert cfg.initialization.checkpoint_hf_repo_id == expected.initialization_hf_repo_id
+
+
+def test_openvla_bridge_accepts_base_vlm_override() -> None:
+    cfg = _compose_cfg(
+        ExpectedComposition(
+            model="openvla",
+            env="flappy",
+            init="bridge",
+            mode="single",
+            model_alias="openvla",
+            framework_name="QwenOFT",
+            task="flappy",
+            action_carrier="bridge",
+            latency_values=(0,),
+            data_mix="flappy_train",
+            source_hf="",
+            action_env_dim=2,
+            base_model_repo_id="Qwen/Qwen3-VL-4B-Instruct",
+            initialization_hf_repo_id="StarVLA/Qwen3VL-OFT-Bridge-RT-1",
+        )
+    )
+
+    OmegaConf.update(cfg, "framework.qwenvl.base_vlm", "/tmp/Qwen3-VL-4B-Instruct", merge=False)
+
+    assert cfg.framework.qwenvl.base_vlm == "/tmp/Qwen3-VL-4B-Instruct"
