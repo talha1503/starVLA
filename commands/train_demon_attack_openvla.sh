@@ -17,4 +17,3 @@ python examples/rl_games/scripts/launch_train.py \
   checkpoint.load=none \
   rl_games.env_eval.latency.values=[1] \
   rl_games.env_eval.mid_train.latencies=[1] \
-  rl_games.env_eval.post_train.latencies=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]

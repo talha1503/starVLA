@@ -16,4 +16,3 @@ python examples/rl_games/scripts/launch_train.py \
   trainer.batch_size=16 \
   trainer.max_train_steps=5000 \
   checkpoint.load=local \
-  rl_games.env_eval.post_train.latencies=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]

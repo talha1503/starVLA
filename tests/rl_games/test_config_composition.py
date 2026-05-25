@@ -139,13 +139,17 @@ def _compose_cfg(expected: ExpectedComposition) -> DictConfig:
 def test_supported_rl_games_config_composes(expected: ExpectedComposition) -> None:
     cfg = _compose_cfg(expected)
     latency_values = OmegaConf.select(cfg, "rl_games.env_eval.latency.values")
+    post_train_latencies = OmegaConf.select(cfg, "rl_games.env_eval.post_train.latencies")
 
     assert cfg.rl_games.model_alias == expected.model_alias
     assert cfg.framework.name == expected.framework_name
     assert cfg.rl_games.task == expected.task
     assert cfg.rl_games.action_carrier == expected.action_carrier
     assert tuple(OmegaConf.to_container(latency_values, resolve=True)) == expected.latency_values
+    assert tuple(OmegaConf.to_container(post_train_latencies, resolve=True)) == (0, 1, 2, 3, 4)
+    assert cfg.rl_games.env_eval.image_size == 224
     assert cfg.datasets.vla_data.data_mix == expected.data_mix
+    assert cfg.datasets.vla_data.obs_image_size is None
     assert cfg.dataset.source_hf == expected.source_hf
     assert cfg.framework.action_model.action_env_dim == expected.action_env_dim
     assert cfg.base_model.repo_id == expected.base_model_repo_id

@@ -7,7 +7,6 @@ defaults:
 rl_games:
   task: deadly_corridor
   env_eval:
-    image_size: 84
     frameskip: 4
     deadly:
       action_layout: multibinary_7

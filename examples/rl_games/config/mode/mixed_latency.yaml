@@ -11,8 +11,6 @@ rl_games:
       values: [0, 1, 2, 3, 4, 5]
     mid_train:
       latencies: [0, 1, 2, 3, 4, 5]
-    post_train:
-      latencies: [0, 1, 2, 3, 4, 5]
 
 dataset:
   source_hf: ${dataset.mixed_source_hf}

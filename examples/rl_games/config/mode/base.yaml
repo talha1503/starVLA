@@ -16,7 +16,7 @@ rl_games:
       max_steps_per_episode: 3600
     post_train:
       enabled: true
-      latencies: null
+      latencies: [0, 1, 2, 3, 4]
       num_episodes: 5
       max_steps_per_episode: 3600
 

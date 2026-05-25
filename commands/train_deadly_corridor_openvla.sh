@@ -15,4 +15,3 @@ python examples/rl_games/scripts/launch_train.py \
   trainer.gradient_accumulation_steps=16 \
   trainer.batch_size=16 \
   checkpoint.load=none \
-  rl_games.env_eval.post_train.latencies=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]

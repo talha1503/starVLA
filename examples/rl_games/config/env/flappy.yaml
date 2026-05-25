@@ -6,10 +6,6 @@ defaults:
 
 rl_games:
   task: flappy
-  env_eval:
-    image_size: 84
-    frameskip: 1
-    task_description: ""
 
 dataset:
   single_source_hf: talha1503/flappy_bird_zero_latency_parquet

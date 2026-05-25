@@ -11,8 +11,6 @@ rl_games:
       values: [0]
     mid_train:
       latencies: [0]
-    post_train:
-      latencies: [0]
 
 dataset:
   source_hf: ${dataset.single_source_hf}
