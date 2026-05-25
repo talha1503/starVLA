@@ -27,9 +27,8 @@ def test_training_command_matrix_targets_hydra_launcher() -> None:
             assert f"model={model}" in command_text
             assert f"env={env}" in command_text
             assert "init=bridge" in command_text
-            assert "mode=single" in command_text
-            assert f"conda.env_name=starvla_{model}" in command_text
-            assert 'wandb_entity="$WANDB_ENTITY"' in command_text
+            assert "WANDB_ENTITY" not in command_text
+            assert "wandb_entity=" not in command_text
             assert (
                 "rl_games.env_eval.post_train.latencies=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]"
                 in command_text

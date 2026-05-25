@@ -35,9 +35,12 @@ dev = [
     "gpustat",
     "hydra-core>=1.3.2",
     "ipython",
+    "numpy",
+    "pillow",
     "pre-commit",
     "pytest",
     "ruff>=0.2.2",
+    "tqdm",
 ]
 sagemaker = [
     "boto3",
@@ -50,9 +53,12 @@ dev = [
     "gpustat",
     "hydra-core>=1.3.2",
     "ipython",
+    "numpy",
+    "pillow",
     "pre-commit",
     "pytest",
     "ruff>=0.2.2",
+    "tqdm",
 ]
 
 

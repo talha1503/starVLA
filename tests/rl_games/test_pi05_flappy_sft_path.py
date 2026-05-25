@@ -163,11 +163,10 @@ def test_run_train_pi0_bridge_initializer_matches_released_qwen_pi_checkpoint() 
 def test_pi0_commands_use_released_qwen_pi_bridge_initializer(name: str) -> None:
     command = _load_command(name)
 
-    assert "paths.base_model_dir=playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action" in command
-    assert "base_model.repo_id=StarVLA/Qwen2.5-VL-3B-Instruct-Action" in command
-    assert "initialization.checkpoint_local_dir=playground/Pretrained_models/Qwen-PI-Bridge-RT-1" in command
-    assert "initialization.checkpoint_hf_repo_id=StarVLA/Qwen-PI-Bridge-RT-1" in command
-    assert "initialization.checkpoint_filename=checkpoints/steps_30000_pytorch_model.pt" in command
+    assert "model=pi0" in command
+    assert "init=bridge" in command
+    assert "checkpoint.load=none" in command
+    assert "checkpoint.local.keep_last_n=2" in command
     assert "Qwen3VL-PI_v3-Bridge-RT_1" not in command
 
 
