@@ -6,13 +6,15 @@ from typing import Any, TypedDict
 
 import pytest
 import yaml
+from hydra import compose, initialize_config_dir
 
-from examples.rl_games.scripts import run_experiment, setup_training_assets
+from examples.rl_games.scripts import launch_train, setup_training_assets
 from starVLA.training.rl_games.action_spec import apply_action_spec
 from starVLA.training.rl_games.alias import MODEL_ALIAS_TO_FRAMEWORK, apply_model_alias
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+RL_GAMES_CONFIG_DIR = REPO_ROOT / "examples" / "rl_games" / "config"
 
 
 class ExpectedExperimentConfig(TypedDict):
@@ -131,6 +133,19 @@ def _load_model_config(name: str) -> dict[str, Any]:
 
 def _load_command(name: str) -> str:
     return (REPO_ROOT / "commands" / name).read_text(encoding="utf-8")
+
+
+def _compose_train_cfg(*, model: str, env: str, init: str, mode: str) -> Any:
+    with initialize_config_dir(version_base="1.1", config_dir=str(RL_GAMES_CONFIG_DIR)):
+        return compose(
+            config_name="train",
+            overrides=[
+                f"model={model}",
+                f"env={env}",
+                f"init={init}",
+                f"mode={mode}",
+            ],
+        )
 
 
 def _setup_args(tmp_path: Path, model: str, env: str) -> SimpleNamespace:
@@ -442,7 +457,7 @@ def test_pi05_bridge_experiments_forward_qwenpi_v3_command_overrides(
         "resume_found": False,
     }
 
-    cmd = run_experiment._trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
     assert "framework.action_model.diffusion_model_cfg.action_dit_hidden_dim=1024" in cmd
     assert "framework.action_model.diffusion_model_cfg.output_dim=1024" in cmd
@@ -451,15 +466,19 @@ def test_pi05_bridge_experiments_forward_qwenpi_v3_command_overrides(
         assert f"rl_games.env_eval.deadly.action_layout={expected['deadly_action_layout']}" in cmd
 
 
-def test_pi05_flappy_single_setup_resolves_local_initialization_dir(tmp_path: Path) -> None:
-    expected = EXPECTED_PI05_BRIDGE_EXPERIMENTS["flappy_single"]
-    cfg = _load_experiment_config(expected["name"])
+def test_launch_train_setup_namespace_uses_composed_hydra_config(tmp_path: Path) -> None:
+    cfg = _compose_train_cfg(model="pi05", env="flappy", init="bridge", mode="single")
 
-    setup_args = run_experiment._setup_namespace(cfg, tmp_path, "results/Checkpoints")
+    setup_args = launch_train.setup_namespace_from_cfg(cfg, tmp_path, "results/Checkpoints")
 
-    assert setup_args.initialization_local_dir == str(
-        tmp_path / "playground" / "Pretrained_models" / "Qwen3VL-PI_v3-Bridge-RT_1"
-    )
+    assert setup_args.model == "pi05"
+    assert setup_args.env == "flappy"
+    assert setup_args.mode == "single"
+    assert setup_args.initialization_mode == "bridge"
+    assert setup_args.action_carrier == "bridge"
+    assert setup_args.dataset_local_dir == str(tmp_path / "playground" / "Datasets" / "rl_games")
+    assert setup_args.converted_dataset_name == "flappy_train"
+    assert setup_args.initialization_checkpoint_filename == "checkpoints/steps_50000_pytorch_model.pt"
 
 
 def test_pi05_setup_assets_prefers_local_bridge_initialization_checkpoint(
