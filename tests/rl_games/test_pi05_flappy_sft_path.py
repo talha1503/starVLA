@@ -297,6 +297,7 @@ def test_pi05_bridge_composed_config_forwards_qwenpi_v3_command_overrides(
     tmp_path: Path,
 ) -> None:
     cfg = _compose_train_cfg(model="pi05", env=env, init="bridge", mode=mode)
+    expected_latencies = "[0]" if mode == "single" else "[0,1,2,3,4,5]"
     setup = {
         "dataset_local_dir": str(tmp_path / "datasets"),
         "base_model_dir": str(tmp_path / "base_model"),
@@ -308,6 +309,9 @@ def test_pi05_bridge_composed_config_forwards_qwenpi_v3_command_overrides(
     assert "framework.action_model.diffusion_model_cfg.action_dit_hidden_dim=1024" in cmd
     assert "framework.action_model.diffusion_model_cfg.output_dim=1024" in cmd
     assert f"framework.action_model.action_env_dim={action_env_dim}" in cmd
+    assert "rl_games.env_eval.mid_train.interval_steps=100" in cmd
+    assert f"rl_games.env_eval.mid_train.latencies={expected_latencies}" in cmd
+    assert f"rl_games.env_eval.post_train.latencies={expected_latencies}" in cmd
     if env == "deadly_corridor":
         assert "rl_games.env_eval.deadly.action_layout=multibinary_7" in cmd
 

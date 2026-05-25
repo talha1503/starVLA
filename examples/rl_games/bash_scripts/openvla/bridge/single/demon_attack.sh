@@ -4,16 +4,19 @@ bash examples/rl_games/install/install_stack.sh openvla demon_attack
 
 conda activate starvla_rl_games_openvla
 
-bash examples/rl_games/scripts/run_experiment.sh \
-    examples/rl_games/experiments/openvla/bridge/single/demon_attack.yaml \
+python examples/rl_games/scripts/launch_train.py \
+    model=openvla \
+    env=demon_attack \
+    init=bridge \
+    mode=single \
     run_id="openvla_bridge_demon_attack_single_latency_exp1" \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
-    wandb.entity="talha1503" \
+    wandb_entity="talha1503" \
     checkpoint.hf_repo_id="talha1503/openvla_bridge_demon_attack_single_latency_exp1" \
-    checkpoint.sync_enabled=true \
-    checkpoint.sync_repo_id="talha1503/openvla_bridge_demon_attack_single_latency_exp1" \
-    checkpoint.local_keep_last_n=2 \
+    checkpoint.sync.enabled=true \
+    checkpoint.sync.repo_id="talha1503/openvla_bridge_demon_attack_single_latency_exp1" \
+    checkpoint.local.keep_last_n=2 \
     trainer.max_train_steps=5000 \
     trainer.num_warmup_steps=0 \
     trainer.save_interval=1000 \
@@ -21,10 +24,10 @@ bash examples/rl_games/scripts/run_experiment.sh \
     trainer.logging_frequency=1 \
     trainer.gradient_accumulation_steps=16 \
     trainer.batch_size=16 \
-    rl_games.mid_train_eval.interval_steps=500 \
-    rl_games.mid_train_eval.num_episodes=10 \
-    rl_games.mid_train_eval.max_steps_per_episode=3600 \
-    rl_games.post_train_eval.enabled=true \
-    rl_games.post_train_eval.latencies=[0,1,2,3,4,5,6,7] \
-    rl_games.post_train_eval.num_episodes=20 \
-    rl_games.post_train_eval.max_steps_per_episode=3600
+    rl_games.env_eval.mid_train.interval_steps=500 \
+    rl_games.env_eval.mid_train.num_episodes=10 \
+    rl_games.env_eval.mid_train.max_steps_per_episode=3600 \
+    rl_games.env_eval.post_train.enabled=true \
+    rl_games.env_eval.post_train.latencies=[0,1,2,3,4,5,6,7] \
+    rl_games.env_eval.post_train.num_episodes=20 \
+    rl_games.env_eval.post_train.max_steps_per_episode=3600

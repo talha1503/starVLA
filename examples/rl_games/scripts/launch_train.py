@@ -384,8 +384,8 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
     if prompt_map not in (None, ""):
         cmd.append(f"rl_games.env_eval.latency.prompt_map_path={prompt_map}")
 
-    _append_eval_stage_overrides(cmd, cfg, "mid_train_eval", "mid_train")
-    _append_eval_stage_overrides(cmd, cfg, "post_train_eval", "post_train")
+    _append_eval_stage_overrides(cmd, cfg, "env_eval.mid_train", "mid_train")
+    _append_eval_stage_overrides(cmd, cfg, "env_eval.post_train", "post_train")
 
     if str(_cfg_get(cfg, "env")) == "deadly_corridor" or str(_cfg_get(cfg, "rl_games.task") or "") == "deadly_corridor":
         action_layout = _cfg_get(cfg, "rl_games.env_eval.deadly.action_layout") or "multibinary_7"
