@@ -44,7 +44,13 @@ from starVLA.model.framework.peft_checkpoint import (
     save_lora_adapter_checkpoint,
 )
 from starVLA.model.framework.share_tools import apply_config_compat
-from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias
+from starVLA.training.rl_games import (
+    CheckpointSyncManager,
+    RlGamesEvalRunner,
+    apply_action_spec,
+    apply_model_alias,
+)
+from starVLA.training.trainer_utils.checkpoint_config import track_vla_checkpoint_config_fields
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
 from starVLA.training.trainer_utils.trainer_tools import (
     TrainerUtils,
@@ -661,6 +667,7 @@ def main(cfg) -> None:
 
     cfg = wrap_config(cfg)
     logger.info("✅ Configuration wrapped for access tracking")
+    track_vla_checkpoint_config_fields(cfg)
 
     output_dir = setup_directories(cfg=cfg)
     vla = build_framework(cfg)

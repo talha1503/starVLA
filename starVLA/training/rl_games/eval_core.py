@@ -183,7 +183,8 @@ class _TaskEvaluator:
         self.env_eval_cfg = cfg.rl_games.env_eval
         self.image_size = int(getattr(self.env_eval_cfg, "image_size", 84))
         self.frameskip = max(1, int(getattr(self.env_eval_cfg, "frameskip", 1)))
-        self.state_dim = int(getattr(cfg.framework.action_model, "state_dim", 1) or 1)
+        self.include_state = cfg.datasets.vla_data.include_state
+        self.state_dim = cfg.framework.action_model.state_dim if self.include_state else None
 
     def _make_env(self):
         if self.task == "flappy":
@@ -258,6 +259,15 @@ class _TaskEvaluator:
             return _semantic_to_runtime_multibinary(semantic, runtime_button_order)
         return decode_discrete_argmax(raw_action, raw_action.shape[-1])
 
+    def _build_example(self, obs_rgb: np.ndarray, prompt: str) -> dict:
+        example = {
+            "image": [Image.fromarray(obs_rgb)],
+            "lang": prompt,
+        }
+        if self.include_state:
+            example["state"] = np.zeros((1, self.state_dim), dtype=np.float32)
+        return example
+
     def run_latency(
         self,
         model,
@@ -294,11 +304,7 @@ class _TaskEvaluator:
 
             while not done and steps < max_steps:
                 obs_rgb = _resize_rgb(obs, image_size=self.image_size)
-                example = {
-                    "image": [Image.fromarray(obs_rgb)],
-                    "lang": prompt,
-                    "state": np.zeros((1, self.state_dim), dtype=np.float32),
-                }
+                example = self._build_example(obs_rgb, prompt)
                 output = model.predict_action(examples=[example])
                 actions = output["normalized_actions"]
                 if actions.ndim != 3:

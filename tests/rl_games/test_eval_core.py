@@ -1,7 +1,9 @@
 import numpy as np
+from types import SimpleNamespace
 
 from starVLA.training.rl_games.eval_core import (
     ActionLatencyQueue,
+    _TaskEvaluator,
     decode_deadly_factorized_11,
     decode_deadly_multibinary_7,
     decode_discrete_argmax,
@@ -33,3 +35,31 @@ def test_action_latency_queue():
     queue.reset()
     outputs = [queue.schedule_and_get(a) for a in [1, 2, 3, 4]]
     assert outputs == [0, 0, 1, 2]
+
+
+def test_task_evaluator_omits_state_when_training_config_excludes_state():
+    cfg = SimpleNamespace(
+        rl_games=SimpleNamespace(env_eval=SimpleNamespace(image_size=4, frameskip=1)),
+        framework=SimpleNamespace(action_model=SimpleNamespace()),
+        datasets=SimpleNamespace(vla_data=SimpleNamespace(include_state=False)),
+    )
+    evaluator = _TaskEvaluator("flappy", cfg)
+
+    example = evaluator._build_example(np.zeros((4, 4, 3), dtype=np.uint8), "flap now")
+
+    assert example["lang"] == "flap now"
+    assert "state" not in example
+
+
+def test_task_evaluator_includes_state_when_training_config_includes_state():
+    cfg = SimpleNamespace(
+        rl_games=SimpleNamespace(env_eval=SimpleNamespace(image_size=4, frameskip=1)),
+        framework=SimpleNamespace(action_model=SimpleNamespace(state_dim=1)),
+        datasets=SimpleNamespace(vla_data=SimpleNamespace(include_state=True)),
+    )
+    evaluator = _TaskEvaluator("flappy", cfg)
+
+    example = evaluator._build_example(np.zeros((4, 4, 3), dtype=np.uint8), "flap now")
+
+    assert example["state"].shape == (1, 1)
+    assert np.all(example["state"] == 0.0)

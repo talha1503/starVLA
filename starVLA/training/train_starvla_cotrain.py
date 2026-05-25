@@ -35,6 +35,7 @@ from transformers import AutoProcessor, get_scheduler
 from starVLA.dataloader import build_dataloader
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
+from starVLA.training.trainer_utils.checkpoint_config import track_vla_checkpoint_config_fields
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
 from starVLA.training.trainer_utils.trainer_tools import (
     TrainerUtils,
@@ -404,6 +405,7 @@ def main(cfg) -> None:
 
     cfg = wrap_config(cfg)
     logger.info("✅ Configuration wrapped for access tracking")
+    track_vla_checkpoint_config_fields(cfg)
 
     output_dir = setup_directories(cfg=cfg)
     vla = build_framework(cfg)
