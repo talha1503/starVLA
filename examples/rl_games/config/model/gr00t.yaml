@@ -1,8 +1,8 @@
+# @package _global_
+
 defaults:
   - base
   - _self_
-
-# @package _global_
 
 rl_games:
   model_alias: gr00t
