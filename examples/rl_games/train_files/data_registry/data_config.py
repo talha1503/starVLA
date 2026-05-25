@@ -67,7 +67,11 @@ DATASET_NAMED_MIXTURES = {
     "demon_attack_train": [("demon_attack_train", 1.0, "rl_games_demon_attack")],
     "demon_attack_mixed_latency_train": [("demon_attack_mixed_latency_train", 1.0, "rl_games_demon_attack")],
     "deadly_corridor_train": [("deadly_corridor_train", 1.0, "rl_games_deadly_corridor")],
+    "deadly_corridor_train_factorized11": [("deadly_corridor_train_factorized11", 1.0, "rl_games_deadly_corridor")],
     "deadly_corridor_mixed_latency_train": [
         ("deadly_corridor_mixed_latency_train", 1.0, "rl_games_deadly_corridor")
+    ],
+    "deadly_corridor_mixed_latency_train_factorized11": [
+        ("deadly_corridor_mixed_latency_train_factorized11", 1.0, "rl_games_deadly_corridor")
     ],
 }

@@ -18,7 +18,7 @@ config_name: train
 model: openvla
 env: deadly_corridor
 mode: mixed_latency
-run_id: openvla_deadly_corridor_mixed_latency
+run_id: openvla_deadly_corridor_mixed_latency_factorized11
 run_root_dir: results/Checkpoints
 seed: 42
 wandb_entity: your_wandb_entity
@@ -37,7 +37,7 @@ dataset:
 datasets:
   vla_data:
     data_root_dir: playground/Datasets/rl_games
-    data_mix: deadly_corridor_mixed_latency_train
+    data_mix: deadly_corridor_mixed_latency_train_factorized11
     action_type: discrete
     sequential_step_sampling: false
     load_all_data_for_training: true
@@ -104,7 +104,7 @@ rl_games:
     frameskip: 4
     image_size: 84
     deadly:
-      action_layout: multibinary_7
+      action_layout: factorized_11
     enabled: false
     latency:
       mode: mixed

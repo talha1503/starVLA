@@ -17,12 +17,16 @@ from examples.rl_games.data_conversion.lerobot_writer import LeRobotDatasetSpec,
 
 
 ACTION_LABELS = [
-    "MOVE_FORWARD",
-    "MOVE_BACKWARD",
-    "MOVE_LEFT",
-    "MOVE_RIGHT",
+    "TURN_NOOP",
     "TURN_LEFT",
     "TURN_RIGHT",
+    "MOVE_NOOP",
+    "MOVE_FORWARD",
+    "MOVE_BACKWARD",
+    "STRAFE_NOOP",
+    "MOVE_LEFT",
+    "MOVE_RIGHT",
+    "ATTACK_NOOP",
     "ATTACK",
 ]
 ACTION_DIM = len(ACTION_LABELS)
@@ -44,8 +48,8 @@ def _keep_latency(row: dict[str, Any], latency_raw_frame_filter: list[int] | Non
 
 
 def _action_from_text(text: str) -> list[float]:
-    normalized = str(text).upper()
-    return [1.0 if label in normalized else 0.0 for label in ACTION_LABELS]
+    labels = {item.strip().upper() for item in str(text).split("+")}
+    return [1.0 if label in labels else 0.0 for label in ACTION_LABELS]
 
 
 def _action_vector(row: dict[str, Any]) -> list[float]:
@@ -91,7 +95,10 @@ def _spec(latency_raw_frame_filter: list[int] | None) -> LeRobotDatasetSpec:
             if latency_raw_frame_filter
             else ""
         ),
-        manifest_extra=lambda: {"latency_raw_frame_filter": latency_raw_frame_filter},
+        manifest_extra=lambda: {
+            "latency_raw_frame_filter": latency_raw_frame_filter,
+            "action_layout": "factorized_11",
+        },
     )
 
 
