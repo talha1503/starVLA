@@ -224,7 +224,7 @@ class VLAMTrainer(TrainerUtils):
             for i, group in enumerate(self.optimizer.param_groups):
                 group_name = group.get("name", str(i))
                 metrics[f"learning_rate/{group_name}"] = last_lrs[i] if i < len(last_lrs) else last_lrs[-1]
-            metrics["epoch"] = round(self.completed_steps / len(self.vla_train_dataloader), 2)
+            metrics["epoch"] = round(self.completed_steps * self.accelerator.accumulation_steps / len(self.vla_train_dataloader), 2)
             wandb.log(metrics, step=self.completed_steps)
             logger.info(f"Step {self.completed_steps}, Loss: {metrics})")
 

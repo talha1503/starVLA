@@ -211,7 +211,7 @@ class VLAMTrainer(TrainerUtils):
             if hasattr(self.vlm_train_dataloader, "__len__"):
                 dataloader_length = len(self.vlm_train_dataloader)
                 if dataloader_length:
-                    metrics["epoch"] = round(self.completed_steps / dataloader_length, 2)
+                    metrics["epoch"] = round(self.completed_steps * self.accelerator.gradient_accumulation_steps / dataloader_length, 2)
             wandb.log(metrics, step=self.completed_steps)
             logger.info(f"Step {self.completed_steps}, Metrics: {metrics}")
 
