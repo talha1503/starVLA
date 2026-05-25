@@ -376,6 +376,7 @@ def test_pi05_bridge_composed_config_forwards_qwenpi_v3_command_overrides(
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
+    assert "init=bridge" in cmd
     assert "framework.action_model.diffusion_model_cfg.action_dit_hidden_dim=1024" in cmd
     assert "framework.action_model.diffusion_model_cfg.output_dim=1024" in cmd
     assert f"framework.action_model.action_env_dim={action_env_dim}" in cmd
