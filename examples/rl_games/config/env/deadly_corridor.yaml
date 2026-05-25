@@ -13,8 +13,8 @@ rl_games:
     task_description: "You are playing Deadly Corridor in VizDoom. Choose actions from MOVE_FORWARD, MOVE_BACKWARD, MOVE_LEFT, MOVE_RIGHT, TURN_LEFT, TURN_RIGHT, ATTACK."
 
 dataset:
-  single_source_hf: latency-sensitive-bench/deadly_corridor_mixed_latency_parquet
-  mixed_source_hf: latency-sensitive-bench/deadly_corridor_mixed_latency_parquet
+  single_source_hf: ""
+  mixed_source_hf: ""
   single_converted_name: deadly_corridor_train
   mixed_converted_name: deadly_corridor_mixed_latency_train
   single_latency_filter: [0]

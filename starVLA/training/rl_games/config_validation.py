@@ -69,7 +69,6 @@ def _validate_latency_values(cfg: Any) -> None:
 def validate_rl_games_config(cfg: Any) -> None:
     model_alias = str(_require_non_empty_value(cfg=cfg, key="rl_games.model_alias"))
     _require_non_empty_value(cfg=cfg, key="rl_games.task")
-    _require_non_empty_value(cfg=cfg, key="dataset.source_hf")
     _require_non_empty_value(cfg=cfg, key="dataset.converted_name")
     _require_non_empty_value(cfg=cfg, key="base_model.repo_id")
     _validate_latency_values(cfg=cfg)

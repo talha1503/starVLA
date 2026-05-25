@@ -21,7 +21,7 @@ def test_rejects_pi05_scratch() -> None:
                 "env_eval": {"latency": {"values": [0]}},
             },
             "dataset": {
-                "source_hf": "talha1503/flappy_bird_zero_latency_parquet",
+                "source_hf": "",
                 "converted_name": "flappy_train",
             },
             "base_model": {"repo_id": "Qwen/Qwen3-VL-4B-Instruct"},
@@ -48,7 +48,7 @@ def test_rejects_bridge_without_checkpoint_metadata() -> None:
                 "env_eval": {"latency": {"values": [0]}},
             },
             "dataset": {
-                "source_hf": "talha1503/flappy_bird_zero_latency_parquet",
+                "source_hf": "",
                 "converted_name": "flappy_train",
             },
             "base_model": {"repo_id": "Qwen/Qwen3-VL-4B-Instruct"},
@@ -75,7 +75,7 @@ def test_rejects_bridge_with_blank_checkpoint_sources() -> None:
                 "env_eval": {"latency": {"values": [0]}},
             },
             "dataset": {
-                "source_hf": "talha1503/flappy_bird_zero_latency_parquet",
+                "source_hf": "",
                 "converted_name": "flappy_train",
             },
             "base_model": {"repo_id": "Qwen/Qwen3-VL-4B-Instruct"},
@@ -102,7 +102,7 @@ def test_rejects_pretrained_without_bridge_action_carrier() -> None:
                 "env_eval": {"latency": {"values": [0]}},
             },
             "dataset": {
-                "source_hf": "talha1503/flappy_bird_zero_latency_parquet",
+                "source_hf": "",
                 "converted_name": "flappy_train",
             },
             "base_model": {"repo_id": "Qwen/Qwen3-VL-4B-Instruct"},
@@ -129,7 +129,7 @@ def test_accepts_bridge_with_checkpoint_metadata() -> None:
                 "env_eval": {"latency": {"values": [0]}},
             },
             "dataset": {
-                "source_hf": "talha1503/flappy_bird_zero_latency_parquet",
+                "source_hf": "",
                 "converted_name": "flappy_train",
             },
             "base_model": {"repo_id": "Qwen/Qwen3-VL-4B-Instruct"},

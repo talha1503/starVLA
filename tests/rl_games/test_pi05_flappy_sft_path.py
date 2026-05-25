@@ -269,7 +269,7 @@ def test_ready_local_dataset_ignores_manifest_source_mismatch(
         (dataset_dir / "data" / "chunk-000" / "episode_000000.parquet").write_bytes(b"PAR1")
         (dataset_dir / "manifest.json").write_text(
             json.dumps({
-                "source": "talha1503/flappy_bird_zero_latency_parquet",
+                "source": "previous/raw-source",
                 "action_carrier": "bridge",
                 "latency_filter": None,
             }),
@@ -400,6 +400,21 @@ def test_launch_train_setup_namespace_uses_composed_hydra_config(tmp_path: Path)
     assert setup_args.dataset_local_dir == str(tmp_path / "playground" / "Datasets" / "rl_games")
     assert setup_args.converted_dataset_name == "flappy_train"
     assert setup_args.initialization_checkpoint_filename == "checkpoints/steps_50000_pytorch_model.pt"
+
+
+def test_launch_train_setup_namespace_forwards_explicit_dataset_source_hf(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="pi05",
+        env="flappy",
+        init="bridge",
+        mode="single",
+        overrides=["dataset.source_hf=owner/flappy_source"],
+    )
+
+    setup_args = launch_train.setup_namespace_from_cfg(cfg, tmp_path, "results/Checkpoints")
+
+    assert setup_args.source_dataset_hf == "owner/flappy_source"
 
 
 def test_pi05_setup_assets_prefers_local_bridge_initialization_checkpoint(
