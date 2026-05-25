@@ -9,7 +9,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -19,13 +19,6 @@ if str(REPO_ROOT) not in sys.path:
 STEP_FILE_RE = re.compile(r"steps_(\d+)_(?:pytorch_model\.pt|model\.safetensors)$")
 STEP_STATE_RE = re.compile(r"steps_(\d+)_state$")
 DEBUG_DATASET_RE = re.compile(r"^(?P<base>.+)(?P<debug>__debug(?:_[A-Za-z0-9_-]+)?_\d+ep)$")
-
-
-class DatasetReadyReport(TypedDict):
-    path: str
-    exists: bool
-    missing_required_files: list[str]
-    matched_parquet_files: int
 
 
 def _str2bool(value: str | bool) -> bool:
@@ -47,34 +40,13 @@ def _has_files(path: Path) -> bool:
 
 
 def _dataset_ready(dataset_dir: Path) -> bool:
-    report = _dataset_ready_report(dataset_dir)
-    return len(report["missing_required_files"]) == 0 and int(report["matched_parquet_files"]) > 0
-
-
-def _dataset_ready_report(dataset_dir: Path) -> DatasetReadyReport:
-    required: list[Path] = [
+    required = [
         dataset_dir / "meta/modality.json",
         dataset_dir / "meta/info.json",
         dataset_dir / "meta/episodes.jsonl",
         dataset_dir / "meta/tasks.jsonl",
     ]
-    parquet_files = list(dataset_dir.glob("data/*/*.parquet"))
-    return {
-        "path": str(dataset_dir),
-        "exists": dataset_dir.exists(),
-        "missing_required_files": [str(path) for path in required if not path.exists()],
-        "matched_parquet_files": len(parquet_files),
-    }
-
-
-def _format_dataset_ready_report(report: DatasetReadyReport) -> str:
-    missing_files = report["missing_required_files"]
-    missing_text = ", ".join(missing_files) if missing_files else "none"
-    return (
-        f"path={report['path']}; exists={report['exists']}; "
-        f"missing required files: {missing_text}; "
-        f"matched parquet files: {report['matched_parquet_files']}"
-    )
+    return all(path.exists() for path in required) and any(dataset_dir.glob("data/*/*.parquet"))
 
 
 def _find_latest_local_checkpoint(checkpoint_dir: Path) -> tuple[Path | None, int, str | None]:
@@ -316,8 +288,6 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
             return False
         return len(mapping) > 1
 
-    train_ready_report = _dataset_ready_report(dataset_dir)
-    eval_ready_report = _dataset_ready_report(eval_dataset_dir)
     rebuild = (
         force
         or not _dataset_ready(dataset_dir)
@@ -330,9 +300,7 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
     if rebuild:
         if not args.source_dataset_hf:
             raise ValueError(
-                "Local RL-games datasets are not ready and no dataset.source_hf was provided for rebuild. "
-                f"train dataset: {_format_dataset_ready_report(train_ready_report)}; "
-                f"eval dataset: {_format_dataset_ready_report(eval_ready_report)}"
+                f"{dataset_dir} is not ready; pass --source-dataset-hf so setup can verify and convert it"
             )
         verify_dataset(
             args.source_dataset_hf,
