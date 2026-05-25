@@ -319,6 +319,38 @@ def test_ready_local_dataset_ignores_manifest_source_mismatch(
     assert result["eval_data_mix"] == "flappy_train__bridge__val"
 
 
+def test_missing_local_dataset_error_lists_ready_check_details(tmp_path: Path) -> None:
+    data_root_dir = tmp_path / "datasets"
+    args = SimpleNamespace(
+        dataset_local_dir=str(data_root_dir),
+        initialization_mode="bridge",
+        action_carrier="bridge",
+        converted_dataset_name="flappy_train",
+        source_dataset_hf="",
+        setup_force="false",
+        dataset_force_download="false",
+        mode="single",
+        latency_mode="single",
+        verify_rows=200,
+        dataset_cache_dir=None,
+        max_episodes=None,
+        latency_filter=None,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        setup_training_assets._ensure_rl_games_lerobot_dataset(
+            args,
+            convert_dataset=lambda *call_args, **call_kwargs: {},
+            verify_dataset=lambda *call_args, **call_kwargs: True,
+        )
+
+    message = str(exc_info.value)
+    assert str(data_root_dir / "flappy_train__bridge") in message
+    assert str(data_root_dir / "flappy_train__bridge__val") in message
+    assert "missing required files" in message
+    assert "matched parquet files: 0" in message
+
+
 @pytest.mark.parametrize(
     ("model", "env", "mode", "action_env_dim"),
     [
