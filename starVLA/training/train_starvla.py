@@ -27,7 +27,7 @@ import torch
 import torch.distributed as dist
 import wandb
 from accelerate import Accelerator, DeepSpeedPlugin
-from accelerate.utils import DistributedType, set_seed
+from accelerate.utils import DistributedType, GradientAccumulationPlugin, set_seed
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -135,12 +135,22 @@ def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, to
     return optimizer, lr_scheduler
 
 
-def _build_accelerator(cfg) -> Accelerator:
+def _accelerator_kwargs_for_backend(cfg) -> dict:
     grad_accum_steps = int(getattr(cfg.trainer, "gradient_accumulation_steps", 1))
     distributed_backend = str(getattr(cfg.trainer, "distributed_backend", "deepspeed")).lower()
-    accelerator_kwargs = {"gradient_accumulation_steps": grad_accum_steps}
     if distributed_backend == "deepspeed":
-        accelerator_kwargs["deepspeed_plugin"] = DeepSpeedPlugin()
+        return {
+            "gradient_accumulation_plugin": GradientAccumulationPlugin(
+                num_steps=grad_accum_steps,
+                sync_each_batch=True,
+            ),
+            "deepspeed_plugin": DeepSpeedPlugin(),
+        }
+    return {"gradient_accumulation_steps": grad_accum_steps}
+
+
+def _build_accelerator(cfg) -> Accelerator:
+    accelerator_kwargs = _accelerator_kwargs_for_backend(cfg)
     local_accelerator = Accelerator(**accelerator_kwargs)
     local_accelerator.print(local_accelerator.state)
     return local_accelerator
