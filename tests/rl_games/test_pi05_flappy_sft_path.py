@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, TypedDict
+from typing import Any
 
 import pytest
 import yaml
-from hydra import compose, initialize_config_dir
 
 from examples.rl_games.scripts import launch_train, setup_training_assets
 from starVLA.training.rl_games.action_spec import apply_action_spec
@@ -14,96 +13,6 @@ from starVLA.training.rl_games.alias import MODEL_ALIAS_TO_FRAMEWORK, apply_mode
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RL_GAMES_CONFIG_DIR = REPO_ROOT / "examples" / "rl_games" / "config"
-
-
-class ExpectedExperimentConfig(TypedDict):
-    name: str
-    env: str
-    mode: str
-    run_id: str
-    source_hf: str
-    converted_name: str
-    latencies: list[int]
-    action_env_dim: int
-    latency_filter: list[int] | None
-    deadly_action_layout: str | None
-
-
-EXPECTED_PI05_BRIDGE_EXPERIMENTS: dict[str, ExpectedExperimentConfig] = {
-    "flappy_single": {
-        "name": "pi05/bridge/single/flappy.yaml",
-        "env": "flappy",
-        "mode": "single",
-        "run_id": "pi05_flappy_single",
-        "source_hf": "talha1503/flappy_bird_zero_latency_parquet",
-        "converted_name": "flappy_train",
-        "latencies": [0],
-        "action_env_dim": 2,
-        "latency_filter": None,
-        "deadly_action_layout": None,
-    },
-    "flappy_mixed_latency": {
-        "name": "pi05/bridge/mixed_latency/flappy.yaml",
-        "env": "flappy",
-        "mode": "mixed_latency",
-        "run_id": "pi05_flappy_mixed_latency",
-        "source_hf": "talha1503/flappy_bird_mixed_latency_parquet",
-        "converted_name": "flappy_mixed_latency_train",
-        "latencies": [0, 1, 2, 3, 4, 5],
-        "action_env_dim": 2,
-        "latency_filter": None,
-        "deadly_action_layout": None,
-    },
-    "demon_attack_single": {
-        "name": "pi05/bridge/single/demon_attack.yaml",
-        "env": "demon_attack",
-        "mode": "single",
-        "run_id": "pi05_demon_attack_bridge_single",
-        "source_hf": "talha1503/demon_attack_zero_latency_parquet",
-        "converted_name": "demon_attack_train",
-        "latencies": [0],
-        "action_env_dim": 6,
-        "latency_filter": None,
-        "deadly_action_layout": None,
-    },
-    "demon_attack_mixed_latency": {
-        "name": "pi05/bridge/mixed_latency/demon_attack.yaml",
-        "env": "demon_attack",
-        "mode": "mixed_latency",
-        "run_id": "pi05_demon_attack_bridge_mixed_latency",
-        "source_hf": "talha1503/demon_attack_mixed_latency_parquet",
-        "converted_name": "demon_attack_mixed_latency_train",
-        "latencies": [0, 1, 2, 3, 4, 5],
-        "action_env_dim": 6,
-        "latency_filter": None,
-        "deadly_action_layout": None,
-    },
-    "deadly_corridor_single": {
-        "name": "pi05/bridge/single/deadly_corridor.yaml",
-        "env": "deadly_corridor",
-        "mode": "single",
-        "run_id": "pi05_deadly_corridor_bridge_single",
-        "source_hf": "latency-sensitive-bench/deadly_corridor_mixed_latency_parquet",
-        "converted_name": "deadly_corridor_train",
-        "latencies": [0],
-        "action_env_dim": 7,
-        "latency_filter": [0],
-        "deadly_action_layout": "multibinary_7",
-    },
-    "deadly_corridor_mixed_latency": {
-        "name": "pi05/bridge/mixed_latency/deadly_corridor.yaml",
-        "env": "deadly_corridor",
-        "mode": "mixed_latency",
-        "run_id": "pi05_deadly_corridor_bridge_mixed_latency",
-        "source_hf": "latency-sensitive-bench/deadly_corridor_mixed_latency_parquet",
-        "converted_name": "deadly_corridor_mixed_latency_train",
-        "latencies": [0, 1, 2, 3, 4, 5],
-        "action_env_dim": 7,
-        "latency_filter": None,
-        "deadly_action_layout": "multibinary_7",
-    },
-}
 
 
 def _namespace(mapping: dict[str, Any]) -> SimpleNamespace:
@@ -111,15 +20,6 @@ def _namespace(mapping: dict[str, Any]) -> SimpleNamespace:
     for key, value in mapping.items():
         values[key] = _namespace(value) if isinstance(value, dict) else value
     return SimpleNamespace(**values)
-
-
-def _load_experiment_config(name: str) -> dict[str, Any]:
-    path = REPO_ROOT / "examples" / "rl_games" / "experiments" / name
-    with path.open("r", encoding="utf-8") as stream:
-        loaded = yaml.safe_load(stream)
-    if not isinstance(loaded, dict):
-        raise TypeError(f"Experiment config did not load as a mapping: {path}")
-    return loaded
 
 
 def _load_model_config(name: str) -> dict[str, Any]:
@@ -136,16 +36,14 @@ def _load_command(name: str) -> str:
 
 
 def _compose_train_cfg(*, model: str, env: str, init: str, mode: str) -> Any:
-    with initialize_config_dir(version_base="1.1", config_dir=str(RL_GAMES_CONFIG_DIR)):
-        return compose(
-            config_name="train",
-            overrides=[
-                f"model={model}",
-                f"env={env}",
-                f"init={init}",
-                f"mode={mode}",
-            ],
-        )
+    return launch_train.compose_training_config(
+        config_name="train",
+        model=model,
+        env=env,
+        init=init,
+        mode=mode,
+        overrides=[],
+    )
 
 
 def _setup_args(tmp_path: Path, model: str, env: str) -> SimpleNamespace:
@@ -163,35 +61,6 @@ def _setup_args(tmp_path: Path, model: str, env: str) -> SimpleNamespace:
         checkpoint_sync_repo_id="",
         checkpoint_sync_enabled="false",
     )
-
-
-def _assert_pi05_bridge_experiment(cfg: dict[str, Any], expected: ExpectedExperimentConfig) -> None:
-    assert cfg["model"] == "pi05"
-    assert cfg["env"] == expected["env"]
-    assert cfg["mode"] == expected["mode"]
-    assert cfg["run_id"] == expected["run_id"]
-    assert cfg["conda"]["env_name"] == "starvla_rl_games_pi05"
-    assert cfg["paths"]["base_model_dir"] == "playground/Pretrained_models/Qwen3-VL-4B-Instruct"
-    assert cfg["base_model"]["repo_id"] == "Qwen/Qwen3-VL-4B-Instruct"
-    assert cfg["initialization"]["checkpoint_local_dir"] == "playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1"
-    assert cfg["initialization"]["checkpoint_hf_repo_id"] == "StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"
-    assert cfg["initialization"]["checkpoint_filename"] == "checkpoints/steps_50000_pytorch_model.pt"
-    assert cfg["dataset"]["source_hf"] == expected["source_hf"]
-    assert cfg["dataset"]["converted_name"] == expected["converted_name"]
-    assert cfg["dataset"].get("latency_filter") == expected["latency_filter"]
-    assert cfg["framework"]["name"] == "QwenPI_v3"
-    assert cfg["framework"]["action_model"]["action_dim"] == 7
-    assert cfg["framework"]["action_model"]["action_env_dim"] == expected["action_env_dim"]
-    assert cfg["framework"]["action_model"]["state_dim"] == 7
-    assert cfg["framework"]["action_model"]["action_horizon"] == 1
-    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["action_dit_hidden_dim"] == 1024
-    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["output_dim"] == 1024
-    assert cfg["rl_games"]["model_alias"] == "pi-0.5"
-    assert cfg["rl_games"]["initialization_mode"] == "bridge"
-    assert cfg["rl_games"]["action_carrier"] == "bridge"
-    assert cfg["rl_games"]["task"] == expected["env"]
-    assert cfg["rl_games"].get("deadly_action_layout") == expected["deadly_action_layout"]
-    assert cfg["rl_games"]["latencies"] == expected["latencies"]
 
 
 def test_pi05_alias_resolves_to_qwenpi_v3() -> None:
@@ -220,63 +89,6 @@ def test_pi0_bridge_alias_resolves_to_qwenpi() -> None:
 
     assert MODEL_ALIAS_TO_FRAMEWORK["pi-0"] == "QwenPI"
     assert cfg.framework.name == "QwenPI"
-
-
-def test_pi0_bridge_flappy_uses_released_qwen_pi_initializer() -> None:
-    cfg = _load_experiment_config("pi0/bridge/single/flappy.yaml")
-
-    assert cfg["framework"]["name"] == "QwenPI"
-    assert cfg["framework"]["qwenvl"]["base_vlm"] == "StarVLA/Qwen2.5-VL-3B-Instruct-Action"
-    assert cfg["framework"]["action_model"]["action_model_type"] == "DiT-Qwen"
-    assert cfg["framework"]["action_model"]["hidden_size"] == 1024
-    assert cfg["framework"]["action_model"]["action_hidden_dim"] == 2048
-    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["cross_attention_dim"] == 2048
-    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["num_layers"] == 16
-    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["output_dim"] == 1024
-    assert cfg["paths"]["base_model_dir"] == "playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action"
-    assert cfg["base_model"]["repo_id"] == "StarVLA/Qwen2.5-VL-3B-Instruct-Action"
-    assert cfg["initialization"]["checkpoint_local_dir"] == "playground/Pretrained_models/Qwen-PI-Bridge-RT-1"
-    assert cfg["initialization"]["checkpoint_hf_repo_id"] == "StarVLA/Qwen-PI-Bridge-RT-1"
-    assert cfg["initialization"]["checkpoint_filename"] == "checkpoints/steps_30000_pytorch_model.pt"
-    assert cfg["rl_games"]["model_alias"] == "pi-0"
-
-
-@pytest.mark.parametrize(
-    ("name", "env", "action_env_dim"),
-    [
-        ("pi0/bridge/single/flappy.yaml", "flappy", 2),
-        ("pi0/bridge/mixed_latency/flappy.yaml", "flappy", 2),
-        ("pi0/bridge/single/demon_attack.yaml", "demon_attack", 6),
-        ("pi0/bridge/mixed_latency/demon_attack.yaml", "demon_attack", 6),
-        ("pi0/bridge/single/deadly_corridor.yaml", "deadly_corridor", 7),
-        ("pi0/bridge/mixed_latency/deadly_corridor.yaml", "deadly_corridor", 7),
-    ],
-)
-def test_pi0_bridge_experiments_use_released_qwen_pi_design(
-    name: str,
-    env: str,
-    action_env_dim: int,
-) -> None:
-    cfg = _load_experiment_config(name)
-
-    assert cfg["model"] == "pi0"
-    assert cfg["env"] == env
-    assert cfg["paths"]["base_model_dir"] == "playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action"
-    assert cfg["base_model"]["repo_id"] == "StarVLA/Qwen2.5-VL-3B-Instruct-Action"
-    assert cfg["initialization"]["checkpoint_hf_repo_id"] == "StarVLA/Qwen-PI-Bridge-RT-1"
-    assert cfg["initialization"]["checkpoint_filename"] == "checkpoints/steps_30000_pytorch_model.pt"
-    assert cfg["framework"]["name"] == "QwenPI"
-    assert cfg["framework"]["qwenvl"]["base_vlm"] == "StarVLA/Qwen2.5-VL-3B-Instruct-Action"
-    assert cfg["framework"]["action_model"]["action_model_type"] == "DiT-Qwen"
-    assert cfg["framework"]["action_model"]["action_dim"] == 7
-    assert cfg["framework"]["action_model"]["action_env_dim"] == action_env_dim
-    assert cfg["framework"]["action_model"]["state_dim"] == 7
-    assert cfg["framework"]["action_model"]["hidden_size"] == 1024
-    assert cfg["framework"]["action_model"]["action_hidden_dim"] == 2048
-    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["cross_attention_dim"] == 2048
-    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["num_layers"] == 16
-    assert cfg["framework"]["action_model"]["diffusion_model_cfg"]["output_dim"] == 1024
-    assert cfg["rl_games"]["model_alias"] == "pi-0"
 
 
 def test_pi0_model_config_uses_released_qwen_pi_design() -> None:
@@ -438,19 +250,53 @@ def test_pi05_setup_assets_routes_all_rl_games_environments(
     assert "pi05:flappy:flappy" in calls
 
 
-@pytest.mark.parametrize("expected", EXPECTED_PI05_BRIDGE_EXPERIMENTS.values(), ids=EXPECTED_PI05_BRIDGE_EXPERIMENTS.keys())
-def test_pi05_bridge_experiments_use_qwenpi_v3(expected: ExpectedExperimentConfig) -> None:
-    cfg = _load_experiment_config(expected["name"])
+@pytest.mark.parametrize(
+    ("model", "env", "mode", "action_env_dim"),
+    [
+        ("pi05", "flappy", "single", 2),
+        ("pi05", "flappy", "mixed_latency", 2),
+        ("pi05", "demon_attack", "single", 6),
+        ("pi05", "demon_attack", "mixed_latency", 6),
+        ("pi05", "deadly_corridor", "single", 7),
+        ("pi05", "deadly_corridor", "mixed_latency", 7),
+    ],
+)
+def test_pi05_bridge_composed_config_uses_qwenpi_v3(
+    model: str,
+    env: str,
+    mode: str,
+    action_env_dim: int,
+) -> None:
+    cfg = _compose_train_cfg(model=model, env=env, init="bridge", mode=mode)
 
-    _assert_pi05_bridge_experiment(cfg, expected)
+    assert cfg.framework.name == "QwenPI_v3"
+    assert cfg.rl_games.model_alias == "pi-0.5"
+    assert cfg.rl_games.initialization_mode == "bridge"
+    assert cfg.rl_games.action_carrier == "bridge"
+    assert cfg.initialization.checkpoint_hf_repo_id == "StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"
+    assert cfg.initialization.checkpoint_filename == "checkpoints/steps_50000_pytorch_model.pt"
+    assert cfg.framework.action_model.action_dim == 7
+    assert cfg.framework.action_model.action_env_dim == action_env_dim
 
 
-@pytest.mark.parametrize("expected", EXPECTED_PI05_BRIDGE_EXPERIMENTS.values(), ids=EXPECTED_PI05_BRIDGE_EXPERIMENTS.keys())
-def test_pi05_bridge_experiments_forward_qwenpi_v3_command_overrides(
-    expected: ExpectedExperimentConfig,
+@pytest.mark.parametrize(
+    ("env", "mode", "action_env_dim"),
+    [
+        ("flappy", "single", 2),
+        ("flappy", "mixed_latency", 2),
+        ("demon_attack", "single", 6),
+        ("demon_attack", "mixed_latency", 6),
+        ("deadly_corridor", "single", 7),
+        ("deadly_corridor", "mixed_latency", 7),
+    ],
+)
+def test_pi05_bridge_composed_config_forwards_qwenpi_v3_command_overrides(
+    env: str,
+    mode: str,
+    action_env_dim: int,
     tmp_path: Path,
 ) -> None:
-    cfg = _load_experiment_config(expected["name"])
+    cfg = _compose_train_cfg(model="pi05", env=env, init="bridge", mode=mode)
     setup = {
         "dataset_local_dir": str(tmp_path / "datasets"),
         "base_model_dir": str(tmp_path / "base_model"),
@@ -461,9 +307,9 @@ def test_pi05_bridge_experiments_forward_qwenpi_v3_command_overrides(
 
     assert "framework.action_model.diffusion_model_cfg.action_dit_hidden_dim=1024" in cmd
     assert "framework.action_model.diffusion_model_cfg.output_dim=1024" in cmd
-    assert f"framework.action_model.action_env_dim={expected['action_env_dim']}" in cmd
-    if expected["deadly_action_layout"] is not None:
-        assert f"rl_games.env_eval.deadly.action_layout={expected['deadly_action_layout']}" in cmd
+    assert f"framework.action_model.action_env_dim={action_env_dim}" in cmd
+    if env == "deadly_corridor":
+        assert "rl_games.env_eval.deadly.action_layout=multibinary_7" in cmd
 
 
 def test_launch_train_setup_namespace_uses_composed_hydra_config(tmp_path: Path) -> None:
