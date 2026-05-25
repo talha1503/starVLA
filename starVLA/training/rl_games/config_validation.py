@@ -4,6 +4,8 @@ from typing import Any
 
 from omegaconf import OmegaConf
 
+BRIDGE_INITIALIZATION_MODES: set[str] = {"bridge", "pre-trained", "pretrained"}
+
 
 def _select_value(cfg: Any, key: str) -> Any:
     return OmegaConf.select(cfg, key)
@@ -33,7 +35,7 @@ def _normalize_mode(value: Any) -> str:
 def _is_bridge_initialization(cfg: Any) -> bool:
     initialization_mode = _normalize_mode(_select_value(cfg=cfg, key="rl_games.initialization_mode"))
     action_carrier = _normalize_mode(_select_value(cfg=cfg, key="rl_games.action_carrier"))
-    return initialization_mode == "bridge" or action_carrier == "bridge"
+    return initialization_mode in BRIDGE_INITIALIZATION_MODES or action_carrier == "bridge"
 
 
 def _has_checkpoint_source(cfg: Any) -> bool:
