@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-export WANDB_MODE=offline
+# export WANDB_MODE=offline
 export HF_DATASETS_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1

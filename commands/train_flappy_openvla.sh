@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-export WANDB_MODE=offline
+# export WANDB_MODE=offline
 export HF_DATASETS_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
@@ -15,4 +15,4 @@ python examples/rl_games/scripts/launch_train.py \
   trainer.gradient_accumulation_steps=16 \
   datasets.vla_data.per_device_batch_size=16 \
   trainer.max_train_steps=5000 \
-  checkpoint.load=local \
+  checkpoint.load=none \
