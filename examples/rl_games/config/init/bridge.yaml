@@ -1,0 +1,23 @@
+defaults:
+  - base
+  - _self_
+
+# @package _global_
+
+rl_games:
+  initialization_mode: bridge
+  action_carrier: bridge
+
+datasets:
+  vla_data:
+    include_state: true
+
+framework:
+  action_model:
+    action_dim: 7
+    state_dim: 7
+    action_horizon: 1
+    future_action_window_size: 0
+    past_action_window_size: 0
+
+init: bridge

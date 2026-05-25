@@ -1,0 +1,15 @@
+defaults:
+  - base
+  - _self_
+
+# @package _global_
+
+rl_games:
+  initialization_mode: scratch
+  action_carrier: native
+
+datasets:
+  vla_data:
+    include_state: false
+
+init: scratch

@@ -1,0 +1,23 @@
+# @package _global_
+
+rl_games:
+  env_eval:
+    enabled: true
+    interval_steps: 100
+    num_episodes: 5
+    max_episode_steps: 3600
+    latency:
+      prompt_map_path: null
+    mid_train:
+      enabled: true
+      interval_steps: 100
+      latencies: null
+      num_episodes: 5
+      max_steps_per_episode: 3600
+    post_train:
+      enabled: true
+      latencies: null
+      num_episodes: 5
+      max_steps_per_episode: 3600
+
+mode: single

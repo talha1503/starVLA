@@ -1,0 +1,12 @@
+# @package _global_
+
+rl_games:
+  env_eval:
+    image_size: 84
+    frameskip: 1
+    task_description: ""
+
+datasets:
+  vla_data:
+    action_type: discrete
+    obs_image_size: [84, 84]

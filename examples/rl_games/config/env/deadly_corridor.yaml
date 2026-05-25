@@ -1,3 +1,7 @@
+defaults:
+  - base
+  - _self_
+
 # @package _global_
 
 rl_games:
@@ -9,6 +13,12 @@ rl_games:
       action_layout: multibinary_7
     task_description: "You are playing Deadly Corridor in VizDoom. Choose actions from MOVE_FORWARD, MOVE_BACKWARD, MOVE_LEFT, MOVE_RIGHT, TURN_LEFT, TURN_RIGHT, ATTACK."
 
-datasets:
-  vla_data:
-    data_mix: deadly_corridor_train
+dataset:
+  single_source_hf: latency-sensitive-bench/deadly_corridor_mixed_latency_parquet
+  mixed_source_hf: latency-sensitive-bench/deadly_corridor_mixed_latency_parquet
+  single_converted_name: deadly_corridor_train
+  mixed_converted_name: deadly_corridor_mixed_latency_train
+  single_latency_filter: [0]
+  mixed_latency_filter: null
+
+env: deadly_corridor
