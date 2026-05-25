@@ -11,7 +11,6 @@ python examples/rl_games/scripts/launch_train.py \
   init=bridge \
   run_id=pi05_deadly_corridor_fix_latency_0 \
   paths.dataset_local_dir=data/deadly_corridor_fix_latency_0 \
-  dataset.source_hf=data/deadly_corridor_fix_latency_0 \
   trainer.distributed_backend=none \
   trainer.gradient_accumulation_steps=16 \
   datasets.vla_data.per_device_batch_size=16 \

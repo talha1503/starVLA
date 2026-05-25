@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -249,6 +250,73 @@ def test_pi05_setup_assets_routes_all_rl_games_environments(
     assert "pi05:deadly_corridor:deadly_corridor" in calls
     assert pi05_flappy["data_mix"] == "pi05_flappy_train"
     assert "pi05:flappy:flappy" in calls
+
+
+def test_ready_local_dataset_ignores_manifest_source_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    data_root_dir = tmp_path / "datasets"
+    train_dataset_dir = data_root_dir / "flappy_train__bridge"
+    eval_dataset_dir = data_root_dir / "flappy_train__bridge__val"
+    for dataset_dir in (train_dataset_dir, eval_dataset_dir):
+        (dataset_dir / "meta").mkdir(parents=True)
+        (dataset_dir / "data" / "chunk-000").mkdir(parents=True)
+        for metadata_name in ("modality.json", "info.json"):
+            (dataset_dir / "meta" / metadata_name).write_text("{}", encoding="utf-8")
+        for metadata_name in ("episodes.jsonl", "tasks.jsonl"):
+            (dataset_dir / "meta" / metadata_name).write_text("{}\n", encoding="utf-8")
+        (dataset_dir / "data" / "chunk-000" / "episode_000000.parquet").write_bytes(b"PAR1")
+        (dataset_dir / "manifest.json").write_text(
+            json.dumps({
+                "source": "talha1503/flappy_bird_zero_latency_parquet",
+                "action_carrier": "bridge",
+                "latency_filter": None,
+            }),
+            encoding="utf-8",
+        )
+
+    def reject_verify_dataset(*args: Any, **kwargs: Any) -> bool:
+        raise AssertionError("ready local dataset should not verify raw source")
+
+    def reject_convert_dataset(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("ready local dataset should not be rebuilt")
+
+    def fake_validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, Any]:
+        return {
+            "dataset_stats_path": str(data_root_dir / data_mix / "dataset_statistics.json"),
+            "dataset_num_steps": 1,
+            "dataset_num_trajectories": 1,
+            "dataset_robot_type": "flappy",
+            "dataset_embodiment_tag": "flappy",
+        }
+
+    monkeypatch.setattr(setup_training_assets, "_validate_starvla_dataset", fake_validate_starvla_dataset)
+    args = SimpleNamespace(
+        dataset_local_dir=str(data_root_dir),
+        initialization_mode="bridge",
+        action_carrier="bridge",
+        converted_dataset_name="flappy_train",
+        source_dataset_hf="data/flappy_fix_latency_0_parquet",
+        setup_force="false",
+        dataset_force_download="false",
+        mode="single",
+        latency_mode="single",
+        verify_rows=200,
+        dataset_cache_dir=None,
+        max_episodes=None,
+        latency_filter=None,
+    )
+
+    result = setup_training_assets._ensure_rl_games_lerobot_dataset(
+        args,
+        convert_dataset=reject_convert_dataset,
+        verify_dataset=reject_verify_dataset,
+    )
+
+    assert result["dataset_converted"] is False
+    assert result["data_mix"] == "flappy_train__bridge"
+    assert result["eval_data_mix"] == "flappy_train__bridge__val"
 
 
 @pytest.mark.parametrize(

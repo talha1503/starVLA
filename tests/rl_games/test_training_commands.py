@@ -35,12 +35,7 @@ def test_training_command_matrix_targets_hydra_launcher() -> None:
             assert "rl_games.env_eval.post_train.latencies=" not in command_text
             assert "trainer.batch_size=" not in command_text
             assert "datasets.vla_data.per_device_batch_size=16" in command_text
-            if env == "flappy":
-                assert "dataset.source_hf=data/flappy_fix_latency_0_parquet" in command_text
-            if env == "demon_attack":
-                assert "dataset.source_hf=data/demon_attack_fix_latency_1" in command_text
-            if env == "deadly_corridor":
-                assert "dataset.source_hf=data/deadly_corridor_fix_latency_0" in command_text
+            assert "dataset.source_hf=data/" not in command_text
 
 
 def test_training_commands_are_valid_bash() -> None:
