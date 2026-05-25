@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from omegaconf import OmegaConf
-from omegaconf.dictconfig import DictConfig
 
 
 def _select_value(cfg: Any, key: str) -> Any:
@@ -59,18 +58,10 @@ def _validate_bridge_initialization(cfg: Any) -> None:
         raise ValueError("bridge initialization requires initialization.checkpoint_filename")
 
 
-def _bind_latency_values_alias(cfg: Any, latency_values: Any) -> None:
-    latency_cfg = _select_value(cfg=cfg, key="rl_games.env_eval.latency")
-    if not isinstance(latency_cfg, DictConfig):
-        raise TypeError("Expected rl_games.env_eval.latency to be an OmegaConf DictConfig")
-    object.__setattr__(latency_cfg, "values", latency_values)
-
-
 def _validate_latency_values(cfg: Any) -> None:
     latency_values = _require_non_empty_value(cfg=cfg, key="rl_games.env_eval.latency.values")
     if len(latency_values) == 0:
         raise ValueError("Missing required RL-games config field: rl_games.env_eval.latency.values")
-    _bind_latency_values_alias(cfg=cfg, latency_values=latency_values)
 
 
 def validate_rl_games_config(cfg: Any) -> None:
