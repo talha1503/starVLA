@@ -30,6 +30,7 @@ import torch
 from starVLA.model.framework.base_framework import baseframework
 from starVLA.model.framework.share_tools import read_mode_config
 
+from deployment.model_server.action_postprocess import ACTION_OUTPUT_TYPES, postprocess_actions
 from deployment.model_server.policy_norm_processor import PolicyNormProcessor
 
 
@@ -58,6 +59,7 @@ class PolicyServerWrapper:
 
         # action_chunk_size = future_action_window_size + 1 (matches old client).
         action_model_cfg = model_cfg["framework"]["action_model"]
+        self._action_loss_type = self._framework.config.framework.action_model.loss_type
         
         if "action_horizon" in action_model_cfg:
             self._action_chunk_size = int(action_model_cfg["action_horizon"])
@@ -115,6 +117,7 @@ class PolicyServerWrapper:
             "action_chunk_size": self._action_chunk_size,
             "available_unnorm_keys": self._available_unnorm_keys,
             "default_unnorm_key": self._default_unnorm_key,
+            "action_output_type": ACTION_OUTPUT_TYPES[self._action_loss_type],
         }
         # Enrich with per-embodiment keys when a default processor already exists.
         if self._default_unnorm_key is not None:
@@ -155,8 +158,8 @@ class PolicyServerWrapper:
         out = self._framework.predict_action(examples=examples, **kwargs)
         normalized = np.asarray(out["normalized_actions"])  # (B, T, D)
 
-        unnorm = np.stack(
-            [proc.unapply_actions(normalized[b]) for b in range(normalized.shape[0])],
-            axis=0,
-        )
-        return {"actions": unnorm}
+        actions = postprocess_actions(normalized, proc, self._action_loss_type)
+        return {
+            "actions": actions,
+            "action_output_type": ACTION_OUTPUT_TYPES[self._action_loss_type],
+        }

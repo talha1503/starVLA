@@ -1,0 +1,122 @@
+# Workspace root for relative assets and outputs. Use an absolute path or set
+# WORKSPACE_DIR in the shell.
+workspace_dir: /mnt/data/latency_data
+
+# Launcher-only: run_experiment.sh reads this before Python starts.
+conda:
+  enabled: true
+  env_name: starvla_rl_games_openvla
+
+# Launcher-only: optional auth env indirection. Do not commit real tokens.
+auth:
+  env_file: null
+  hf_token_env: HF_TOKEN
+  wandb_api_key_env: WANDB_API_KEY
+
+# Hydra entrypoint and config groups under examples/rl_games/config.
+config_name: train
+model: openvla
+env: demon_attack
+mode: single
+run_id: openvla_demon_attack_fixed_l2_ce
+run_root_dir: results/Checkpoints
+seed: 42
+wandb_entity: your_wandb_entity
+wandb_project: starVLA_rl_games
+
+# Launcher-only paths. Training paths live in the Hydra-aligned sections below.
+paths:
+  accelerate_config: starVLA/config/deepseeds/deepspeed_zero2.yaml
+
+# Setup-only converted dataset controls.
+dataset:
+  converted_hf: null
+  force_download: false
+
+# Hydra training dataset config. These names match config/train.yaml exactly.
+datasets:
+  vla_data:
+    data_root_dir: playground/Datasets/rl_games
+    data_mix: demon_attack_train
+    action_type: discrete
+    sequential_step_sampling: false
+    load_all_data_for_training: true
+    obs_image_size: null
+    video_backend: torchvision_av
+    per_device_batch_size: 16
+
+# Setup-only base model repo. The local path is framework.qwenvl.base_vlm below.
+base_model:
+  repo_id: StarVLA/Qwen3-VL-4B-Instruct-Action
+
+# Resume/sync policy. Nested keys match the Hydra checkpoint config.
+checkpoint:
+  load: none
+  hf_repo_id: null
+  sync:
+    enabled: false
+    keep_last_n: 0
+  local:
+    keep_last_n: 3
+
+# Launcher process controls.
+launch:
+  use_accelerate: true
+  gpus: 0,1
+  num_processes: 2
+
+# Hydra model config. run_experiment.py resolves base_vlm under workspace_dir.
+framework:
+  qwenvl:
+    base_vlm: playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
+  action_model:
+    loss_type: ce
+
+# Hydra trainer config.
+trainer:
+  max_train_steps: 2000
+  num_warmup_steps: 100
+  save_interval: 100
+  eval_interval: 100
+  eval_num_batches: 20
+  logging_frequency: 10
+  gradient_accumulation_steps: 4
+  learning_rate:
+    base: 1.0e-05
+    qwen_vl_interface: 1.0e-05
+    action_model: 1.0e-04
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 1.0e-06
+  freeze_modules: ""
+  loss_scale:
+    vla: 1.0
+    vlm: 0.1
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+  gradient_clipping: 1.0
+  save_format: pt
+
+# Hydra RL-games eval config. env_eval controls real environment rollouts,
+# separately from trainer.eval_interval loss evaluation.
+rl_games:
+  task: demon_attack
+  model_alias: openvla
+  env_eval:
+    frameskip: 4
+    image_size: 84
+    enabled: false
+    latency:
+      mode: single
+      values: [0]
+    mid_train:
+      enabled: false
+      interval_steps: 100
+      latencies: [0]
+      num_episodes: 5
+      max_steps_per_episode: 2000
+    post_train:
+      enabled: false
+      latencies: [0]
+      num_episodes: 5
+      max_steps_per_episode: 2000

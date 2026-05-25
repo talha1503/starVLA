@@ -38,6 +38,7 @@ logger = initialize_overwatch(__name__)
 IGNORE_INDEX = -100
 
 from starVLA.model.framework.base_framework import baseframework
+from starVLA.model.framework.VLM4A.action_loss import qwen_oft_action_loss
 from starVLA.model.framework.share_tools import add_discretized_state_to_instruction, merge_framework_config
 from starVLA.model.modules.action_model.MLP_ActionHeader import get_action_model
 from starVLA.model.modules.vlm import get_vlm_model
@@ -84,6 +85,8 @@ class QwenOFTDefaultConfig:
             "future_action_window_size": 8,
             # How many past steps included in action chunk (usually 0)
             "past_action_window_size": 0,
+            # Action loss: l1 for continuous regression, ce/factorized_ce for RL-games discrete actions.
+            "loss_type": "l1",
         }
     )
 
@@ -220,8 +223,12 @@ class Qwenvl_OFT(baseframework):
             )  # [B, T_full, action_dim]
             actions_target = actions[:, -self.action_horizon :, :]  # (B, action_horizon, action_dim)
 
-            # Compute L1 loss
-            action_loss = self.l1_loss(pred_actions, actions_target)
+            action_loss = qwen_oft_action_loss(
+                pred_actions,
+                actions_target,
+                self.config.framework.action_model.loss_type,
+                self.l1_loss,
+            )
 
         return {"action_loss": action_loss}
 

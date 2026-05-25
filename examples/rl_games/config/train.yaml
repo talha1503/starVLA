@@ -48,6 +48,7 @@ framework:
     action_horizon: 1
     future_action_window_size: 0
     past_action_window_size: 0
+    loss_type: l1
 
 # Training dataset config. per_device_batch_size is the micro batch size per
 # process/device.
