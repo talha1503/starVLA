@@ -23,7 +23,7 @@ python examples/rl_games/scripts/launch_train.py \
     trainer.eval_interval=500 \
     trainer.logging_frequency=1 \
     trainer.gradient_accumulation_steps=16 \
-    trainer.batch_size=16 \
+    datasets.vla_data.per_device_batch_size=16 \
     rl_games.env_eval.mid_train.interval_steps=500 \
     rl_games.env_eval.mid_train.num_episodes=10 \
     rl_games.env_eval.mid_train.max_steps_per_episode=3600 \

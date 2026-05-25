@@ -13,6 +13,6 @@ python examples/rl_games/scripts/launch_train.py \
   paths.dataset_local_dir=data/flappy_fix_latency_0_parquet \
   trainer.distributed_backend=none \
   trainer.gradient_accumulation_steps=16 \
-  trainer.batch_size=16 \
+  datasets.vla_data.per_device_batch_size=16 \
   trainer.max_train_steps=5000 \
   checkpoint.load=local \

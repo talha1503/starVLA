@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from examples.rl_games.scripts import launch_train
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -31,9 +33,39 @@ def test_training_command_matrix_targets_hydra_launcher() -> None:
             assert "WANDB_ENTITY" not in command_text
             assert "wandb_entity=" not in command_text
             assert "rl_games.env_eval.post_train.latencies=" not in command_text
+            assert "trainer.batch_size=" not in command_text
+            assert "datasets.vla_data.per_device_batch_size=16" in command_text
 
 
 def test_training_commands_are_valid_bash() -> None:
     command_paths = [str(_command_path(model, env)) for model in MODELS for env in ENVS]
 
     subprocess.run(["bash", "-n", *command_paths], check=True, cwd=REPO_ROOT)
+
+
+def test_launcher_does_not_translate_trainer_batch_size_alias() -> None:
+    launcher_text = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "launch_train.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"trainer.batch_size"' not in launcher_text
+
+
+def test_launcher_forwards_canonical_per_device_batch_size_override(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="flappy",
+        init="bridge",
+        mode="single",
+        overrides=["datasets.vla_data.per_device_batch_size=16"],
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "base_model"),
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert "datasets.vla_data.per_device_batch_size=16" in cmd

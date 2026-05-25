@@ -13,7 +13,7 @@ python examples/rl_games/scripts/launch_train.py \
   paths.dataset_local_dir=data/demon_attack_fix_latency_1 \
   trainer.distributed_backend=none \
   trainer.gradient_accumulation_steps=16 \
-  trainer.batch_size=16 \
+  datasets.vla_data.per_device_batch_size=16 \
   checkpoint.load=none \
   rl_games.env_eval.latency.values=[1] \
   rl_games.env_eval.mid_train.latencies=[1] \

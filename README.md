@@ -296,11 +296,11 @@ python examples/rl_games/scripts/launch_train.py \
   init=scratch \
   mode=mixed_latency \
   workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY \
+  wandb_entity=WANDB_ENTITY \
   run_id=test_lr_1e4 \
   trainer.max_train_steps=5000 \
   trainer.learning_rate.action_model=1.0e-04 \
-  trainer.batch_size=4
+  datasets.vla_data.per_device_batch_size=4
 ```
 
 Checkpoint fields have separate meanings:
@@ -308,13 +308,15 @@ Checkpoint fields have separate meanings:
 ```yaml
 checkpoint:
   hf_repo_id: HF_RESUME_REPO_ID
-  sync_enabled: true
-  sync_repo_id: HF_OUTPUT_REPO_ID
-  hf_keep_last_n: 0
-  local_keep_last_n: 3
+  local:
+    keep_last_n: 3
+  sync:
+    enabled: true
+    repo_id: HF_OUTPUT_REPO_ID
+    keep_last_n: 0
 ```
 
-`hf_repo_id` is used as a resume/download source when no newer local checkpoint exists. `sync_repo_id` is only used as the upload destination for newly saved checkpoints. The RL Games trainer saves full Accelerate training-state directories (`steps_<N>_state/`) for exact resume, including optimizer/scheduler state, and also saves lightweight model files for convenience. If `sync_enabled: true`, the sync code creates `sync_repo_id` on Hugging Face if it does not already exist. `hf_keep_last_n: 0` means keep all uploaded HF checkpoints.
+`checkpoint.hf_repo_id` is used as a resume/download source when no newer local checkpoint exists. `checkpoint.sync.repo_id` is only used as the upload destination for newly saved checkpoints. The RL Games trainer saves full Accelerate training-state directories (`steps_<N>_state/`) for exact resume, including optimizer/scheduler state, and also saves lightweight model files for convenience. If `checkpoint.sync.enabled: true`, the sync code creates `checkpoint.sync.repo_id` on Hugging Face if it does not already exist. `checkpoint.sync.keep_last_n: 0` means keep all uploaded HF checkpoints.
 
 Environment rollout eval is controlled separately from trainer batch eval:
 
@@ -323,23 +325,22 @@ trainer:
   eval_interval: 100
 
 rl_games:
-  env_eval_enabled: true
-
-  mid_train_eval:
+  env_eval:
     enabled: true
-    interval_steps: 100
-    latencies: [0, 1, 2, 3, 4, 5]
-    num_episodes: 5
-    max_steps_per_episode: 2000
-
-  post_train_eval:
-    enabled: true
-    latencies: [0, 1, 2, 3, 4, 5]
-    num_episodes: 5
-    max_steps_per_episode: 2000
+    mid_train:
+      enabled: true
+      interval_steps: 100
+      latencies: [0, 1, 2, 3, 4, 5]
+      num_episodes: 5
+      max_steps_per_episode: 2000
+    post_train:
+      enabled: true
+      latencies: [0, 1, 2, 3, 4, 5]
+      num_episodes: 5
+      max_steps_per_episode: 2000
 ```
 
-`trainer.eval_interval` runs the trainer's action-model eval. `rl_games.mid_train_eval` and `rl_games.post_train_eval` run the current model in the actual RL Games environment and log `rl_games_eval/mid_train/*` and `rl_games_eval/post_train/*` metrics.
+`trainer.eval_interval` runs the trainer's action-model eval. `rl_games.env_eval.mid_train` and `rl_games.env_eval.post_train` run the current model in the actual RL Games environment and log `rl_games_eval/mid_train/*` and `rl_games_eval/post_train/*` metrics.
 
 Useful smoke test:
 
@@ -350,7 +351,7 @@ python examples/rl_games/scripts/launch_train.py \
   init=scratch \
   mode=mixed_latency \
   workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY \
+  wandb_entity=WANDB_ENTITY \
   run_id=smoke_test \
   trainer.max_train_steps=10 \
   trainer.save_interval=5 \
