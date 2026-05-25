@@ -312,13 +312,28 @@ class VLATrainer(TrainerUtils):
             self.accelerator.print(f"✅ Full training state saved at {state_checkpoint_path}")
 
         if self.accelerator.is_main_process:
+            save_format = getattr(self.config.trainer, "save_format", "pt")
+            state_dict = self.accelerator.get_state_dict(self.model)
+            if save_format == "safetensors":
+                from safetensors.torch import save_file
+
+                model_checkpoint_path = checkpoint_path + "_model.safetensors"
+                save_file(state_dict, model_checkpoint_path)
+            elif save_format == "pt":
+                model_checkpoint_path = checkpoint_path + "_pytorch_model.pt"
+                torch.save(state_dict, model_checkpoint_path)
+            else:
+                raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
+
             summary_data = {"steps": self.completed_steps}
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
                 f.write(json.dumps(summary_data) + "\n")
             self.accelerator.print(f"✅ Checkpoint state saved at {state_checkpoint_path}")
+            self.accelerator.print(f"✅ Model checkpoint saved at {model_checkpoint_path}")
             self._checkpoint_sync_manager.register_local_checkpoint(
                 step=self.completed_steps,
                 state_path=state_checkpoint_path,
+                model_path=model_checkpoint_path,
             )
 
             if isinstance(self.config, AccessTrackedConfig):

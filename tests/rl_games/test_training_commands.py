@@ -70,3 +70,15 @@ def test_launcher_forwards_canonical_per_device_batch_size_override(tmp_path: Pa
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
     assert "datasets.vla_data.per_device_batch_size=16" in cmd
+
+
+def test_vla_trainer_saves_lightweight_model_checkpoint() -> None:
+    trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
+
+    assert 'getattr(self.config.trainer, "save_format", "pt")' in trainer_text
+    assert "self.accelerator.get_state_dict(self.model)" in trainer_text
+    assert 'model_checkpoint_path = checkpoint_path + "_pytorch_model.pt"' in trainer_text
+    assert "torch.save(state_dict, model_checkpoint_path)" in trainer_text
+    assert 'model_checkpoint_path = checkpoint_path + "_model.safetensors"' in trainer_text
+    assert "save_file(state_dict, model_checkpoint_path)" in trainer_text
+    assert "model_path=model_checkpoint_path" in trainer_text
