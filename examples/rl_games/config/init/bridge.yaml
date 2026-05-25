@@ -20,4 +20,22 @@ framework:
     future_action_window_size: 0
     past_action_window_size: 0
 
+base_model:
+  repo_id: ${bridge_base_model.repo_id.${model}}
+
+paths:
+  base_model_dir: ${bridge_base_model.local_dir.${model}}
+
+bridge_base_model:
+  repo_id:
+    openvla: Qwen/Qwen3-VL-4B-Instruct
+    pi0: StarVLA/Qwen2.5-VL-3B-Instruct-Action
+    pi05: Qwen/Qwen3-VL-4B-Instruct
+    gr00t: Qwen/Qwen3-VL-4B-Instruct
+  local_dir:
+    openvla: playground/Pretrained_models/Qwen3-VL-4B-Instruct
+    pi0: playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action
+    pi05: playground/Pretrained_models/Qwen3-VL-4B-Instruct
+    gr00t: playground/Pretrained_models/Qwen3-VL-4B-Instruct
+
 init: bridge
