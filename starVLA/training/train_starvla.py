@@ -37,7 +37,7 @@ from transformers import AutoProcessor, get_scheduler
 from starVLA.dataloader import build_dataloader
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
-from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias
+from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias, validate_rl_games_config
 from starVLA.training.rl_games.auth import login_training_services
 from starVLA.training.train_step_events import should_run_step_interval_event
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
@@ -587,6 +587,7 @@ def main(cfg) -> None:
     logger.info("VLA Training :: Warming Up")
     if hasattr(cfg, "rl_games"):
         login_training_services(cfg, workspace_dir=getattr(cfg, "workspace_dir", None))
+        validate_rl_games_config(cfg)
     apply_model_alias(cfg)
     apply_action_spec(cfg)
 

@@ -1,4 +1,4 @@
-__all__ = ["apply_model_alias", "apply_action_spec", "CheckpointSyncManager", "RlGamesEvalRunner"]
+__all__ = ["apply_model_alias", "apply_action_spec", "validate_rl_games_config", "CheckpointSyncManager", "RlGamesEvalRunner"]
 
 
 def __getattr__(name):
@@ -10,6 +10,10 @@ def __getattr__(name):
         from .action_spec import apply_action_spec
 
         return apply_action_spec
+    if name == "validate_rl_games_config":
+        from .config_validation import validate_rl_games_config
+
+        return validate_rl_games_config
     if name == "CheckpointSyncManager":
         from .checkpoint_sync import CheckpointSyncManager
 
