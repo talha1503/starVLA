@@ -58,33 +58,9 @@ Available scripts:
 
 ## Train
 
-The current training flow is config-driven. Pick one YAML file from:
-
-```text
-examples/rl_games/experiments/<model>/<scratch|bridge>/<single|mixed_latency>/<env>.yaml
-```
-
-Available model trees:
-
-```text
-examples/rl_games/experiments/openvla/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
-examples/rl_games/experiments/pi0/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
-examples/rl_games/experiments/pi05/bridge/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
-examples/rl_games/experiments/gr00t/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
-```
+The current training flow is Hydra-driven. Compose the run from the canonical config tree and pass the active groups on the command line.
 
 `scratch` trains with the native task action width. `bridge` starts from the released StarVLA Bridge/RT-1 checkpoints, uses `Qwen/Qwen3-VL-4B-Instruct` as the base backbone, and trains through a shared 7D action/state carrier. Losses and inference are masked to the active task action dimensions: 2 for Flappy, 6 for Demon Attack, and 7 for Deadly Corridor.
-
-pi-0.5 Bridge configs:
-
-```text
-examples/rl_games/experiments/pi05/bridge/mixed_latency/flappy.yaml
-examples/rl_games/experiments/pi05/bridge/single/flappy.yaml
-examples/rl_games/experiments/pi05/bridge/mixed_latency/demon_attack.yaml
-examples/rl_games/experiments/pi05/bridge/single/demon_attack.yaml
-examples/rl_games/experiments/pi05/bridge/mixed_latency/deadly_corridor.yaml
-examples/rl_games/experiments/pi05/bridge/single/deadly_corridor.yaml
-```
 
 These pi-0.5 configs use `Qwen/Qwen3-VL-4B-Instruct` as the base backbone and initialize from `StarVLA/Qwen3VL-PI_v3-Bridge-RT_1`. Setup first checks the local initializer at `playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1/checkpoints/steps_50000_pytorch_model.pt`; if it is missing, it falls back to the Hugging Face repo.
 
@@ -97,131 +73,38 @@ export HF_TOKEN=HF_TOKEN_VALUE
 export WANDB_API_KEY=WANDB_API_KEY_VALUE
 ```
 
-You can also copy `examples/rl_games/auth.env.example` to a private file such as `WORKSPACE_DIR/auth.env`, then set `auth.env_file: auth.env` in the experiment YAML. If `auth.env_file` is null, the launchers auto-detect `WORKSPACE_DIR/auth.env` and `examples/rl_games/auth.env`. Do not commit real tokens.
+You can also copy `examples/rl_games/auth.env.example` to a private file such as `WORKSPACE_DIR/auth.env`, then set `auth.env_file: auth.env` in the Hydra config. If `auth.env_file` is null, the launcher auto-detects `WORKSPACE_DIR/auth.env` and `examples/rl_games/auth.env`. Do not commit real tokens.
 
 Mixed-latency Flappy:
 
 ```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/openvla/scratch/mixed_latency/flappy.yaml \
-  workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
+python examples/rl_games/scripts/launch_train.py \
+  model=openvla \
+  env=flappy \
+  init=scratch \
+  mode=mixed_latency
 ```
 
-Single-latency Flappy:
+Single-latency Deadly Corridor with bridge initialization:
 
 ```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/openvla/scratch/single/flappy.yaml \
-  workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
+python examples/rl_games/scripts/launch_train.py \
+  model=pi05 \
+  env=deadly_corridor \
+  init=bridge \
+  mode=single
 ```
 
-Bridge-mode Flappy:
+Override config values from the command line:
 
 ```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/openvla/bridge/single/flappy.yaml \
+python examples/rl_games/scripts/launch_train.py \
+  model=openvla \
+  env=flappy \
+  init=scratch \
+  mode=mixed_latency \
   workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
-```
-
-GR00T mixed-latency Flappy:
-
-```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/gr00t/scratch/mixed_latency/flappy.yaml \
-  workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
-```
-
-GR00T single-latency Flappy:
-
-```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/gr00t/scratch/single/flappy.yaml \
-  workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
-```
-
-GR00T mixed-latency Demon Attack:
-
-```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/gr00t/scratch/mixed_latency/demon_attack.yaml \
-  workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
-```
-
-GR00T single-latency Demon Attack:
-
-```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/gr00t/scratch/single/demon_attack.yaml \
-  workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
-```
-
-GR00T mixed-latency Deadly Corridor:
-
-```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/gr00t/scratch/mixed_latency/deadly_corridor.yaml \
-  workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
-```
-
-GR00T single-latency Deadly Corridor:
-
-```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/gr00t/scratch/single/deadly_corridor.yaml \
-  workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
-```
-
-pi-0.5-style mixed-latency Flappy:
-
-```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/pi05/bridge/mixed_latency/flappy.yaml \
-  workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
-```
-
-pi-0.5-style single-latency Demon Attack:
-
-```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/pi05/bridge/single/demon_attack.yaml \
-  workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
-```
-
-pi-0.5-style single-latency Deadly Corridor:
-
-```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/pi05/bridge/single/deadly_corridor.yaml \
-  workspace_dir=WORKSPACE_DIR \
-  wandb.entity=WANDB_ENTITY
-```
-
-Single-GPU direct backend with a custom run name:
-
-```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/openvla/scratch/single/flappy.yaml \
-  run_id=test_qwen3_flappy_gc_none_backend \
-  trainer.distributed_backend=none
-```
-
-Override any YAML value from the command line:
-
-```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/openvla/scratch/mixed_latency/flappy.yaml \
-  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY \
   run_id=smoke_test \
   trainer.max_train_steps=10 \
   trainer.save_interval=5 \
@@ -231,8 +114,11 @@ bash examples/rl_games/scripts/run_experiment.sh \
 Fast end-to-end preprocessing debug:
 
 ```bash
-bash examples/rl_games/scripts/run_experiment.sh \
-  examples/rl_games/experiments/openvla/scratch/mixed_latency/flappy.yaml \
+python examples/rl_games/scripts/launch_train.py \
+  model=openvla \
+  env=flappy \
+  init=scratch \
+  mode=mixed_latency \
   run_id=debug_flappy_mixed_e2e \
   dataset.debug_subset.enabled=true \
   dataset.debug_subset.max_episodes=5 \
@@ -241,6 +127,30 @@ bash examples/rl_games/scripts/run_experiment.sh \
   trainer.distributed_backend=none \
   rl_games.mid_train_eval.enabled=false \
   rl_games.post_train_eval.enabled=false
+```
+
+## Configuration
+
+RL-games training uses one Hydra configuration tree under `examples/rl_games/config`.
+
+The primary config groups are:
+- `model`
+- `env`
+- `init`
+- `mode`
+
+Use `python examples/rl_games/scripts/launch_train.py ...` to compose runs from those groups. Do not add new YAML files under the legacy `experiments` directory; it is intentionally removed from the active training path.
+
+Single-GPU direct backend with a custom run name:
+
+```bash
+python examples/rl_games/scripts/launch_train.py \
+  model=openvla \
+  env=flappy \
+  init=scratch \
+  mode=single \
+  run_id=test_qwen3_flappy_gc_none_backend \
+  trainer.distributed_backend=none
 ```
 
 Debug subsets are written to separate converted dataset folders, for example
