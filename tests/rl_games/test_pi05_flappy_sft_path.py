@@ -175,7 +175,9 @@ def test_rl_games_yaml_eval_max_steps_are_3600() -> None:
     mismatches: list[str] = []
     for path in paths:
         for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-            if "max_steps_per_episode:" in line or "max_episode_steps:" in line:
+            if "max_episode_steps:" in line:
+                mismatches.append(f"{path.relative_to(REPO_ROOT)}:{line_number}:{line.strip()}")
+            if "max_steps_per_episode:" in line:
                 value = line.split(":", 1)[1].strip()
                 if value != "3600":
                     mismatches.append(f"{path.relative_to(REPO_ROOT)}:{line_number}:{line.strip()}")

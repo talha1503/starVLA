@@ -422,12 +422,11 @@ class RlGamesEvalRunner:
             return True
         return bool(getattr(stage_cfg, "enabled", True))
 
-    def interval_steps(self, default: int) -> int:
-        env_eval = self.cfg.rl_games.env_eval
+    def interval_steps(self) -> int:
         stage_cfg = self._stage_cfg("mid_train")
-        if stage_cfg is not None and getattr(stage_cfg, "interval_steps", None) is not None:
-            return int(stage_cfg.interval_steps)
-        return int(getattr(env_eval, "interval_steps", default))
+        if stage_cfg is None or getattr(stage_cfg, "interval_steps", None) is None:
+            raise ValueError("Missing required RL-games config field: rl_games.env_eval.mid_train.interval_steps")
+        return int(stage_cfg.interval_steps)
 
     def _get_latency_values(self, stage: str) -> List[int]:
         env_eval = self.cfg.rl_games.env_eval
@@ -447,18 +446,18 @@ class RlGamesEvalRunner:
         return [int(v) for v in values]
 
     def _num_episodes(self, stage: str) -> int:
-        env_eval = self.cfg.rl_games.env_eval
         stage_cfg = self._stage_cfg(stage)
-        if stage_cfg is not None and getattr(stage_cfg, "num_episodes", None) is not None:
-            return int(stage_cfg.num_episodes)
-        return int(getattr(env_eval, "num_episodes", 5))
+        if stage_cfg is None or getattr(stage_cfg, "num_episodes", None) is None:
+            raise ValueError(f"Missing required RL-games config field: rl_games.env_eval.{stage}.num_episodes")
+        return int(stage_cfg.num_episodes)
 
     def _max_steps_per_episode(self, stage: str) -> int:
-        env_eval = self.cfg.rl_games.env_eval
         stage_cfg = self._stage_cfg(stage)
-        if stage_cfg is not None and getattr(stage_cfg, "max_steps_per_episode", None) is not None:
-            return int(stage_cfg.max_steps_per_episode)
-        return int(getattr(env_eval, "max_episode_steps", 2000))
+        if stage_cfg is None or getattr(stage_cfg, "max_steps_per_episode", None) is None:
+            raise ValueError(
+                f"Missing required RL-games config field: rl_games.env_eval.{stage}.max_steps_per_episode"
+            )
+        return int(stage_cfg.max_steps_per_episode)
 
     def _resolve_prompt(self, latency: int, mapping: Dict[int, Dict[str, Any]]) -> str:
         if latency in mapping:

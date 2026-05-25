@@ -427,7 +427,7 @@ class VLATrainer(TrainerUtils):
                 ):
                     step_metrics = self.eval_action_loss(step_metrics)
                 if self._rl_games_eval_runner is not None:
-                    eval_every = self._rl_games_eval_runner.interval_steps(default=self.config.trainer.eval_interval)
+                    eval_every = self._rl_games_eval_runner.interval_steps()
                     if eval_every > 0 and should_run_step_interval_event(
                         completed_steps=self.completed_steps,
                         interval=eval_every,

@@ -147,6 +147,9 @@ def test_supported_rl_games_config_composes(expected: ExpectedComposition) -> No
     assert cfg.rl_games.action_carrier == expected.action_carrier
     assert tuple(OmegaConf.to_container(latency_values, resolve=True)) == expected.latency_values
     assert tuple(OmegaConf.to_container(post_train_latencies, resolve=True)) == (0, 1, 2, 3, 4)
+    assert OmegaConf.select(cfg, "rl_games.env_eval.interval_steps") is None
+    assert OmegaConf.select(cfg, "rl_games.env_eval.num_episodes") is None
+    assert OmegaConf.select(cfg, "rl_games.env_eval.max_episode_steps") is None
     assert cfg.rl_games.env_eval.image_size == 224
     assert cfg.datasets.vla_data.data_mix == expected.data_mix
     assert cfg.datasets.vla_data.obs_image_size is None
