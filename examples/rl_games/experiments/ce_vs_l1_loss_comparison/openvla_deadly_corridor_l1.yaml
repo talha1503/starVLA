@@ -18,7 +18,7 @@ config_name: train
 model: openvla
 env: deadly_corridor
 mode: single
-run_id: openvla_deadly_corridor_l1_loss
+run_id: ce_vs_l1_openvla_deadly_corridor_l1
 run_root_dir: results/Checkpoints
 seed: 42
 wandb_entity: your_wandb_entity
@@ -37,7 +37,7 @@ dataset:
 datasets:
   vla_data:
     data_root_dir: playground/Datasets/rl_games
-    data_mix: deadly_corridor_train_factorized11
+    data_mix: deadly_corridor_fixed_l2_fs4
     action_type: discrete
     sequential_step_sampling: false
     load_all_data_for_training: true

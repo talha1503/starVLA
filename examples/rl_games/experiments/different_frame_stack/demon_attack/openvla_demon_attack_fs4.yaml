@@ -16,9 +16,9 @@ auth:
 # Hydra entrypoint and config groups under examples/rl_games/config.
 config_name: train
 model: openvla
-env: deadly_corridor
+env: demon_attack
 mode: single
-run_id: frame_stack_openvla_deadly_corridor_fs1
+run_id: frame_stack_openvla_demon_attack_fs4
 run_root_dir: results/Checkpoints
 seed: 42
 wandb_entity: your_wandb_entity
@@ -37,7 +37,7 @@ dataset:
 datasets:
   vla_data:
     data_root_dir: playground/Datasets/rl_games
-    data_mix: deadly_corridor_fixed_l2_fs1
+    data_mix: demon_attack_fixed_l2_fs4
     action_type: discrete
     sequential_step_sampling: false
     load_all_data_for_training: true
@@ -70,7 +70,7 @@ framework:
   qwenvl:
     base_vlm: playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
   action_model:
-    loss_type: factorized_ce
+    loss_type: ce
 
 # Hydra trainer config.
 trainer:
@@ -82,7 +82,7 @@ trainer:
   logging_frequency: 10
   gradient_accumulation_steps: 4
   learning_rate:
-    base: 2.0e-05
+    base: 1.0e-05
     qwen_vl_interface: 1.0e-05
     action_model: 1.0e-04
   lr_scheduler_type: cosine_with_min_lr
@@ -100,13 +100,11 @@ trainer:
 # Hydra RL-games eval config. env_eval controls real environment rollouts,
 # separately from trainer.eval_interval loss evaluation.
 rl_games:
-  task: deadly_corridor
+  task: demon_attack
   model_alias: openvla
   env_eval:
     frameskip: 4
     image_size: 84
-    deadly:
-      action_layout: factorized_11
     enabled: false
     latency:
       mode: single

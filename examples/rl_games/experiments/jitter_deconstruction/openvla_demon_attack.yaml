@@ -18,7 +18,7 @@ config_name: train
 model: openvla
 env: demon_attack
 mode: single
-run_id: openvla_demon_attack
+run_id: jitter_deconstruction_openvla_demon_attack_ce
 run_root_dir: results/Checkpoints
 seed: 42
 wandb_entity: your_wandb_entity

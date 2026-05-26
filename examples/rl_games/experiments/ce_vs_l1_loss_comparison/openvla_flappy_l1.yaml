@@ -18,7 +18,7 @@ config_name: train
 model: openvla
 env: flappy
 mode: single
-run_id: openvla_flappy_l1_loss
+run_id: ce_vs_l1_openvla_flappy_l1
 run_root_dir: results/Checkpoints
 seed: 42
 wandb_entity: your_wandb_entity
@@ -37,7 +37,7 @@ dataset:
 datasets:
   vla_data:
     data_root_dir: playground/Datasets/rl_games
-    data_mix: flappy_train
+    data_mix: flappy_fixed_l2_fs4
     action_type: discrete
     sequential_step_sampling: false
     load_all_data_for_training: true
