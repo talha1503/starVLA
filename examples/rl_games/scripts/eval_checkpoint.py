@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 OmegaConf = None
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _str2bool(value: str) -> bool:
@@ -39,6 +40,38 @@ def _parse_assignment(value: str) -> tuple[str, str]:
     if not key or not raw:
         raise ValueError(f"Expected TASK=VALUE assignment, got {value!r}")
     return key, raw
+
+
+def _resolve_path(value: Any, workspace_dir: Path) -> str:
+    if value in (None, ""):
+        return ""
+    expanded = os.path.expandvars(os.path.expanduser(str(value)))
+    path = Path(expanded)
+    if path.is_absolute():
+        return str(path)
+    return str(workspace_dir / path)
+
+
+def _workspace_dir(cfg, override: str | None = None) -> Path:
+    configured = override or OmegaConf.select(cfg, "workspace_dir", default=None)
+    if configured not in (None, "", "WORKSPACE_DIR"):
+        return Path(_resolve_path(configured, REPO_ROOT)).resolve()
+    env_workspace = os.environ.get("WORKSPACE_DIR")
+    if env_workspace:
+        return Path(_resolve_path(env_workspace, REPO_ROOT)).resolve()
+    default_workspace = Path("/workspace")
+    if default_workspace.exists():
+        return default_workspace.resolve()
+    return REPO_ROOT
+
+
+def _apply_path_overrides(cfg, workspace_dir: Path) -> None:
+    base_model_dir = OmegaConf.select(cfg, "paths.base_model_dir", default=None)
+    if base_model_dir not in (None, ""):
+        OmegaConf.update(cfg, "framework.qwenvl.base_vlm", _resolve_path(base_model_dir, workspace_dir), merge=True)
+    dataset_root = OmegaConf.select(cfg, "paths.dataset_local_dir", default=None)
+    if dataset_root not in (None, ""):
+        OmegaConf.update(cfg, "datasets.vla_data.data_root_dir", _resolve_path(dataset_root, workspace_dir), merge=True)
 
 
 def _has_cross_task_eval(cfg) -> bool:
@@ -157,7 +190,18 @@ def _resolve_checkpoint(run_dir: Path, checkpoint: str | None, step: int | None)
         if not path.is_absolute():
             path = run_dir / checkpoint
         if not path.exists():
-            raise FileNotFoundError(f"Checkpoint not found: {path}")
+            fallback_paths = [
+                checkpoint_dir / Path(checkpoint).name,
+                checkpoint_dir / checkpoint,
+            ]
+            for fallback_path in fallback_paths:
+                if fallback_path.exists():
+                    path = fallback_path
+                    break
+            else:
+                raise FileNotFoundError(
+                    f"Checkpoint not found: {path}. Also checked under {checkpoint_dir}."
+                )
         if path.is_dir():
             for candidate in ("model.safetensors", "pytorch_model.bin"):
                 candidate_path = path / candidate
@@ -241,6 +285,7 @@ def main():
     parser.add_argument("--step", default=None, type=int)
     parser.add_argument("--stage", default="post_train", type=str)
     parser.add_argument("--config", default=None, type=str)
+    parser.add_argument("--workspace-dir", default=None, type=str, help="Workspace for resolving paths.* entries in experiment YAMLs")
     parser.add_argument("--latencies", default=None, type=str, help="Latency list/range for all evaluated tasks, e.g. 0-7 or 0,1,2")
     parser.add_argument("--task-latencies", action="append", default=None, help="Per-task latency list/range, e.g. flappy=0-7")
     parser.add_argument("--num-episodes", default=None, type=int, help="Episodes per latency for all evaluated tasks")
@@ -266,6 +311,8 @@ def main():
 
     cfg = OmegaConf.load(str(config_path))
     cfg = _apply_eval_overrides(cfg, args)
+    workspace_dir = _workspace_dir(cfg, args.workspace_dir)
+    _apply_path_overrides(cfg, workspace_dir)
 
     from starVLA.model.framework.share_tools import apply_config_compat
 
