@@ -87,9 +87,6 @@ def _workspace_dir(cfg: Any) -> Path:
     env_workspace = os.environ.get("WORKSPACE_DIR")
     if env_workspace:
         return Path(_resolve_path(env_workspace, REPO_ROOT)).resolve()
-    default_workspace = Path("/workspace")
-    if default_workspace.exists():
-        return default_workspace.resolve()
     return REPO_ROOT
 
 

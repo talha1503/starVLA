@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from omegaconf import OmegaConf
+
 from examples.rl_games.scripts import launch_train
 
 
@@ -70,6 +72,22 @@ def test_launcher_forwards_canonical_per_device_batch_size_override(tmp_path: Pa
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
     assert "datasets.vla_data.per_device_batch_size=16" in cmd
+
+
+def test_launcher_defaults_workspace_to_repo_root_when_env_is_unset(monkeypatch) -> None:
+    original_exists = Path.exists
+
+    def fake_exists(path: Path) -> bool:
+        if str(path) == "/workspace":
+            return True
+        return original_exists(path)
+
+    monkeypatch.delenv("WORKSPACE_DIR", raising=False)
+    monkeypatch.setattr(Path, "exists", fake_exists)
+
+    cfg = OmegaConf.create({"workspace_dir": "WORKSPACE_DIR"})
+
+    assert launch_train._workspace_dir(cfg) == launch_train.REPO_ROOT
 
 
 def test_vla_trainer_saves_lightweight_model_checkpoint() -> None:
