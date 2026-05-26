@@ -20,4 +20,5 @@ bash examples/rl_games/scripts/run_experiment.sh \
     trainer.eval_interval=500 \
     trainer.logging_frequency=1 \
     trainer.gradient_accumulation_steps=16 \
-    trainer.batch_size=16
+    trainer.batch_size=16 \
+    rl_games.mid_train_eval.interval_steps=500

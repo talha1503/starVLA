@@ -162,11 +162,23 @@ def _append_eval_stage_overrides(cmd: list[str], cfg: dict[str, Any], stage_name
         ("max_steps_per_episode", "max_steps_per_episode"),
     ]
     for config_key, hydra_key in mappings:
-        value = _get(cfg, f"{prefix}.{config_key}")
+        value = _first_config_value(
+            cfg,
+            [
+                f"{prefix}.{config_key}",
+                f"rl_games.env_eval.{hydra_name}.{config_key}",
+            ],
+        )
         if value not in (None, ""):
             cmd.append(f"{hydra_prefix}.{hydra_key}={_hydra_value(value)}")
 
-    latencies = _get(cfg, f"{prefix}.latencies")
+    latencies = _first_config_value(
+        cfg,
+        [
+            f"{prefix}.latencies",
+            f"rl_games.env_eval.{hydra_name}.latencies",
+        ],
+    )
     if latencies not in (None, ""):
         cmd.append(f"{hydra_prefix}.latencies={_latencies_expr(latencies)}")
 
