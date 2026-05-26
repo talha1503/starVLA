@@ -209,3 +209,26 @@ def test_openvla_uses_discrete_ce_loss(init: str) -> None:
     )
 
     assert cfg.framework.action_model.loss_type == "discrete_ce"
+
+
+def test_deadly_corridor_single_mode_does_not_require_manifest_latency_filter() -> None:
+    cfg = _compose_cfg(
+        ExpectedComposition(
+            model="pi05",
+            env="deadly_corridor",
+            init="bridge",
+            mode="single",
+            model_alias="pi-0.5",
+            framework_name="QwenPI_v3",
+            task="deadly_corridor",
+            action_carrier="bridge",
+            latency_values=(0,),
+            data_mix="deadly_corridor_train",
+            source_hf="",
+            action_env_dim=7,
+            base_model_repo_id="Qwen/Qwen3-VL-4B-Instruct",
+            initialization_hf_repo_id="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1",
+        )
+    )
+
+    assert cfg.dataset.latency_filter is None
