@@ -4,18 +4,129 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+from typing import Any
 
-import torch
-import wandb
-from omegaconf import OmegaConf
-
-from starVLA.model.framework.base_framework import build_framework
-from starVLA.model.framework.share_tools import apply_config_compat
-from starVLA.training.rl_games import RlGamesEvalRunner, apply_action_spec, apply_model_alias
+OmegaConf = None
 
 
 def _str2bool(value: str) -> bool:
     return str(value).lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _parse_int_list(value: str) -> list[int]:
+    text = str(value).strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    if not text:
+        return []
+    if "," not in text and ":" in text:
+        start, end = [int(part.strip()) for part in text.split(":", 1)]
+        step = 1 if end >= start else -1
+        return list(range(start, end + step, step))
+    if "," not in text and "-" in text and not text.startswith("-"):
+        start, end = [int(part.strip()) for part in text.split("-", 1)]
+        step = 1 if end >= start else -1
+        return list(range(start, end + step, step))
+    return [int(part.strip()) for part in text.split(",") if part.strip()]
+
+
+def _parse_assignment(value: str) -> tuple[str, str]:
+    if "=" not in value:
+        raise ValueError(f"Expected TASK=VALUE assignment, got {value!r}")
+    key, raw = value.split("=", 1)
+    key = key.strip()
+    raw = raw.strip()
+    if not key or not raw:
+        raise ValueError(f"Expected TASK=VALUE assignment, got {value!r}")
+    return key, raw
+
+
+def _has_cross_task_eval(cfg) -> bool:
+    return OmegaConf.select(cfg, "rl_games.task", default=None) == "cross_task" and OmegaConf.select(
+        cfg, "rl_games.cross_task.eval_tasks", default=None
+    ) is not None
+
+
+def _cross_task_names(cfg) -> list[str]:
+    eval_tasks = OmegaConf.select(cfg, "rl_games.cross_task.eval_tasks", default=None)
+    if eval_tasks is None:
+        return []
+    if OmegaConf.is_dict(eval_tasks) or isinstance(eval_tasks, dict):
+        return [str(key) for key in eval_tasks.keys()]
+    return [str(task) for task in eval_tasks]
+
+
+def _set_stage_value(cfg, stage: str, key: str, value: Any) -> None:
+    OmegaConf.update(cfg, f"rl_games.env_eval.{stage}.{key}", value, merge=True)
+
+
+def _set_task_stage_value(cfg, task: str, stage: str, key: str, value: Any) -> None:
+    OmegaConf.update(cfg, f"rl_games.cross_task.eval_tasks.{task}.{stage}.{key}", value, merge=True)
+
+
+def _apply_eval_overrides(cfg, args):
+    if args.override:
+        cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(args.override))
+
+    stage = args.stage
+    if args.latencies:
+        latencies = _parse_int_list(args.latencies)
+        if _has_cross_task_eval(cfg):
+            for task in _cross_task_names(cfg):
+                _set_task_stage_value(cfg, task, stage, "latencies", latencies)
+        else:
+            _set_stage_value(cfg, stage, "latencies", latencies)
+
+    if args.num_episodes is not None:
+        if _has_cross_task_eval(cfg):
+            for task in _cross_task_names(cfg):
+                _set_task_stage_value(cfg, task, stage, "num_episodes", int(args.num_episodes))
+        else:
+            _set_stage_value(cfg, stage, "num_episodes", int(args.num_episodes))
+
+    if args.max_steps_per_episode is not None:
+        if _has_cross_task_eval(cfg):
+            for task in _cross_task_names(cfg):
+                _set_task_stage_value(cfg, task, stage, "max_steps_per_episode", int(args.max_steps_per_episode))
+        else:
+            _set_stage_value(cfg, stage, "max_steps_per_episode", int(args.max_steps_per_episode))
+
+    for assignment in args.task_latencies or []:
+        task, raw = _parse_assignment(assignment)
+        _set_task_stage_value(cfg, task, stage, "latencies", _parse_int_list(raw))
+
+    for assignment in args.task_num_episodes or []:
+        task, raw = _parse_assignment(assignment)
+        _set_task_stage_value(cfg, task, stage, "num_episodes", int(raw))
+
+    for assignment in args.task_max_steps_per_episode or []:
+        task, raw = _parse_assignment(assignment)
+        _set_task_stage_value(cfg, task, stage, "max_steps_per_episode", int(raw))
+
+    return cfg
+
+
+def _print_eval_plan(cfg, stage: str) -> None:
+    if _has_cross_task_eval(cfg):
+        print(f"Eval stage: {stage}")
+        for task in _cross_task_names(cfg):
+            base = f"rl_games.cross_task.eval_tasks.{task}.{stage}"
+            latencies = OmegaConf.select(cfg, f"{base}.latencies", default=None)
+            episodes = OmegaConf.select(cfg, f"{base}.num_episodes", default=None)
+            max_steps = OmegaConf.select(cfg, f"{base}.max_steps_per_episode", default=None)
+            frameskip = OmegaConf.select(cfg, f"rl_games.cross_task.eval_tasks.{task}.frameskip", default=None)
+            print(
+                f"  {task}: latencies={list(latencies) if latencies is not None else None}, "
+                f"num_episodes={episodes}, max_steps_per_episode={max_steps}, frameskip={frameskip}"
+            )
+        return
+    base = f"rl_games.env_eval.{stage}"
+    print(
+        f"Eval stage: {stage}; "
+        f"latencies={OmegaConf.select(cfg, f'{base}.latencies', default=None)}, "
+        f"num_episodes={OmegaConf.select(cfg, f'{base}.num_episodes', default=None)}, "
+        f"max_steps_per_episode={OmegaConf.select(cfg, f'{base}.max_steps_per_episode', default=None)}"
+    )
 
 
 def _flatten_eval_for_wandb(result, stage: str) -> dict:
@@ -47,18 +158,37 @@ def _resolve_checkpoint(run_dir: Path, checkpoint: str | None, step: int | None)
             path = run_dir / checkpoint
         if not path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {path}")
-        return path, _step_from_name(path.name)
+        if path.is_dir():
+            for candidate in ("model.safetensors", "pytorch_model.bin"):
+                candidate_path = path / candidate
+                if candidate_path.exists():
+                    return candidate_path, _step_from_name(path.name)
+            raise FileNotFoundError(f"No model.safetensors or pytorch_model.bin found in checkpoint state dir: {path}")
+        return path, _step_from_path(path)
 
     if step is not None:
         pt = checkpoint_dir / f"steps_{step}_pytorch_model.pt"
         st = checkpoint_dir / f"steps_{step}_model.safetensors"
+        state = checkpoint_dir / f"steps_{step}_state"
         if pt.exists():
             return pt, step
         if st.exists():
             return st, step
+        if state.exists():
+            for candidate in ("model.safetensors", "pytorch_model.bin"):
+                candidate_path = state / candidate
+                if candidate_path.exists():
+                    return candidate_path, step
         raise FileNotFoundError(f"No checkpoint found for step={step} in {checkpoint_dir}")
 
     candidates = []
+    for state_dir in checkpoint_dir.glob("steps_*_state"):
+        s = _step_from_name(state_dir.name)
+        for candidate in ("model.safetensors", "pytorch_model.bin"):
+            candidate_path = state_dir / candidate
+            if candidate_path.exists():
+                candidates.append((s, candidate_path))
+                break
     for file_path in checkpoint_dir.glob("steps_*_pytorch_model.pt"):
         s = _step_from_name(file_path.name)
         candidates.append((s, file_path))
@@ -78,7 +208,17 @@ def _step_from_name(name: str) -> int:
         return 0
 
 
+def _step_from_path(path: Path) -> int:
+    step = _step_from_name(path.name)
+    if step:
+        return step
+    return _step_from_name(path.parent.name)
+
+
 def _load_model(cfg, checkpoint_path: Path):
+    import torch
+    from starVLA.model.framework.base_framework import build_framework
+
     model = build_framework(cfg)
     if checkpoint_path.suffix == ".safetensors":
         from safetensors.torch import load_file
@@ -94,17 +234,30 @@ def _load_model(cfg, checkpoint_path: Path):
 
 
 def main():
+    global OmegaConf
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", required=True, type=str)
     parser.add_argument("--checkpoint", default=None, type=str)
     parser.add_argument("--step", default=None, type=int)
     parser.add_argument("--stage", default="post_train", type=str)
     parser.add_argument("--config", default=None, type=str)
+    parser.add_argument("--latencies", default=None, type=str, help="Latency list/range for all evaluated tasks, e.g. 0-7 or 0,1,2")
+    parser.add_argument("--task-latencies", action="append", default=None, help="Per-task latency list/range, e.g. flappy=0-7")
+    parser.add_argument("--num-episodes", default=None, type=int, help="Episodes per latency for all evaluated tasks")
+    parser.add_argument("--max-steps-per-episode", default=None, type=int, help="Max env steps per episode for all evaluated tasks")
+    parser.add_argument("--task-num-episodes", action="append", default=None, help="Per-task episodes, e.g. flappy=20")
+    parser.add_argument("--task-max-steps-per-episode", action="append", default=None, help="Per-task max steps, e.g. demon_attack=3600")
+    parser.add_argument("--override", action="append", default=None, help="OmegaConf dotlist override, e.g. rl_games.env_eval.post_train.latencies=[0,1]")
+    parser.add_argument("--print-plan-only", action="store_true", help="Print the resolved eval plan and exit without loading a checkpoint")
     parser.add_argument("--wandb-enabled", default="true", type=str)
     parser.add_argument("--wandb-project", default=None, type=str)
     parser.add_argument("--wandb-entity", default=None, type=str)
     parser.add_argument("--wandb-run-name", default=None, type=str)
     args = parser.parse_args()
+
+    from omegaconf import OmegaConf as _OmegaConf
+
+    OmegaConf = _OmegaConf
 
     run_dir = Path(args.run_dir).resolve()
     config_path = Path(args.config).resolve() if args.config else run_dir / "config.full.yaml"
@@ -112,7 +265,17 @@ def main():
         raise FileNotFoundError(f"Config not found: {config_path}")
 
     cfg = OmegaConf.load(str(config_path))
+    cfg = _apply_eval_overrides(cfg, args)
+
+    from starVLA.model.framework.share_tools import apply_config_compat
+
     cfg = apply_config_compat(cfg)
+    _print_eval_plan(cfg, args.stage)
+    if args.print_plan_only:
+        return
+
+    from starVLA.training.rl_games import RlGamesEvalRunner, apply_action_spec, apply_model_alias
+
     apply_model_alias(cfg)
     apply_action_spec(cfg)
     cfg.output_dir = str(run_dir)
@@ -126,6 +289,8 @@ def main():
     print(result.aggregate)
 
     if _str2bool(args.wandb_enabled):
+        import wandb
+
         project = args.wandb_project or str(getattr(cfg, "wandb_project", "starVLA_rl_games"))
         entity = args.wandb_entity if args.wandb_entity is not None else getattr(cfg, "wandb_entity", None)
         run_name = args.wandb_run_name or f"{run_dir.name}__{args.stage}__step_{step}"
