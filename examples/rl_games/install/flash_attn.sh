@@ -28,7 +28,7 @@ import sys
 
 import torch
 
-python_tag = sys.implementation.cache_tag
+python_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
 torch_version = torch.__version__.split("+", 1)[0]
 torch_parts = torch_version.split(".")
 torch_mm = ".".join(torch_parts[:2])
