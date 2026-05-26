@@ -183,3 +183,29 @@ def test_openvla_bridge_accepts_base_vlm_override() -> None:
     OmegaConf.update(cfg, "framework.qwenvl.base_vlm", "/tmp/Qwen3-VL-4B-Instruct", merge=False)
 
     assert cfg.framework.qwenvl.base_vlm == "/tmp/Qwen3-VL-4B-Instruct"
+
+
+@pytest.mark.parametrize("init", ("scratch", "bridge"))
+def test_openvla_uses_discrete_ce_loss(init: str) -> None:
+    cfg = _compose_cfg(
+        ExpectedComposition(
+            model="openvla",
+            env="flappy",
+            init=init,
+            mode="single",
+            model_alias="openvla",
+            framework_name="QwenOFT",
+            task="flappy",
+            action_carrier="native" if init == "scratch" else "bridge",
+            latency_values=(0,),
+            data_mix="flappy_train",
+            source_hf="",
+            action_env_dim=2,
+            base_model_repo_id=(
+                "StarVLA/Qwen3-VL-4B-Instruct-Action" if init == "scratch" else "Qwen/Qwen3-VL-4B-Instruct"
+            ),
+            initialization_hf_repo_id=None if init == "scratch" else "StarVLA/Qwen3VL-OFT-Bridge-RT-1",
+        )
+    )
+
+    assert cfg.framework.action_model.loss_type == "discrete_ce"

@@ -27,6 +27,7 @@ framework:
   action_model:
     action_dim: 2
     action_env_dim: 2
+    loss_type: discrete_ce
 
 trainer:
   learning_rate:
