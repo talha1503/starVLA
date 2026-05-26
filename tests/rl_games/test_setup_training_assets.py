@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import inspect
 
+from omegaconf import OmegaConf
 import pytest
 
 
@@ -224,3 +225,15 @@ def test_run_experiment_empty_string_leaf_still_does_not_override_hydra_default(
     run_experiment._append_hydra_leaf_overrides(cmd, cfg)
 
     assert not any(item.startswith("datasets.vla_data.obs_image_size=") for item in cmd)
+
+
+def test_openvla_rl_games_experiments_match_training_resize():
+    experiments_dir = Path(__file__).resolve().parents[2] / "examples/rl_games/experiments"
+
+    for experiment_path in sorted(experiments_dir.glob("openvla_*.yaml")):
+        cfg = OmegaConf.load(experiment_path)
+        obs_image_size = cfg.datasets.vla_data.obs_image_size
+        if experiment_path.stem.endswith("_no_resize"):
+            assert obs_image_size is None
+        else:
+            assert list(obs_image_size) == [224, 224], experiment_path.name

@@ -17,6 +17,7 @@ def test_vla_checkpoint_fields_are_tracked_by_explicit_access():
                 "datasets": {
                     "vla_data": {
                         "include_state": False,
+                        "obs_image_size": [224, 224],
                     },
                 },
             }
@@ -31,3 +32,4 @@ def test_vla_checkpoint_fields_are_tracked_by_explicit_access():
     assert exported["framework"]["action_model"]["action_dim"] == 6
     assert exported["framework"]["action_model"]["state_dim"] == 1
     assert exported["datasets"]["vla_data"]["include_state"] is False
+    assert exported["datasets"]["vla_data"]["obs_image_size"] == [224, 224]

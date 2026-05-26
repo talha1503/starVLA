@@ -63,7 +63,7 @@ datasets:
     sequential_step_sampling: false
     per_device_batch_size: 4
     load_all_data_for_training: true
-    obs_image_size: [84, 84]
+    obs_image_size: [224, 224]
     video_backend: torchvision_av
 
 # Trainer loop, optimization, checkpoint-save, and dataloader-eval settings.
