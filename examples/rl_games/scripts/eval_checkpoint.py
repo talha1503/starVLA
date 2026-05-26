@@ -65,10 +65,27 @@ def _workspace_dir(cfg, override: str | None = None) -> Path:
     return REPO_ROOT
 
 
-def _apply_path_overrides(cfg, workspace_dir: Path) -> None:
+def _apply_path_overrides(cfg, workspace_dir: Path, *, base_model_dir_override: str | None = None, base_model_repo_override: str | None = None) -> None:
     base_model_dir = OmegaConf.select(cfg, "paths.base_model_dir", default=None)
-    if base_model_dir not in (None, ""):
-        OmegaConf.update(cfg, "framework.qwenvl.base_vlm", _resolve_path(base_model_dir, workspace_dir), merge=True)
+    if base_model_dir_override not in (None, ""):
+        base_model_path = _resolve_path(base_model_dir_override, workspace_dir)
+        OmegaConf.update(cfg, "framework.qwenvl.base_vlm", base_model_path, merge=True)
+    elif base_model_dir not in (None, ""):
+        base_model_path = _resolve_path(base_model_dir, workspace_dir)
+        if Path(base_model_path).exists():
+            OmegaConf.update(cfg, "framework.qwenvl.base_vlm", base_model_path, merge=True)
+        else:
+            base_model_repo = base_model_repo_override or OmegaConf.select(cfg, "base_model.repo_id", default=None)
+            if base_model_repo not in (None, ""):
+                print(
+                    f"Base model path does not exist: {base_model_path}; "
+                    f"falling back to HF repo {base_model_repo}"
+                )
+                OmegaConf.update(cfg, "framework.qwenvl.base_vlm", str(base_model_repo), merge=True)
+            else:
+                OmegaConf.update(cfg, "framework.qwenvl.base_vlm", base_model_path, merge=True)
+    elif base_model_repo_override not in (None, ""):
+        OmegaConf.update(cfg, "framework.qwenvl.base_vlm", str(base_model_repo_override), merge=True)
     dataset_root = OmegaConf.select(cfg, "paths.dataset_local_dir", default=None)
     if dataset_root not in (None, ""):
         OmegaConf.update(cfg, "datasets.vla_data.data_root_dir", _resolve_path(dataset_root, workspace_dir), merge=True)
@@ -286,6 +303,8 @@ def main():
     parser.add_argument("--stage", default="post_train", type=str)
     parser.add_argument("--config", default=None, type=str)
     parser.add_argument("--workspace-dir", default=None, type=str, help="Workspace for resolving paths.* entries in experiment YAMLs")
+    parser.add_argument("--base-model-dir", default=None, type=str, help="Explicit local base VLM directory")
+    parser.add_argument("--base-model-repo-id", default=None, type=str, help="Explicit HF base VLM repo id fallback")
     parser.add_argument("--latencies", default=None, type=str, help="Latency list/range for all evaluated tasks, e.g. 0-7 or 0,1,2")
     parser.add_argument("--task-latencies", action="append", default=None, help="Per-task latency list/range, e.g. flappy=0-7")
     parser.add_argument("--num-episodes", default=None, type=int, help="Episodes per latency for all evaluated tasks")
@@ -312,7 +331,12 @@ def main():
     cfg = OmegaConf.load(str(config_path))
     cfg = _apply_eval_overrides(cfg, args)
     workspace_dir = _workspace_dir(cfg, args.workspace_dir)
-    _apply_path_overrides(cfg, workspace_dir)
+    _apply_path_overrides(
+        cfg,
+        workspace_dir,
+        base_model_dir_override=args.base_model_dir,
+        base_model_repo_override=args.base_model_repo_id,
+    )
 
     from starVLA.model.framework.share_tools import apply_config_compat
 

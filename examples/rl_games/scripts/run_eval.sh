@@ -14,6 +14,8 @@ Options:
   --stage <name>           Output stage folder name (default: post_train)
   --config <path>          Explicit config path (default: <run-dir>/config.full.yaml)
   --workspace-dir <dir>    Workspace for resolving paths.* in experiment YAMLs
+  --base-model-dir <dir>   Explicit local base VLM directory
+  --base-model-repo-id <repo> Explicit HF base VLM repo id fallback
   --latencies <range>      Latencies for all evaluated tasks, e.g. 0-7 or 0,1,2
   --task-latencies <task=range>  Per-task latencies, repeatable, e.g. flappy=0-7
   --num-episodes <int>     Episodes per latency for all evaluated tasks
@@ -37,6 +39,8 @@ STEP=""
 STAGE="post_train"
 CONFIG=""
 WORKSPACE_DIR_ARG=""
+BASE_MODEL_DIR=""
+BASE_MODEL_REPO_ID=""
 LATENCIES=""
 NUM_EPISODES=""
 MAX_STEPS_PER_EPISODE=""
@@ -59,6 +63,8 @@ while [[ $# -gt 0 ]]; do
     --stage) STAGE="$2"; shift 2 ;;
     --config) CONFIG="$2"; shift 2 ;;
     --workspace-dir) WORKSPACE_DIR_ARG="$2"; shift 2 ;;
+    --base-model-dir) BASE_MODEL_DIR="$2"; shift 2 ;;
+    --base-model-repo-id) BASE_MODEL_REPO_ID="$2"; shift 2 ;;
     --latencies) LATENCIES="$2"; shift 2 ;;
     --task-latencies) TASK_LATENCIES+=("$2"); shift 2 ;;
     --num-episodes) NUM_EPISODES="$2"; shift 2 ;;
@@ -106,6 +112,12 @@ if [[ -n "$CONFIG" ]]; then
 fi
 if [[ -n "$WORKSPACE_DIR_ARG" ]]; then
   CMD+=(--workspace-dir "$WORKSPACE_DIR_ARG")
+fi
+if [[ -n "$BASE_MODEL_DIR" ]]; then
+  CMD+=(--base-model-dir "$BASE_MODEL_DIR")
+fi
+if [[ -n "$BASE_MODEL_REPO_ID" ]]; then
+  CMD+=(--base-model-repo-id "$BASE_MODEL_REPO_ID")
 fi
 if [[ -n "$LATENCIES" ]]; then
   CMD+=(--latencies "$LATENCIES")
