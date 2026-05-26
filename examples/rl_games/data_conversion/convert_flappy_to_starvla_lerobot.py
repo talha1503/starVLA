@@ -111,7 +111,17 @@ def _select_episode_ids(
     *,
     max_episodes: int | None,
     require_latency_prompt_map: bool,
+    episodes_per_latency: int | None = None,
 ) -> list[int]:
+    if episodes_per_latency is not None:
+        if not episode_latencies:
+            raise ValueError("episodes_per_latency was requested, but no episode latency metadata is available")
+        selected: list[int] = []
+        for latency in sorted(set(episode_latencies.values())):
+            latency_episode_ids = [episode_id for episode_id in episode_ids if episode_latencies.get(episode_id) == latency]
+            selected.extend(latency_episode_ids[: int(episodes_per_latency)])
+        return selected
+
     if max_episodes is None:
         return episode_ids
     if not require_latency_prompt_map:
@@ -136,6 +146,59 @@ def _select_episode_ids(
             selected.append(episode_id)
             selected_set.add(episode_id)
     return selected
+
+
+def _normalize_prompt_map(prompt_map: dict[str, Any] | dict[int, Any] | None) -> dict[int, dict[str, Any]]:
+    if not prompt_map:
+        return {}
+    normalized: dict[int, dict[str, Any]] = {}
+    for key, value in prompt_map.items():
+        if not isinstance(value, dict):
+            continue
+        latency = int(value.get("latency", key))
+        normalized[latency] = {
+            "latency": latency,
+            "latency_ms": value.get("latency_ms"),
+            "prompt": str(value["prompt"]),
+        }
+    return normalized
+
+
+def _row_latency(row: dict[str, Any], *, default_latency: int | None = None) -> int | None:
+    if "latency" in row and row.get("latency") is not None:
+        return int(row["latency"])
+    return default_latency
+
+
+def _filter_latency(ds, latency_filter: list[int] | None, *, default_latency: int | None):
+    if not latency_filter:
+        return ds
+    allowed = {int(value) for value in latency_filter}
+    if "latency" not in ds.column_names:
+        if default_latency is not None and int(default_latency) in allowed:
+            return ds
+        raise ValueError("latency_filter was requested, but the dataset has no `latency` column")
+    return ds.filter(lambda row: row.get("latency") is not None and int(row["latency"]) in allowed)
+
+
+def _load_index_split(dataset_name: str, split: str, cache_dir: str | None, *, want_latency: bool):
+    base_columns = ["episode_idx", "t", "action_id", "done", "reward", "prompt"]
+    if want_latency:
+        for columns in ([*base_columns, "latency", "latency_ms"], [*base_columns, "latency"]):
+            try:
+                return _load_split(dataset_name, split, cache_dir=cache_dir, columns=columns)
+            except Exception:
+                pass
+        return _load_split(dataset_name, split, cache_dir=cache_dir, columns=base_columns)
+    return _load_split(dataset_name, split, cache_dir=cache_dir, columns=base_columns)
+
+
+def _canonical_prompt(row: dict[str, Any], *, prompt_map: dict[int, dict[str, Any]], default_latency: int | None) -> tuple[str, int | None, Any]:
+    latency = _row_latency(row, default_latency=default_latency)
+    if latency is not None and latency in prompt_map:
+        entry = prompt_map[latency]
+        return str(entry["prompt"]), latency, entry.get("latency_ms")
+    return str(row["prompt"]), latency, row.get("latency_ms")
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -268,6 +331,10 @@ def convert_dataset(
     max_episodes: int | None = None,
     force: bool = False,
     require_latency_prompt_map: bool = False,
+    latency_filter: list[int] | None = None,
+    episodes_per_latency: int | None = None,
+    prompt_map_override: dict[str, Any] | dict[int, Any] | None = None,
+    default_latency: int | None = None,
     action_carrier: str = "native",
 ) -> dict[str, Any]:
     action_carrier = _normalize_action_carrier(action_carrier)
@@ -275,6 +342,7 @@ def convert_dataset(
     action_labels = _action_labels(action_carrier)
     state_dim = _state_dim(action_carrier)
     state_labels = _state_labels(action_carrier)
+    prompt_map_override = _normalize_prompt_map(prompt_map_override)
     val_output_dir = output_dir.with_name(f"{output_dir.name}__val")
     if output_dir.exists() and force:
         shutil.rmtree(output_dir)
@@ -283,20 +351,14 @@ def convert_dataset(
 
     def _convert_split(split: str, split_output_dir: Path) -> dict[str, Any]:
         split_output_dir.mkdir(parents=True, exist_ok=True)
-        ds_meta = _load_split(
+        want_latency = bool(require_latency_prompt_map or latency_filter or prompt_map_override or episodes_per_latency is not None)
+        ds_meta = _load_index_split(
             dataset_name,
             split,
             cache_dir=cache_dir,
-            columns=[
-                "episode_idx",
-                "t",
-                "action_id",
-                "done",
-                "reward",
-                "prompt",
-                *(["latency"] if require_latency_prompt_map else []),
-            ],
+            want_latency=want_latency,
         )
+        ds_meta = _filter_latency(ds_meta, latency_filter, default_latency=default_latency)
         if len(ds_meta) == 0:
             raise ValueError(f"{dataset_name} has no {split} rows")
 
@@ -309,12 +371,11 @@ def convert_dataset(
         for row_idx, row in enumerate(tqdm(ds_meta, desc=f"Indexing Flappy {split} rows")):
             episode_idx = int(row["episode_idx"])
             episode_indices.setdefault(episode_idx, []).append((int(row["t"]), row_idx))
-            if require_latency_prompt_map and "latency" in row and row["latency"] is not None:
-                episode_latencies.setdefault(episode_idx, int(row["latency"]))
-            prompt = str(row["prompt"])
-            if prompt not in prompt_to_task_index:
-                prompt_to_task_index[prompt] = len(task_prompts)
-                task_prompts.append(prompt)
+            latency = _row_latency(row, default_latency=default_latency)
+            if latency is not None:
+                existing = episode_latencies.setdefault(episode_idx, int(latency))
+                if existing != int(latency):
+                    raise ValueError(f"episode_idx={episode_idx} has inconsistent latencies: {existing} and {latency}")
 
         original_episode_ids = sorted(episode_indices)
         original_episode_ids = _select_episode_ids(
@@ -322,11 +383,12 @@ def convert_dataset(
             episode_latencies,
             max_episodes=max_episodes,
             require_latency_prompt_map=require_latency_prompt_map,
+            episodes_per_latency=episodes_per_latency,
         )
         for episode_id in original_episode_ids:
             episode_indices[episode_id].sort(key=lambda item: item[0])
 
-        ds_full = _load_split(dataset_name, split, cache_dir=cache_dir)
+        ds_full = _filter_latency(_load_split(dataset_name, split, cache_dir=cache_dir), latency_filter, default_latency=default_latency)
         episode_lengths: list[int] = []
 
         for new_episode_idx, original_episode_idx in enumerate(tqdm(original_episode_ids, desc=f"Writing Flappy {split} LeRobot episodes")):
@@ -334,11 +396,18 @@ def convert_dataset(
             episode = ds_full.select(row_indices)
             out_rows = []
             for frame_idx, row in enumerate(episode):
-                prompt = str(row["prompt"])
-                if "latency" in ds_full.column_names and row.get("latency") is not None:
+                prompt, latency, latency_ms = _canonical_prompt(
+                    row,
+                    prompt_map=prompt_map_override,
+                    default_latency=default_latency,
+                )
+                if prompt not in prompt_to_task_index:
+                    prompt_to_task_index[prompt] = len(task_prompts)
+                    task_prompts.append(prompt)
+                if latency is not None:
                     latency_rows.append({
-                        "latency": row["latency"],
-                        "latency_ms": row.get("latency_ms"),
+                        "latency": latency,
+                        "latency_ms": latency_ms,
                         "prompt": prompt,
                     })
                 out_rows.append({
@@ -396,6 +465,11 @@ def convert_dataset(
             "active_action_dim": ACTION_DIM,
             "action_carrier": action_carrier,
             "bridge_action_dim": BRIDGE_ACTION_DIM if action_carrier == "bridge" else None,
+            "latency_filter": [int(value) for value in latency_filter] if latency_filter else None,
+            "episodes_per_latency": int(episodes_per_latency) if episodes_per_latency is not None else None,
+            "max_episodes": int(max_episodes) if max_episodes is not None else None,
+            "prompt_override": bool(prompt_map_override),
+            "default_latency": default_latency,
             "state_dim": state_dim,
             "active_state_dim": STATE_DIM,
             "state_carrier": action_carrier,
@@ -421,9 +495,14 @@ def main() -> int:
     parser.add_argument("--output-dir", "--output_dir", required=True)
     parser.add_argument("--cache-dir", "--cache_dir", default=None)
     parser.add_argument("--max-episodes", "--max_episodes", type=int, default=None)
+    parser.add_argument("--latency-filter", "--latency_filter", default=None)
+    parser.add_argument("--episodes-per-latency", "--episodes_per_latency", type=int, default=None)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--action-carrier", "--action_carrier", choices=["native", "bridge"], default="native")
     args = parser.parse_args()
+    latency_filter = None
+    if args.latency_filter:
+        latency_filter = [int(item.strip()) for item in str(args.latency_filter).split(",") if item.strip()]
 
     manifest = convert_dataset(
         args.dataset_name,
@@ -432,6 +511,8 @@ def main() -> int:
         max_episodes=args.max_episodes,
         force=args.force,
         require_latency_prompt_map=False,
+        latency_filter=latency_filter,
+        episodes_per_latency=args.episodes_per_latency,
         action_carrier=args.action_carrier,
     )
     print(json.dumps(manifest, indent=2))

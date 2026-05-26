@@ -31,6 +31,25 @@ def _safe_path_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_") or "checkpoint"
 
 
+def _safe_token(value: Any) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", str(value)).strip("_") or "value"
+
+
+def _latency_suffix(latencies: list[int] | None) -> str:
+    if not latencies:
+        return "all"
+    return "lat" + "_".join(str(int(value)) for value in latencies)
+
+
+def _derived_dataset_name(base_name: str, *, latency_filter: list[int] | None, episodes_per_latency: int | None, max_episodes: int | None) -> str:
+    pieces = [str(base_name), _latency_suffix(latency_filter)]
+    if episodes_per_latency is not None:
+        pieces.append(f"{int(episodes_per_latency)}ep_per_lat")
+    elif max_episodes is not None:
+        pieces.append(f"{int(max_episodes)}ep")
+    return "__".join(_safe_token(piece) for piece in pieces)
+
+
 def _has_files(path: Path) -> bool:
     if not path.exists():
         return False
@@ -47,6 +66,32 @@ def _dataset_ready(dataset_dir: Path) -> bool:
         dataset_dir / "meta/tasks.jsonl",
     ]
     return all(path.exists() for path in required) and any(dataset_dir.glob("data/*/*.parquet"))
+
+
+def _load_source_latency_prompt_map(dataset_name: str, *, cache_dir: str | None = None) -> dict[str, dict[str, Any]]:
+    from datasets import load_dataset
+    from examples.rl_games.data_conversion.verify_flappy_dataset import build_latency_prompt_map
+
+    try:
+        ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=["prompt", "latency", "latency_ms", "split"])
+    except Exception:
+        try:
+            ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=["prompt", "latency", "latency_ms"])
+        except Exception:
+            ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir)
+            missing = [column for column in ("prompt", "latency") if column not in ds.column_names]
+            if missing:
+                raise ValueError(f"prompt source dataset {dataset_name} is missing columns required for a latency prompt map: {missing}")
+    return build_latency_prompt_map(ds)
+
+
+def _write_prompt_map(path: Path, prompt_map: dict[str, dict[str, Any]], *, latency_filter: list[int] | None = None) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if latency_filter:
+        allowed = {int(value) for value in latency_filter}
+        prompt_map = {str(k): v for k, v in prompt_map.items() if int(k) in allowed}
+    path.write_text(json.dumps(prompt_map, indent=2), encoding="utf-8")
+    return path
 
 
 def _find_latest_local_checkpoint(checkpoint_dir: Path) -> tuple[Path | None, int, str | None]:
@@ -193,26 +238,35 @@ def _validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, A
     )
 
     mixture = get_dataset_named_mixture(data_mix)
-    dataset_name, _, robot_type = mixture[0]
-    data_config = ROBOT_TYPE_CONFIG_MAP[robot_type]
-    dataset = make_LeRobotSingleDataset(
-        data_root_dir=data_root_dir,
-        data_name=dataset_name,
-        robot_type=robot_type,
-        data_cfg={
-            "include_state": False,
-            "video_backend": "torchvision_av",
-            "lerobot_version": "v2.0",
-        },
-    )
-    stats_path = data_root_dir / dataset_name / "dataset_statistics.json"
-    dataset._save_dataset_statistics_(stats_path)
+    total_steps = 0
+    total_trajectories = 0
+    first_stats: dict[str, Any] | None = None
+    for dataset_name, _, robot_type in mixture:
+        dataset = make_LeRobotSingleDataset(
+            data_root_dir=data_root_dir,
+            data_name=dataset_name,
+            robot_type=robot_type,
+            data_cfg={
+                "include_state": False,
+                "video_backend": "torchvision_av",
+                "lerobot_version": "v2.0",
+            },
+        )
+        stats_path = data_root_dir / dataset_name / "dataset_statistics.json"
+        dataset._save_dataset_statistics_(stats_path)
+        total_steps += len(dataset)
+        total_trajectories += len(dataset.trajectory_ids)
+        if first_stats is None:
+            first_stats = {
+                "dataset_stats_path": str(stats_path),
+                "dataset_robot_type": robot_type,
+                "dataset_embodiment_tag": str(ROBOT_TYPE_TO_EMBODIMENT_TAG.get(robot_type)),
+            }
+    assert first_stats is not None
     return {
-        "dataset_stats_path": str(stats_path),
-        "dataset_num_steps": len(dataset),
-        "dataset_num_trajectories": len(dataset.trajectory_ids),
-        "dataset_robot_type": robot_type,
-        "dataset_embodiment_tag": str(ROBOT_TYPE_TO_EMBODIMENT_TAG.get(robot_type)),
+        **first_stats,
+        "dataset_num_steps": total_steps,
+        "dataset_num_trajectories": total_trajectories,
     }
 
 
@@ -308,6 +362,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
         }
         if "latency_filter" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["latency_filter"] = getattr(args, "latency_filter", None)
+        if "episodes_per_latency" in inspect.signature(convert_dataset).parameters:
+            convert_kwargs["episodes_per_latency"] = getattr(args, "episodes_per_latency", None)
         if "action_carrier" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["action_carrier"] = action_carrier
         convert_dataset(args.source_dataset_hf, dataset_dir, **convert_kwargs)
@@ -359,6 +415,177 @@ def _ensure_demon_attack_dataset(args) -> dict[str, Any]:
     )
 
 
+def _task_converter_and_verifier(task: str):
+    if task == "flappy":
+        from examples.rl_games.data_conversion.convert_flappy_to_starvla_lerobot import convert_dataset
+        from examples.rl_games.data_conversion.verify_flappy_dataset import verify_dataset
+        return convert_dataset, verify_dataset, "rl_games_flappy"
+    if task == "demon_attack":
+        from examples.rl_games.data_conversion.convert_demon_attack_to_starvla_lerobot import convert_dataset
+        from examples.rl_games.data_conversion.verify_demon_attack_dataset import verify_dataset
+        return convert_dataset, verify_dataset, "rl_games_demon_attack"
+    raise ValueError(f"cross-task rl_games currently supports only flappy and demon_attack, got {task!r}")
+
+
+def _get_task_value(task_cfg: dict[str, Any], *names: str, default: Any = None) -> Any:
+    for name in names:
+        if name in task_cfg and task_cfg[name] not in (None, ""):
+            return task_cfg[name]
+    return default
+
+
+def _ensure_cross_task_datasets(args) -> dict[str, Any]:
+    from starVLA.dataloader.gr00t_lerobot.registry import load_custom_mixtures
+
+    cross_cfg = getattr(args, "cross_task", None) or {}
+    train_tasks = cross_cfg.get("train_tasks") if isinstance(cross_cfg, dict) else None
+    if not train_tasks:
+        raise ValueError("rl_games.cross_task.train_tasks must contain at least flappy and demon_attack entries")
+
+    data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
+    action_carrier = _action_carrier(args)
+    if action_carrier != "bridge":
+        raise ValueError("cross-task OpenVLA RL-games currently requires action_carrier=bridge")
+
+    mixture_entries: list[list[Any]] = []
+    val_mixture_entries: list[list[Any]] = []
+    prompt_maps: dict[str, str] = {}
+    converted_names: dict[str, str] = {}
+    converted = False
+    force = _str2bool(args.setup_force) or _str2bool(args.dataset_force_download)
+
+    for raw_task_cfg in train_tasks:
+        task_cfg = dict(raw_task_cfg)
+        task_name = str(_get_task_value(task_cfg, "name", "task"))
+        convert_dataset, verify_dataset, robot_type = _task_converter_and_verifier(task_name)
+
+        train_source_value = _get_task_value(task_cfg, "train_source_hf", "source_hf")
+        prompt_source_value = _get_task_value(task_cfg, "prompt_source_hf", default=train_source_value)
+        train_source = str(train_source_value or "")
+        prompt_source = str(prompt_source_value or "")
+        if not train_source:
+            raise ValueError(f"cross-task train task {task_name} is missing train_source_hf/source_hf")
+        if not prompt_source:
+            raise ValueError(f"cross-task train task {task_name} is missing prompt_source_hf")
+
+        latency_filter = _get_task_value(task_cfg, "train_latency_filter", "latency_filter", default=None)
+        latency_filter = [int(value) for value in latency_filter] if latency_filter not in (None, "") else None
+        episodes_per_latency = _get_task_value(task_cfg, "episodes_per_latency", default=None)
+        episodes_per_latency = int(episodes_per_latency) if episodes_per_latency not in (None, "") else None
+        max_episodes = _get_task_value(task_cfg, "max_episodes", default=None)
+        max_episodes = int(max_episodes) if max_episodes not in (None, "") else None
+        weight = float(_get_task_value(task_cfg, "weight", default=1.0))
+
+        base_converted_name = str(_get_task_value(task_cfg, "converted_name", default=f"{task_name}_cross_task_train"))
+        converted_base = _derived_dataset_name(
+            base_converted_name,
+            latency_filter=latency_filter,
+            episodes_per_latency=episodes_per_latency,
+            max_episodes=max_episodes,
+        )
+        data_mix = _carrier_dataset_name(converted_base, action_carrier)
+        dataset_dir = data_root_dir / data_mix
+        eval_data_mix = f"{data_mix}__val"
+        eval_dataset_dir = data_root_dir / eval_data_mix
+
+        prompt_map = _load_source_latency_prompt_map(prompt_source, cache_dir=args.dataset_cache_dir)
+        prompt_dir = data_root_dir / "_prompt_maps" / data_mix
+        eval_prompt_map_path = _write_prompt_map(prompt_dir / "eval_latency_prompt_map.json", prompt_map)
+        train_prompt_map_path = _write_prompt_map(
+            prompt_dir / "train_latency_prompt_map.json",
+            prompt_map,
+            latency_filter=latency_filter,
+        )
+
+        def _manifest_matches(dataset_path: Path) -> bool:
+            manifest_path = dataset_path / "manifest.json"
+            if not manifest_path.exists():
+                return False
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except Exception:
+                return False
+            return (
+                str(manifest.get("source", "")) == train_source
+                and str(manifest.get("prompt_source", "")) == prompt_source
+                and str(manifest.get("action_carrier", "")) == action_carrier
+                and manifest.get("latency_filter") == latency_filter
+                and manifest.get("episodes_per_latency") == episodes_per_latency
+                and manifest.get("max_episodes") == max_episodes
+            )
+
+        rebuild = (
+            force
+            or not _dataset_ready(dataset_dir)
+            or not _dataset_ready(eval_dataset_dir)
+            or not _manifest_matches(dataset_dir)
+            or not _manifest_matches(eval_dataset_dir)
+        )
+        if rebuild:
+            allow_mixed = bool(latency_filter) and train_source == prompt_source
+            verify_dataset(
+                train_source,
+                rows=args.verify_rows,
+                cache_dir=args.dataset_cache_dir,
+                strict=True,
+                allow_mixed_latency_prompts=allow_mixed,
+            )
+            convert_dataset(
+                train_source,
+                dataset_dir,
+                cache_dir=args.dataset_cache_dir,
+                max_episodes=max_episodes,
+                force=rebuild,
+                require_latency_prompt_map=bool(latency_filter),
+                latency_filter=latency_filter,
+                episodes_per_latency=episodes_per_latency,
+                prompt_map_override=prompt_map,
+                default_latency=0,
+                action_carrier=action_carrier,
+            )
+            for manifest_path in (dataset_dir / "manifest.json", eval_dataset_dir / "manifest.json"):
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["prompt_source"] = prompt_source
+                manifest["eval_prompt_map_path"] = str(eval_prompt_map_path)
+                manifest["train_prompt_map_path"] = str(train_prompt_map_path)
+                manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            converted = True
+
+        mixture_entries.append([data_mix, weight, robot_type])
+        val_mixture_entries.append([eval_data_mix, weight, robot_type])
+        prompt_maps[task_name] = str(eval_prompt_map_path)
+        converted_names[task_name] = data_mix
+
+    mixture_name = "cross__" + "__".join(converted_names[task] for task in sorted(converted_names))
+    mixture_name = _safe_token(mixture_name)
+    eval_mixture_name = f"{mixture_name}__val"
+    custom_mixtures_path = data_root_dir / "_generated_mixtures" / f"{mixture_name}.json"
+    custom_mixtures_path.parent.mkdir(parents=True, exist_ok=True)
+    custom_mixtures_path.write_text(
+        json.dumps({mixture_name: mixture_entries, eval_mixture_name: val_mixture_entries}, indent=2),
+        encoding="utf-8",
+    )
+    load_custom_mixtures(custom_mixtures_path)
+    validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=mixture_name)
+    eval_validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=eval_mixture_name)
+    return {
+        "dataset_ready": True,
+        "dataset_converted": converted,
+        "dataset_local_dir": str(data_root_dir),
+        "dataset_dir": str(data_root_dir),
+        "data_mix": mixture_name,
+        "eval_data_mix": eval_mixture_name,
+        "custom_mixtures_path": str(custom_mixtures_path),
+        "cross_task_prompt_maps": prompt_maps,
+        "cross_task_datasets": converted_names,
+        "action_carrier": action_carrier,
+        **validation,
+        "eval_dataset_stats_path": eval_validation["dataset_stats_path"],
+        "eval_dataset_num_steps": eval_validation["dataset_num_steps"],
+        "eval_dataset_num_trajectories": eval_validation["dataset_num_trajectories"],
+    }
+
+
 def _ensure_deadly_corridor_dataset(args) -> dict[str, Any]:
     from examples.rl_games.data_conversion.convert_deadly_corridor_to_starvla_lerobot import convert_dataset
     from examples.rl_games.data_conversion.verify_deadly_corridor_dataset import verify_dataset
@@ -379,7 +606,9 @@ def setup_assets(args) -> dict[str, Any]:
         "action_carrier": _action_carrier(args),
     }
 
-    if args.model in {"openvla", "pi0", "gr00t"} and args.env == "flappy":
+    if args.model in {"openvla", "pi0", "gr00t"} and str(getattr(args, "env", "")) == "cross_task":
+        result.update(_ensure_cross_task_datasets(args))
+    elif args.model in {"openvla", "pi0", "gr00t"} and args.env == "flappy":
         result.update(_ensure_flappy_dataset(args))
     elif args.model in {"openvla", "pi0", "gr00t"} and args.env == "demon_attack":
         result.update(_ensure_demon_attack_dataset(args))

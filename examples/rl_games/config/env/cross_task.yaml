@@ -1,0 +1,43 @@
+# @package _global_
+
+rl_games:
+  task: cross_task
+  env_eval:
+    image_size: 84
+    frameskip: 1
+  cross_task:
+    eval_tasks:
+      flappy:
+        prompt_map_path: null
+        frameskip: 1
+        image_size: 84
+        task_description: null
+        mid_train:
+          enabled: true
+          latencies: null
+          num_episodes: null
+          max_steps_per_episode: null
+        post_train:
+          enabled: true
+          latencies: null
+          num_episodes: null
+          max_steps_per_episode: null
+      demon_attack:
+        prompt_map_path: null
+        frameskip: 4
+        image_size: 84
+        task_description: null
+        mid_train:
+          enabled: true
+          latencies: null
+          num_episodes: null
+          max_steps_per_episode: null
+        post_train:
+          enabled: true
+          latencies: null
+          num_episodes: null
+          max_steps_per_episode: null
+
+datasets:
+  vla_data:
+    data_mix: cross_task_train

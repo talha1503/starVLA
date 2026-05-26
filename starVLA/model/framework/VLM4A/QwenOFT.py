@@ -141,7 +141,12 @@ class Qwenvl_OFT(baseframework):
         # L1 loss
         self.l1_loss = nn.L1Loss()
 
-    def _compute_action_loss(self, pred_actions: torch.Tensor, actions_target: torch.Tensor) -> torch.Tensor:
+    def _compute_action_loss(
+        self,
+        pred_actions: torch.Tensor,
+        actions_target: torch.Tensor,
+        action_env_dims: Optional[List[int]] = None,
+    ) -> torch.Tensor:
         effective_dim = min(self.action_env_dim, pred_actions.shape[-1], actions_target.shape[-1])
         if effective_dim <= 0:
             raise ValueError(
@@ -150,6 +155,24 @@ class Qwenvl_OFT(baseframework):
             )
 
         if self.action_loss_type in {"discrete_ce", "ce", "cross_entropy"}:
+            if action_env_dims is not None:
+                dims = torch.as_tensor(action_env_dims, device=pred_actions.device, dtype=torch.long)
+                if dims.numel() != pred_actions.shape[0]:
+                    raise ValueError(f"Expected {pred_actions.shape[0]} action_env_dims, got {dims.numel()}")
+                losses = []
+                weights = []
+                for dim_value in torch.unique(dims).tolist():
+                    dim = int(min(dim_value, pred_actions.shape[-1], actions_target.shape[-1]))
+                    if dim < 2:
+                        raise ValueError(f"discrete_ce requires at least 2 classes, got action_env_dim={dim}")
+                    mask = dims == int(dim_value)
+                    logits = pred_actions[mask, ..., :dim]
+                    target_class = actions_target[mask, ..., :dim].argmax(dim=-1).long()
+                    losses.append(F.cross_entropy(logits.reshape(-1, dim), target_class.reshape(-1), reduction="sum"))
+                    weights.append(target_class.numel())
+                total_weight = max(1, int(sum(weights)))
+                return sum(losses) / total_weight
+
             if effective_dim < 2:
                 raise ValueError(
                     f"action_model.loss_type={self.action_loss_type!r} requires at least 2 action classes, "
@@ -227,6 +250,7 @@ class Qwenvl_OFT(baseframework):
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
         actions = [example["action"] for example in examples]  # label [B， len, 7]
+        action_env_dims = [int(example["action_env_dim"]) for example in examples] if "action_env_dim" in examples[0] else None
         state = (
             [example["state"] for example in examples] if "state" in examples[0] else None
         )  # List[ndarray (1, state_dim)] or None
@@ -263,7 +287,7 @@ class Qwenvl_OFT(baseframework):
             )  # [B, T_full, action_dim]
             actions_target = actions[:, -self.action_horizon :, :]  # (B, action_horizon, action_dim)
 
-            action_loss = self._compute_action_loss(pred_actions, actions_target)
+            action_loss = self._compute_action_loss(pred_actions, actions_target, action_env_dims=action_env_dims)
 
         return {"action_loss": action_loss}
 

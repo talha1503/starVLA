@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import logging
 import re
 import sys
@@ -137,6 +138,26 @@ def get_dataset_named_mixture(data_mix: str):
             ]
 
     raise KeyError(data_mix)
+
+
+def load_custom_mixtures(path: str | Path | None) -> None:
+    """Load generated mixture specs from a JSON file.
+
+    The expected JSON shape is:
+        {"mixture_name": [["dataset_name", weight, "robot_type"], ...]}
+    """
+    if path in (None, ""):
+        return
+    mixture_path = Path(path).expanduser()
+    if not mixture_path.exists():
+        raise FileNotFoundError(f"custom mixture file does not exist: {mixture_path}")
+    payload = json.loads(mixture_path.read_text(encoding="utf-8"))
+    for name, entries in payload.items():
+        DATASET_NAMED_MIXTURES[str(name)] = [
+            (str(dataset_name), float(weight), str(robot_type))
+            for dataset_name, weight, robot_type in entries
+        ]
+    logger.info(f"[registry] Loaded custom mixtures from {mixture_path}: {list(payload.keys())}")
 
 
 # Run discovery on first import

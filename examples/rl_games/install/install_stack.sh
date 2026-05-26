@@ -19,7 +19,7 @@ Examples:
 
 Arguments:
   <model>                  openvla|pi0|gr00t
-  <env>                    flappy|demon_attack|deadly_corridor
+  <env>                    flappy|demon_attack|deadly_corridor|cross_task
 
 Options:
   --conda-env <name>       Conda env name (default: starvla_rl_games_<model>)
@@ -81,9 +81,9 @@ validate_targets() {
   esac
 
   case "${ENV_NAME}" in
-    flappy|demon_attack|deadly_corridor) ;;
+    flappy|demon_attack|deadly_corridor|cross_task) ;;
     *)
-      echo "[install_stack] Invalid env '${ENV_NAME}'. Expected flappy|demon_attack|deadly_corridor." >&2
+      echo "[install_stack] Invalid env '${ENV_NAME}'. Expected flappy|demon_attack|deadly_corridor|cross_task." >&2
       exit 1
       ;;
   esac
@@ -139,19 +139,29 @@ install_stack() {
   echo "[install_stack] Installing model dependencies: ${MODEL}"
   "${BASE_DIR}/model/${MODEL}.sh"
 
-  echo "[install_stack] Installing environment dependencies: ${ENV_NAME}"
-  "${BASE_DIR}/env/${ENV_NAME}.sh"
+  local env_targets=("${ENV_NAME}")
+  if [[ "${ENV_NAME}" == "cross_task" ]]; then
+    env_targets=("flappy" "demon_attack")
+  fi
+
+  local env_target
+  for env_target in "${env_targets[@]}"; do
+    echo "[install_stack] Installing environment dependencies: ${env_target}"
+    "${BASE_DIR}/env/${env_target}.sh"
+  done
 
   echo "[install_stack] Running validation"
   "${BASE_DIR}/validate/common.sh"
-  local target_validator="${BASE_DIR}/validate/${MODEL}_${ENV_NAME}.sh"
-  if [[ -x "${target_validator}" ]]; then
-    "${target_validator}"
-  elif [[ -f "${target_validator}" ]]; then
-    bash "${target_validator}"
-  else
-    echo "[install_stack] No target-specific validator found for ${MODEL}/${ENV_NAME}; common validation passed."
-  fi
+  for env_target in "${env_targets[@]}"; do
+    local target_validator="${BASE_DIR}/validate/${MODEL}_${env_target}.sh"
+    if [[ -x "${target_validator}" ]]; then
+      "${target_validator}"
+    elif [[ -f "${target_validator}" ]]; then
+      bash "${target_validator}"
+    else
+      echo "[install_stack] No target-specific validator found for ${MODEL}/${env_target}; common validation passed."
+    fi
+  done
 }
 
 parse_args "$@"

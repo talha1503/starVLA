@@ -187,13 +187,24 @@ def _semantic_to_runtime_multibinary(semantic_values: List[int], runtime_order: 
 
 
 class _TaskEvaluator:
-    def __init__(self, task: str, cfg):
+    def __init__(self, task: str, cfg, task_eval_cfg=None):
         self.task = task
         self.cfg = cfg
         self.env_eval_cfg = cfg.rl_games.env_eval
+        self.task_eval_cfg = task_eval_cfg
         self.default_prompt = str(getattr(self.env_eval_cfg, "task_description", "") or "")
-        self.image_size = int(getattr(self.env_eval_cfg, "image_size", 84))
-        self.frameskip = max(1, int(getattr(self.env_eval_cfg, "frameskip", 1)))
+        if task_eval_cfg is not None:
+            self.default_prompt = str(getattr(task_eval_cfg, "task_description", self.default_prompt) or self.default_prompt)
+        self.image_size = int(
+            getattr(task_eval_cfg, "image_size", getattr(self.env_eval_cfg, "image_size", 84))
+            if task_eval_cfg is not None
+            else getattr(self.env_eval_cfg, "image_size", 84)
+        )
+        self.frameskip = max(1, int(
+            getattr(task_eval_cfg, "frameskip", getattr(self.env_eval_cfg, "frameskip", 1))
+            if task_eval_cfg is not None
+            else getattr(self.env_eval_cfg, "frameskip", 1)
+        ))
         vla_data_cfg = getattr(getattr(cfg, "datasets", None), "vla_data", None)
         self.include_state = bool(getattr(vla_data_cfg, "include_state", False))
         self.state_dim = int(getattr(cfg.framework.action_model, "state_dim", 1) or 1)
@@ -402,6 +413,23 @@ class RlGamesEvalRunner:
             return getattr(env_eval, stage, None)
         return None
 
+    def _cross_task_cfg(self, task: str):
+        cross_cfg = getattr(self.cfg.rl_games, "cross_task", None)
+        eval_tasks = getattr(cross_cfg, "eval_tasks", None) if cross_cfg is not None else None
+        if eval_tasks is None:
+            return None
+        if isinstance(eval_tasks, dict):
+            return eval_tasks.get(task)
+        return getattr(eval_tasks, task, None)
+
+    def _task_stage_cfg(self, task: str | None, stage: str):
+        if task is None:
+            return self._stage_cfg(stage)
+        task_cfg = self._cross_task_cfg(task)
+        if task_cfg is None:
+            return self._stage_cfg(stage)
+        return getattr(task_cfg, stage, None)
+
     def is_enabled(self, stage: str) -> bool:
         env_eval = self.cfg.rl_games.env_eval
         if not bool(getattr(env_eval, "enabled", False)):
@@ -418,9 +446,9 @@ class RlGamesEvalRunner:
             return int(stage_cfg.interval_steps)
         return int(getattr(env_eval, "interval_steps", default))
 
-    def _get_latency_values(self, stage: str) -> List[int]:
+    def _get_latency_values(self, stage: str, task: str | None = None) -> List[int]:
         env_eval = self.cfg.rl_games.env_eval
-        stage_cfg = self._stage_cfg(stage)
+        stage_cfg = self._task_stage_cfg(task, stage)
         values = None
         if stage_cfg is not None:
             values = getattr(stage_cfg, "latencies", None)
@@ -428,27 +456,39 @@ class RlGamesEvalRunner:
             values = getattr(getattr(env_eval, "latency", {}), "values", []) or [0]
         return [int(v) for v in values]
 
-    def _num_episodes(self, stage: str) -> int:
+    def _num_episodes(self, stage: str, task: str | None = None) -> int:
         env_eval = self.cfg.rl_games.env_eval
-        stage_cfg = self._stage_cfg(stage)
+        stage_cfg = self._task_stage_cfg(task, stage)
         if stage_cfg is not None and getattr(stage_cfg, "num_episodes", None) is not None:
             return int(stage_cfg.num_episodes)
         return int(getattr(env_eval, "num_episodes", 5))
 
-    def _max_steps_per_episode(self, stage: str) -> int:
+    def _max_steps_per_episode(self, stage: str, task: str | None = None) -> int:
         env_eval = self.cfg.rl_games.env_eval
-        stage_cfg = self._stage_cfg(stage)
+        stage_cfg = self._task_stage_cfg(task, stage)
         if stage_cfg is not None and getattr(stage_cfg, "max_steps_per_episode", None) is not None:
             return int(stage_cfg.max_steps_per_episode)
         return int(getattr(env_eval, "max_episode_steps", 2000))
 
-    def _resolve_prompt(self, latency: int, mapping: Dict[int, Dict[str, Any]]) -> str:
+    def _prompt_map_path(self, task: str | None = None):
+        if task is not None:
+            task_cfg = self._cross_task_cfg(task)
+            if task_cfg is not None and getattr(task_cfg, "prompt_map_path", None):
+                return getattr(task_cfg, "prompt_map_path")
+        return getattr(getattr(self.cfg.rl_games.env_eval, "latency", {}), "prompt_map_path", None)
+
+    def _resolve_prompt(self, latency: int, mapping: Dict[int, Dict[str, Any]], task: str | None = None) -> str:
         if latency in mapping:
             return str(mapping[latency]["prompt"])
-        prompt = str(getattr(self.cfg.rl_games.env_eval, "task_description", "") or "")
+        task_cfg = self._cross_task_cfg(task) if task is not None else None
+        if task_cfg is not None and self._prompt_map_path(task):
+            raise ValueError(f"No eval prompt found for task={task!r}, latency={latency} in {self._prompt_map_path(task)}")
+        prompt = str(getattr(task_cfg, "task_description", "") or "") if task_cfg is not None else ""
+        if not prompt:
+            prompt = str(getattr(self.cfg.rl_games.env_eval, "task_description", "") or "")
         if prompt:
             return prompt
-        task = str(getattr(self.cfg.rl_games, "task", "flappy"))
+        task = task or str(getattr(self.cfg.rl_games, "task", "flappy"))
         if task == "flappy":
             return "You are playing Flappy Bird. Pass through the pipe gaps and stay alive. Choose the action: NOOP, FLAP."
         if task == "demon_attack":
@@ -467,17 +507,13 @@ class RlGamesEvalRunner:
             return [task]
         cross_cfg = getattr(self.cfg.rl_games, "cross_task", None)
         if cross_cfg is not None and getattr(cross_cfg, "eval_tasks", None):
-            return [str(x) for x in cross_cfg.eval_tasks]
+            eval_tasks = getattr(cross_cfg, "eval_tasks")
+            if isinstance(eval_tasks, dict):
+                return [str(x) for x in eval_tasks.keys()]
+            return [str(x) for x in eval_tasks]
         return ["flappy", "demon_attack"]
 
     def run(self, model, step: int, stage: str = "mid_train") -> EvalResult:
-        latency_values = self._get_latency_values(stage=stage)
-        max_steps = self._max_steps_per_episode(stage=stage)
-        num_episodes = self._num_episodes(stage=stage)
-
-        latency_map_path = getattr(getattr(self.cfg.rl_games.env_eval, "latency", {}), "prompt_map_path", None)
-        latency_prompt_map = _load_latency_prompt_map(latency_map_path)
-
         tasks = self._get_tasks()
         per_latency: Dict[str, Dict] = {}
         aggregate = {
@@ -496,9 +532,15 @@ class RlGamesEvalRunner:
         all_rewards = []
         all_lengths = []
 
-        total_rollouts = len(tasks) * len(latency_values)
+        rollout_plan = [
+            (task_name, latency)
+            for task_name in tasks
+            if getattr(self._task_stage_cfg(task_name, stage), "enabled", True)
+            for latency in self._get_latency_values(stage=stage, task=task_name)
+        ]
+        total_rollouts = len(rollout_plan)
         rollout_iter = tqdm(
-            [(task_name, latency) for task_name in tasks for latency in latency_values],
+            rollout_plan,
             desc=f"rl-games {stage} eval step={step}",
             total=total_rollouts,
             leave=True,
@@ -506,16 +548,21 @@ class RlGamesEvalRunner:
             dynamic_ncols=True,
         )
 
+        prompt_maps = {
+            task_name: _load_latency_prompt_map(self._prompt_map_path(task_name))
+            for task_name in tasks
+        }
         for task_name, latency in rollout_iter:
             rollout_iter.set_postfix({"task": task_name, "latency": latency})
-            task_eval = _TaskEvaluator(task=task_name, cfg=self.cfg)
-            prompt = self._resolve_prompt(latency=latency, mapping=latency_prompt_map)
+            task_eval_cfg = self._cross_task_cfg(task_name)
+            task_eval = _TaskEvaluator(task=task_name, cfg=self.cfg, task_eval_cfg=task_eval_cfg)
+            prompt = self._resolve_prompt(latency=latency, mapping=prompt_maps.get(task_name, {}), task=task_name)
             metrics = task_eval.run_latency(
                 model=model,
                 latency=latency,
                 prompt=prompt,
-                max_steps=max_steps,
-                num_episodes=num_episodes,
+                max_steps=self._max_steps_per_episode(stage=stage, task=task_name),
+                num_episodes=self._num_episodes(stage=stage, task=task_name),
                 progress_desc=f"{stage} {task_name} latency={latency}",
                 progress_position=1,
             )

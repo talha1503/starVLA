@@ -171,6 +171,32 @@ def _append_eval_stage_overrides(cmd: list[str], cfg: dict[str, Any], stage_name
         cmd.append(f"{hydra_prefix}.latencies={_latencies_expr(latencies)}")
 
 
+def _append_cross_task_eval_overrides(cmd: list[str], cfg: dict[str, Any]) -> None:
+    eval_tasks = _get(cfg, "rl_games.cross_task.eval_tasks", {})
+    if not isinstance(eval_tasks, dict):
+        return
+    for task_name, task_cfg in eval_tasks.items():
+        if not isinstance(task_cfg, dict):
+            continue
+        base = f"rl_games.cross_task.eval_tasks.{task_name}"
+        for key in ("frameskip", "image_size", "task_description", "prompt_map_path"):
+            value = task_cfg.get(key)
+            if value not in (None, ""):
+                cmd.append(f"{base}.{key}={_hydra_value(value)}")
+        for stage in ("mid_train", "post_train"):
+            stage_cfg = task_cfg.get(stage, {})
+            if not isinstance(stage_cfg, dict):
+                continue
+            stage_base = f"{base}.{stage}"
+            for key in ("enabled", "num_episodes", "max_steps_per_episode"):
+                value = stage_cfg.get(key)
+                if value not in (None, ""):
+                    cmd.append(f"{stage_base}.{key}={_hydra_value(value)}")
+            latencies = stage_cfg.get("latencies")
+            if latencies not in (None, ""):
+                cmd.append(f"{stage_base}.latencies={_latencies_expr(latencies)}")
+
+
 def _safe_suffix(value: Any) -> str:
     suffix = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "debug")).strip("_")
     return suffix or "debug"
@@ -303,7 +329,13 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         setup_force=str(_as_bool(_get(cfg, "dataset.setup_force", False))).lower(),
         verify_rows=int(_get(cfg, "dataset.verify_rows", 200)),
         max_episodes=max_episodes,
+        episodes_per_latency=(
+            None
+            if _get(cfg, "dataset.episodes_per_latency") in (None, "")
+            else int(_get(cfg, "dataset.episodes_per_latency"))
+        ),
         latency_filter=_optional_int_list(_get(cfg, "dataset.latency_filter")),
+        cross_task=_get(cfg, "rl_games.cross_task", {}),
         base_model_dir=_resolve_path(_get(cfg, "paths.base_model_dir"), workspace_dir),
         base_model_repo_id=_get(cfg, "base_model.repo_id"),
         checkpoint_local_dir=checkpoint_dir,
@@ -435,6 +467,8 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         cmd.append(f"datasets.vla_data.data_mix={setup['data_mix']}")
     if setup.get("eval_data_mix"):
         cmd.append(f"datasets.vla_data.eval_data_mix={setup['eval_data_mix']}")
+    if setup.get("custom_mixtures_path"):
+        cmd.append(f"datasets.vla_data.custom_mixtures_path={setup['custom_mixtures_path']}")
     if setup.get("base_model_dir"):
         cmd.append(f"framework.qwenvl.base_vlm={setup['base_model_dir']}")
 
@@ -459,7 +493,10 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
     prompt_map = _get(cfg, "rl_games.latency_prompt_map_path") or setup.get("latency_prompt_map_path")
     if prompt_map:
         cmd.append(f"rl_games.env_eval.latency.prompt_map_path={prompt_map}")
+    for task_name, task_prompt_map in (setup.get("cross_task_prompt_maps") or {}).items():
+        cmd.append(f"rl_games.cross_task.eval_tasks.{task_name}.prompt_map_path={task_prompt_map}")
 
+    _append_cross_task_eval_overrides(cmd, cfg)
     _append_eval_stage_overrides(cmd, cfg, "mid_train_eval", "mid_train")
     _append_eval_stage_overrides(cmd, cfg, "post_train_eval", "post_train")
 

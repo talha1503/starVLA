@@ -14,7 +14,14 @@ from starVLA.dataloader.gr00t_lerobot.registry import (
     ROBOT_TYPE_TO_EMBODIMENT_TAG,
     EmbodimentTag,
     get_dataset_named_mixture,
+    load_custom_mixtures,
 )
+
+RL_GAMES_TASK_METADATA = {
+    "rl_games_flappy": ("flappy", 2),
+    "rl_games_demon_attack": ("demon_attack", 6),
+    "rl_games_deadly_corridor": ("deadly_corridor", 7),
+}
 
 def collate_fn(batch):
     return batch
@@ -47,7 +54,7 @@ def make_LeRobotSingleDataset(
         embodiment_tag = ROBOT_TYPE_TO_EMBODIMENT_TAG[robot_type]
     
     video_backend = data_cfg.get("video_backend", "decord") if data_cfg else "torchvision_av"
-    return LeRobotSingleDataset(
+    dataset = LeRobotSingleDataset(
         dataset_path=dataset_path,
         modality_configs=modality_config,
         transforms=transforms,
@@ -56,6 +63,9 @@ def make_LeRobotSingleDataset(
         delete_pause_frame=delete_pause_frame,
         data_cfg=data_cfg,
     )
+    if robot_type in RL_GAMES_TASK_METADATA:
+        dataset.rl_games_task, dataset.rl_games_action_env_dim = RL_GAMES_TASK_METADATA[robot_type]
+    return dataset
 
 def get_vla_dataset(
     data_cfg: dict,
@@ -70,6 +80,7 @@ def get_vla_dataset(
     """
     data_root_dir = data_cfg.data_root_dir
     data_mix = data_cfg.data_mix
+    load_custom_mixtures(data_cfg.get("custom_mixtures_path", None))
     delete_pause_frame = data_cfg.get("delete_pause_frame", False)
     mixture_spec = get_dataset_named_mixture(data_mix)
     included_datasets, filtered_mixture_spec = set(), []

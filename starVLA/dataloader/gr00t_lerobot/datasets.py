@@ -1388,6 +1388,10 @@ class LeRobotSingleDataset(Dataset):
             "lang": language,
             "robot_tag": self.tag
         }
+        if hasattr(self, "rl_games_task"):
+            sample["rl_games_task"] = self.rl_games_task
+        if hasattr(self, "rl_games_action_env_dim"):
+            sample["action_env_dim"] = int(self.rl_games_action_env_dim)
 
         if self.data_cfg is not None and self.data_cfg.get("include_state", False) not in ["False", False]:
             state = []

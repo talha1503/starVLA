@@ -50,6 +50,7 @@ datasets:
     data_root_dir: playground/Datasets/rl_games
     data_mix: flappy_train
     eval_data_mix: null
+    custom_mixtures_path: null
     action_type: discrete
     sequential_step_sampling: false
     per_device_batch_size: 4
