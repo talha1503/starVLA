@@ -87,6 +87,7 @@ class QwenOFTDefaultConfig:
             "past_action_window_size": 0,
             # Action loss: l1 for continuous regression, ce/factorized_ce for RL-games discrete actions.
             "loss_type": "l1",
+            "ce_label_smoothing": 0.0,
         }
     )
 
@@ -228,6 +229,7 @@ class Qwenvl_OFT(baseframework):
                 actions_target,
                 self.config.framework.action_model.loss_type,
                 self.l1_loss,
+                self.config.framework.action_model.ce_label_smoothing,
             )
 
         return {"action_loss": action_loss}

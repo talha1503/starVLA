@@ -10,6 +10,7 @@ framework:
   action_model:
     action_dim: 2
     action_env_dim: 2
+    ce_label_smoothing: 0.0
 
 trainer:
   learning_rate:
