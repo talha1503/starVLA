@@ -70,6 +70,7 @@ framework:
   qwenvl:
     base_vlm: playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
   action_model:
+    action_layout: demon_attack_categorical_6
     loss_type: ce
 
 # Hydra trainer config.

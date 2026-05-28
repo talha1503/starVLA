@@ -6,6 +6,10 @@ rl_games:
     image_size: 84
     frameskip: 1
 
+framework:
+  action_model:
+    action_layout: flappy_categorical_2
+
 datasets:
   vla_data:
     data_mix: flappy_train

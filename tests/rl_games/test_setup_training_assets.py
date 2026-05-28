@@ -135,6 +135,17 @@ def test_setup_assets_uses_one_lerobot_dataset_path_for_rl_games_envs(monkeypatc
     ]
 
 
+def test_rl_games_registry_includes_deadly_corridor_joint_fifty_four_mix():
+    from starVLA.dataloader.gr00t_lerobot.registry import get_dataset_named_mixture
+
+    assert get_dataset_named_mixture("deadly_corridor_fixed_l2_fs4_joint54") == [
+        ("deadly_corridor_fixed_l2_fs4_joint54", 1.0, "rl_games_deadly_corridor")
+    ]
+    assert get_dataset_named_mixture("deadly_corridor_fixed_l2_fs4_joint54__val") == [
+        ("deadly_corridor_fixed_l2_fs4_joint54__val", 1.0, "rl_games_deadly_corridor")
+    ]
+
+
 def test_run_experiment_no_longer_passes_conversion_controls_to_setup():
     from examples.rl_games.scripts import run_experiment
 

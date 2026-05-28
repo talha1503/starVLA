@@ -5,8 +5,10 @@ rl_games:
   env_eval:
     image_size: 84
     frameskip: 4
-    deadly:
-      action_layout: multibinary_7
+
+framework:
+  action_model:
+    action_layout: deadly_corridor_multibinary_7
 
 datasets:
   vla_data:

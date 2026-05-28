@@ -6,6 +6,10 @@ rl_games:
     image_size: 84
     frameskip: 4
 
+framework:
+  action_model:
+    action_layout: demon_attack_categorical_6
+
 datasets:
   vla_data:
     data_mix: demon_attack_train

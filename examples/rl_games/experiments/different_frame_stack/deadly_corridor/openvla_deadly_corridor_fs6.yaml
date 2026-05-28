@@ -70,6 +70,7 @@ framework:
   qwenvl:
     base_vlm: playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
   action_model:
+    action_layout: deadly_corridor_factorized_11
     loss_type: factorized_ce
 
 # Hydra trainer config.
@@ -105,8 +106,6 @@ rl_games:
   env_eval:
     frameskip: 4
     image_size: 84
-    deadly:
-      action_layout: factorized_11
     enabled: false
     latency:
       mode: single

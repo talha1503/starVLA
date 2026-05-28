@@ -64,6 +64,16 @@ def decode_deadly_factorized_11(action_values: Iterable[float]) -> List[int]:
     return [turn, move, strafe, attack]
 
 
+def decode_deadly_joint_54(action_values: Iterable[float]) -> List[int]:
+    arr = np.asarray(action_values, dtype=np.float32)
+    joint_id = int(np.argmax(arr[:54]))
+    attack = joint_id % 2
+    strafe = (joint_id // 2) % 3
+    move = (joint_id // 6) % 3
+    turn = (joint_id // 18) % 3
+    return [turn, move, strafe, attack]
+
+
 def _factorized_to_semantic_buttons(action_tuple: List[int]) -> List[int]:
     turn, move, strafe, attack = action_tuple
     active = set()
@@ -247,11 +257,13 @@ class _TaskEvaluator:
         if self.task == "demon_attack":
             return decode_discrete_argmax(raw_action, 6)
         if self.task == "deadly_corridor":
-            layout = str(getattr(self.env_eval_cfg.deadly, "action_layout", "multibinary_7"))
-            if layout == "multibinary_7":
+            layout = self.cfg.framework.action_model.action_layout
+            if layout == "deadly_corridor_multibinary_7":
                 semantic = decode_deadly_multibinary_7(raw_action)
-            elif layout == "factorized_11":
+            elif layout == "deadly_corridor_factorized_11":
                 semantic = _factorized_to_semantic_buttons(decode_deadly_factorized_11(raw_action))
+            elif layout == "deadly_corridor_joint_54":
+                semantic = _factorized_to_semantic_buttons(decode_deadly_joint_54(raw_action))
             else:
                 raise ValueError(f"Unknown deadly action layout: {layout}")
             if runtime_button_order is None:

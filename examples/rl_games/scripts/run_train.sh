@@ -41,7 +41,7 @@ Options:
   --max-episode-steps <int>    Max steps per episode (default: 2000)
   --frameskip <int>            Frameskip override
   --image-size <int>           Eval image size override
-  --deadly-action-layout <multibinary_7|factorized_11>  Deadly layout override
+  --deadly-action-layout <deadly_corridor_multibinary_7|deadly_corridor_factorized_11|deadly_corridor_joint_54>  Deadly action head layout override
   --hf-sync-enabled <true|false>      checkpoint.sync.enabled
   --hf-repo-id <repo>          checkpoint.sync.repo_id
   --hf-keep-last-n <int>       checkpoint.sync.keep_last_n
@@ -92,7 +92,7 @@ NUM_EPISODES="5"
 MAX_EPISODE_STEPS="2000"
 FRAMESKIP=""
 IMAGE_SIZE=""
-DEADLY_ACTION_LAYOUT="multibinary_7"
+DEADLY_ACTION_LAYOUT="deadly_corridor_multibinary_7"
 HF_SYNC_ENABLED="false"
 HF_REPO_ID=""
 HF_KEEP_LAST_N="0"
@@ -283,7 +283,7 @@ if [[ -n "$IMAGE_SIZE" ]]; then
   CMD+=("rl_games.env_eval.image_size=$IMAGE_SIZE")
 fi
 if [[ "$ENV_NAME" == "deadly_corridor" || "${TASK_OVERRIDE:-}" == "deadly_corridor" ]]; then
-  CMD+=("rl_games.env_eval.deadly.action_layout=$DEADLY_ACTION_LAYOUT")
+  CMD+=("framework.action_model.action_layout=$DEADLY_ACTION_LAYOUT")
 fi
 if [[ -n "$HF_REPO_ID" ]]; then
   CMD+=("checkpoint.sync.repo_id=$HF_REPO_ID")
