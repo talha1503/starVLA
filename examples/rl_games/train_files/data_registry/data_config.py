@@ -3,10 +3,7 @@
 from starVLA.dataloader.gr00t_lerobot.datasets import ModalityConfig
 from starVLA.dataloader.gr00t_lerobot.embodiment_tags import EmbodimentTag
 from starVLA.dataloader.gr00t_lerobot.transform.base import ComposedModalityTransform
-from starVLA.dataloader.gr00t_lerobot.transform.state_action import (
-    StateActionToTensor,
-    StateActionTransform,
-)
+from starVLA.dataloader.gr00t_lerobot.transform.state_action import StateActionToTensor
 
 
 class FlappyDataConfig:
@@ -29,15 +26,7 @@ class FlappyDataConfig:
     def transform(self):
         return ComposedModalityTransform(transforms=[
             StateActionToTensor(apply_to=self.state_keys),
-            StateActionTransform(
-                apply_to=self.state_keys,
-                normalization_modes={"state.game_state": "min_max"},
-            ),
             StateActionToTensor(apply_to=self.action_keys),
-            StateActionTransform(
-                apply_to=self.action_keys,
-                normalization_modes={"action.button": "min_max"},
-            ),
         ])
 
 
