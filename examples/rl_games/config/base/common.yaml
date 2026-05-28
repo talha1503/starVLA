@@ -11,7 +11,7 @@ rl_games:
     num_episodes: 5
     max_episode_steps: 2000
     frameskip: 1
-    image_size: 84
+    image_size: 224
     task_description: ""
     deadly:
       action_layout: multibinary_7

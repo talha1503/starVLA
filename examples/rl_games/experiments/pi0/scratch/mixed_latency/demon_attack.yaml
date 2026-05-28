@@ -60,7 +60,7 @@ train_data:
   action_type: discrete
   sequential_step_sampling: false
   load_all_data_for_training: true
-  obs_image_size: [84, 84]
+  obs_image_size: [224, 224]
   video_backend: torchvision_av
 
 framework:
@@ -128,7 +128,7 @@ rl_games:
   model_alias: pi-0
   task_description: "You are playing Demon Attack from a single game image. Choose exactly one action from: NOOP, FIRE, RIGHT, LEFT, RIGHTFIRE, LEFTFIRE."
   frameskip: 4
-  image_size: 84
+  image_size: 224
   latency_prompt_map_path: null
   env_eval_enabled: true
 

@@ -3,14 +3,14 @@
 rl_games:
   task: cross_task
   env_eval:
-    image_size: 84
+    image_size: 224
     frameskip: 1
   cross_task:
     eval_tasks:
       flappy:
         prompt_map_path: null
         frameskip: 1
-        image_size: 84
+        image_size: 224
         task_description: null
         mid_train:
           enabled: true
@@ -25,7 +25,7 @@ rl_games:
       demon_attack:
         prompt_map_path: null
         frameskip: 4
-        image_size: 84
+        image_size: 224
         task_description: null
         mid_train:
           enabled: true
