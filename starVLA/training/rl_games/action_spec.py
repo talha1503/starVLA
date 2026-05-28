@@ -8,6 +8,8 @@ def _deadly_action_dim(cfg) -> int:
         return 7
     if layout == "factorized_11":
         return 11
+    if layout == "joint_54":
+        return 54
     raise ValueError(f"Unsupported deadly action layout: {layout}")
 
 
@@ -54,4 +56,3 @@ def apply_action_spec(cfg) -> None:
     # openvla and other dense/discrete heads should emit env action space directly.
     action_cfg.action_dim = int(env_dim)
     action_cfg.action_env_dim = int(env_dim)
-
