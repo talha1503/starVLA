@@ -80,7 +80,7 @@ def test_ce_action_loss_uses_label_smoothing():
     assert pred_actions.grad is not None
 
 
-def test_factorized_ce_action_loss_sums_deadly_corridor_factor_losses():
+def test_factorized_ce_action_loss_averages_deadly_corridor_factor_losses():
     pred_actions = torch.tensor(
         [
             [
@@ -100,12 +100,14 @@ def test_factorized_ce_action_loss_sums_deadly_corridor_factor_losses():
     )
 
     loss = qwen_oft_action_loss(pred_actions, actions_target, "factorized_ce", nn.L1Loss())
-    expected = (
-        F.cross_entropy(pred_actions[..., 0:3].reshape(-1, 3), torch.tensor([1, 0]))
-        + F.cross_entropy(pred_actions[..., 3:6].reshape(-1, 3), torch.tensor([1, 2]))
-        + F.cross_entropy(pred_actions[..., 6:9].reshape(-1, 3), torch.tensor([2, 0]))
-        + F.cross_entropy(pred_actions[..., 9:11].reshape(-1, 2), torch.tensor([1, 0]))
-    )
+    expected = torch.stack(
+        [
+            F.cross_entropy(pred_actions[..., 0:3].reshape(-1, 3), torch.tensor([1, 0])),
+            F.cross_entropy(pred_actions[..., 3:6].reshape(-1, 3), torch.tensor([1, 2])),
+            F.cross_entropy(pred_actions[..., 6:9].reshape(-1, 3), torch.tensor([2, 0])),
+            F.cross_entropy(pred_actions[..., 9:11].reshape(-1, 2), torch.tensor([1, 0])),
+        ]
+    ).mean()
 
     assert torch.allclose(loss, expected)
     loss.backward()
@@ -138,28 +140,30 @@ def test_factorized_ce_action_loss_uses_label_smoothing_for_each_factor():
         nn.L1Loss(),
         ce_label_smoothing=0.1,
     )
-    expected = (
-        F.cross_entropy(
-            pred_actions[..., 0:3].reshape(-1, 3),
-            torch.tensor([1, 0]),
-            label_smoothing=0.1,
-        )
-        + F.cross_entropy(
-            pred_actions[..., 3:6].reshape(-1, 3),
-            torch.tensor([1, 2]),
-            label_smoothing=0.1,
-        )
-        + F.cross_entropy(
-            pred_actions[..., 6:9].reshape(-1, 3),
-            torch.tensor([2, 0]),
-            label_smoothing=0.1,
-        )
-        + F.cross_entropy(
-            pred_actions[..., 9:11].reshape(-1, 2),
-            torch.tensor([1, 0]),
-            label_smoothing=0.1,
-        )
-    )
+    expected = torch.stack(
+        [
+            F.cross_entropy(
+                pred_actions[..., 0:3].reshape(-1, 3),
+                torch.tensor([1, 0]),
+                label_smoothing=0.1,
+            ),
+            F.cross_entropy(
+                pred_actions[..., 3:6].reshape(-1, 3),
+                torch.tensor([1, 2]),
+                label_smoothing=0.1,
+            ),
+            F.cross_entropy(
+                pred_actions[..., 6:9].reshape(-1, 3),
+                torch.tensor([2, 0]),
+                label_smoothing=0.1,
+            ),
+            F.cross_entropy(
+                pred_actions[..., 9:11].reshape(-1, 2),
+                torch.tensor([1, 0]),
+                label_smoothing=0.1,
+            ),
+        ]
+    ).mean()
 
     assert torch.allclose(loss, expected)
     loss.backward()

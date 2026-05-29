@@ -20,27 +20,29 @@ def deadly_factorized_ce_action_loss(
     actions_target: torch.Tensor,
     label_smoothing: float = 0.0,
 ) -> torch.Tensor:
-    turn_loss = ce_action_loss(
-        pred_actions[..., 0:3],
-        actions_target[..., 0:3],
-        label_smoothing=label_smoothing,
-    )
-    move_loss = ce_action_loss(
-        pred_actions[..., 3:6],
-        actions_target[..., 3:6],
-        label_smoothing=label_smoothing,
-    )
-    strafe_loss = ce_action_loss(
-        pred_actions[..., 6:9],
-        actions_target[..., 6:9],
-        label_smoothing=label_smoothing,
-    )
-    attack_loss = ce_action_loss(
-        pred_actions[..., 9:11],
-        actions_target[..., 9:11],
-        label_smoothing=label_smoothing,
-    )
-    return turn_loss + move_loss + strafe_loss + attack_loss
+    losses = [
+        ce_action_loss(
+            pred_actions[..., 0:3],
+            actions_target[..., 0:3],
+            label_smoothing=label_smoothing,
+        ),
+        ce_action_loss(
+            pred_actions[..., 3:6],
+            actions_target[..., 3:6],
+            label_smoothing=label_smoothing,
+        ),
+        ce_action_loss(
+            pred_actions[..., 6:9],
+            actions_target[..., 6:9],
+            label_smoothing=label_smoothing,
+        ),
+        ce_action_loss(
+            pred_actions[..., 9:11],
+            actions_target[..., 9:11],
+            label_smoothing=label_smoothing,
+        ),
+    ]
+    return torch.stack(losses).mean()
 
 
 def qwen_oft_action_loss(
