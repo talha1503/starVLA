@@ -1,6 +1,8 @@
 # @package _global_
 
 checkpoint:
+  load: auto
+  hf_repo_id: null
   local:
     keep_last_n: 3
   sync:

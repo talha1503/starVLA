@@ -37,7 +37,7 @@ from transformers import AutoProcessor, get_scheduler
 from starVLA.dataloader import build_dataloader
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
-from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias
+from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias, validate_rl_games_config
 from starVLA.training.rl_games.auth import login_training_services
 from starVLA.training.train_step_events import should_run_step_interval_event
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
@@ -312,13 +312,28 @@ class VLATrainer(TrainerUtils):
             self.accelerator.print(f"✅ Full training state saved at {state_checkpoint_path}")
 
         if self.accelerator.is_main_process:
+            save_format = getattr(self.config.trainer, "save_format", "pt")
+            state_dict = self.accelerator.get_state_dict(self.model)
+            if save_format == "safetensors":
+                from safetensors.torch import save_file
+
+                model_checkpoint_path = checkpoint_path + "_model.safetensors"
+                save_file(state_dict, model_checkpoint_path)
+            elif save_format == "pt":
+                model_checkpoint_path = checkpoint_path + "_pytorch_model.pt"
+                torch.save(state_dict, model_checkpoint_path)
+            else:
+                raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
+
             summary_data = {"steps": self.completed_steps}
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
                 f.write(json.dumps(summary_data) + "\n")
             self.accelerator.print(f"✅ Checkpoint state saved at {state_checkpoint_path}")
+            self.accelerator.print(f"✅ Model checkpoint saved at {model_checkpoint_path}")
             self._checkpoint_sync_manager.register_local_checkpoint(
                 step=self.completed_steps,
                 state_path=state_checkpoint_path,
+                model_path=model_checkpoint_path,
             )
 
             if isinstance(self.config, AccessTrackedConfig):
@@ -427,7 +442,7 @@ class VLATrainer(TrainerUtils):
                 ):
                     step_metrics = self.eval_action_loss(step_metrics)
                 if self._rl_games_eval_runner is not None:
-                    eval_every = self._rl_games_eval_runner.interval_steps(default=self.config.trainer.eval_interval)
+                    eval_every = self._rl_games_eval_runner.interval_steps()
                     if eval_every > 0 and should_run_step_interval_event(
                         completed_steps=self.completed_steps,
                         interval=eval_every,
@@ -587,6 +602,7 @@ def main(cfg) -> None:
     logger.info("VLA Training :: Warming Up")
     if hasattr(cfg, "rl_games"):
         login_training_services(cfg, workspace_dir=getattr(cfg, "workspace_dir", None))
+        validate_rl_games_config(cfg)
     apply_model_alias(cfg)
     apply_action_spec(cfg)
 

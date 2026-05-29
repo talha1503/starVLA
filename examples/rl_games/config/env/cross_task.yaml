@@ -41,3 +41,6 @@ rl_games:
 datasets:
   vla_data:
     data_mix: cross_task_train
+
+dataset:
+  converted_name: cross_task_train

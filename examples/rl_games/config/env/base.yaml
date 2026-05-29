@@ -1,0 +1,7 @@
+# @package _global_
+
+rl_games:
+  env_eval:
+    image_size: 224
+    frameskip: 1
+    task_description: ""

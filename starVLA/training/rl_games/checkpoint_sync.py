@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 class CheckpointRecord:
     step: int
     state_path: Optional[str] = None
+    model_path: Optional[str] = None
 
 
 class CheckpointSyncManager:
@@ -28,8 +29,13 @@ class CheckpointSyncManager:
         self._local_keep_last_n = int(getattr(getattr(getattr(cfg, "checkpoint", {}), "local", {}), "keep_last_n", 0))
         self._hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
 
-    def register_local_checkpoint(self, step: int, state_path: str | None = None) -> None:
-        self._saved.append(CheckpointRecord(step=step, state_path=state_path))
+    def register_local_checkpoint(
+        self,
+        step: int,
+        state_path: str | None = None,
+        model_path: str | None = None,
+    ) -> None:
+        self._saved.append(CheckpointRecord(step=step, state_path=state_path, model_path=model_path))
         self._saved.sort(key=lambda record: record.step)
         self._prune_local_checkpoints()
         if not self._sync_enabled:
@@ -44,7 +50,7 @@ class CheckpointSyncManager:
                 self._hf_repo_id,
             )
             return
-        self._sync_to_hf(state_path=state_path)
+        self._sync_to_hf(state_path=state_path, model_path=model_path)
         self._prune_hf_checkpoints()
 
     def sync_eval_result(self, eval_path: str | None, stage: str, step: int) -> None:
@@ -69,22 +75,22 @@ class CheckpointSyncManager:
             return
         while len(self._saved) > self._local_keep_last_n:
             old = self._saved.pop(0)
-            path = old.state_path
-            if not path or not os.path.exists(path):
-                continue
-            try:
-                if os.path.isdir(path):
-                    shutil.rmtree(path)
-                else:
-                    os.remove(path)
-            except OSError:
-                # Non-fatal: keep training even if cleanup fails.
-                pass
+            for path in (old.state_path, old.model_path):
+                if not path or not os.path.exists(path):
+                    continue
+                try:
+                    if os.path.isdir(path):
+                        shutil.rmtree(path)
+                    else:
+                        os.remove(path)
+                except OSError:
+                    # Non-fatal: keep training even if cleanup fails.
+                    pass
 
-    def _sync_to_hf(self, state_path: str | None = None) -> None:
+    def _sync_to_hf(self, state_path: str | None = None, model_path: str | None = None) -> None:
         # Lazy-import and soft-fail to avoid hard dependency for local-only users.
         try:
-            from huggingface_hub import HfApi, upload_folder
+            from huggingface_hub import HfApi, upload_file, upload_folder
         except Exception as exc:
             logger.warning("HF checkpoint sync skipped: could not import huggingface_hub: %s", exc)
             return
@@ -96,6 +102,15 @@ class CheckpointSyncManager:
                 upload_folder(
                     folder_path=state_path,
                     path_in_repo=os.path.basename(state_path),
+                    repo_id=self._hf_repo_id,
+                    repo_type="model",
+                    token=self._hf_token,
+                )
+            if model_path and os.path.isfile(model_path):
+                logger.info("Uploading checkpoint model file to HF: %s -> %s", model_path, self._hf_repo_id)
+                upload_file(
+                    path_or_fileobj=model_path,
+                    path_in_repo=os.path.basename(model_path),
                     repo_id=self._hf_repo_id,
                     repo_type="model",
                     token=self._hf_token,

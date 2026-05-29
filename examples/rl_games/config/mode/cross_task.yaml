@@ -1,5 +1,9 @@
 # @package _global_
 
+defaults:
+  - base
+  - _self_
+
 rl_games:
   initialization_mode: scratch
   action_carrier: native
@@ -8,3 +12,7 @@ rl_games:
     latency:
       mode: mixed
       values: [0, 1, 2, 3, 4, 5]
+    mid_train:
+      latencies: [0, 1, 2, 3, 4, 5]
+
+mode: cross_task

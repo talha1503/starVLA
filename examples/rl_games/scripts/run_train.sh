@@ -130,6 +130,8 @@ SETUP_FORCE="false"
 PREPROCESS_CMD=""
 BASE_MODEL_DIR="playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action"
 BASE_MODEL_REPO_ID="StarVLA/Qwen3-VL-4B-Instruct-Action"
+BASE_MODEL_DIR_EXPLICIT="false"
+BASE_MODEL_REPO_ID_EXPLICIT="false"
 CHECKPOINT_LOAD="auto"
 CHECKPOINT_HF_REPO_ID=""
 INITIALIZATION_HF_REPO_ID=""
@@ -192,8 +194,8 @@ while [[ $# -gt 0 ]]; do
     --dataset-cache-dir) DATASET_CACHE_DIR="$2"; shift 2 ;;
     --setup-force) SETUP_FORCE="$2"; shift 2 ;;
     --preprocess-cmd) PREPROCESS_CMD="$2"; shift 2 ;;
-    --base-model-dir) BASE_MODEL_DIR="$2"; shift 2 ;;
-    --base-model-repo-id) BASE_MODEL_REPO_ID="$2"; shift 2 ;;
+    --base-model-dir) BASE_MODEL_DIR="$2"; BASE_MODEL_DIR_EXPLICIT="true"; shift 2 ;;
+    --base-model-repo-id) BASE_MODEL_REPO_ID="$2"; BASE_MODEL_REPO_ID_EXPLICIT="true"; shift 2 ;;
     --checkpoint-load) CHECKPOINT_LOAD="$2"; shift 2 ;;
     --checkpoint-hf-repo-id) CHECKPOINT_HF_REPO_ID="$2"; shift 2 ;;
     --initialization-local-dir) INITIALIZATION_LOCAL_DIR="$2"; shift 2 ;;
@@ -320,16 +322,21 @@ case "$INIT_MODE_LOWER" in
     INIT_MODE="bridge"
     INIT_MODE_LOWER="bridge"
     ACTION_CARRIER="bridge"
-    if [[ "$BASE_MODEL_REPO_ID" == "StarVLA/Qwen3-VL-4B-Instruct-Action" ]]; then
+    if [[ "$MODEL" == "pi0" && "$BASE_MODEL_REPO_ID_EXPLICIT" != "true" ]]; then
+      BASE_MODEL_REPO_ID="StarVLA/Qwen2.5-VL-3B-Instruct-Action"
+    elif [[ "$BASE_MODEL_REPO_ID" == "StarVLA/Qwen3-VL-4B-Instruct-Action" ]]; then
       BASE_MODEL_REPO_ID="Qwen/Qwen3-VL-4B-Instruct"
     fi
-    if [[ "$BASE_MODEL_DIR" == *"Qwen3-VL-4B-Instruct-Action" ]]; then
+    if [[ "$MODEL" == "pi0" && "$BASE_MODEL_DIR_EXPLICIT" != "true" ]]; then
+      BASE_MODEL_DIR="playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action"
+    elif [[ "$BASE_MODEL_DIR" == *"Qwen3-VL-4B-Instruct-Action" ]]; then
       BASE_MODEL_DIR="${BASE_MODEL_DIR%-Action}"
     fi
     if [[ -z "$INITIALIZATION_HF_REPO_ID" ]]; then
       case "$MODEL" in
         openvla) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-OFT-Bridge-RT-1" ;;
-        pi0|pi05) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1" ;;
+        pi0) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen-PI-Bridge-RT-1" ;;
+        pi05) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1" ;;
         gr00t) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-GR00T-Bridge-RT-1" ;;
         *) echo "No default bridge initializer for model '${MODEL}'." >&2; exit 1 ;;
       esac
@@ -337,7 +344,8 @@ case "$INIT_MODE_LOWER" in
     if [[ -z "$INITIALIZATION_LOCAL_DIR" ]]; then
       case "$MODEL" in
         openvla) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen3VL-OFT-Bridge-RT-1" ;;
-        pi0|pi05) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1" ;;
+        pi0) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen-PI-Bridge-RT-1" ;;
+        pi05) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1" ;;
         gr00t) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen3VL-GR00T-Bridge-RT-1" ;;
         *) echo "No default bridge initializer local dir for model '${MODEL}'." >&2; exit 1 ;;
       esac
@@ -345,7 +353,8 @@ case "$INIT_MODE_LOWER" in
     if [[ -z "$INITIALIZATION_CHECKPOINT_FILENAME" ]]; then
       case "$MODEL" in
         openvla) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_5000_pytorch_model.pt" ;;
-        pi0|pi05) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_50000_pytorch_model.pt" ;;
+        pi0) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_30000_pytorch_model.pt" ;;
+        pi05) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_50000_pytorch_model.pt" ;;
         gr00t) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_20000_pytorch_model.pt" ;;
         *) echo "No default bridge checkpoint filename for model '${MODEL}'." >&2; exit 1 ;;
       esac
@@ -404,9 +413,6 @@ fi
 if [[ "$INIT_MODE_LOWER" == "bridge" ]]; then
   CMD+=("framework.action_model.state_dim=7")
   CMD+=("datasets.vla_data.include_state=true")
-  if [[ "$MODEL" == "pi0" ]]; then
-    CMD+=("framework.name=QwenPI_v3")
-  fi
 fi
 if [[ -n "$LATENCY_MODE_OVERRIDE" ]]; then
   CMD+=("rl_games.env_eval.latency.mode=$LATENCY_MODE_OVERRIDE")

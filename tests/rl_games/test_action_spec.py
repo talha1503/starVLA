@@ -1,8 +1,12 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from starVLA.training.rl_games.action_spec import apply_action_spec
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _cfg(task, model_alias="openvla", init_mode="scratch", action_carrier="native", action_dim=2):
@@ -63,3 +67,23 @@ def test_bridge_rejects_deadly_factorized_11_layout():
 
     with pytest.raises(ValueError, match="7D action carrier"):
         apply_action_spec(cfg)
+
+
+def test_qwen_pi_legacy_dit_qwen_action_head_preset_is_available():
+    source = (REPO_ROOT / "starVLA/model/modules/action_model/GR00T_ActionHeader.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"DiT-Qwen": {"input_embedding_dim": 2048, "attention_head_dim": 64, "num_attention_heads": 32}' in source
+
+
+def test_qwen_pi_legacy_action_head_uses_action_hidden_width():
+    source = (REPO_ROOT / "starVLA/model/modules/action_model/GR00T_ActionHeader.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "self.hidden_size = int(config.get(\"action_hidden_dim\", config.hidden_size))" in source
+    assert "self.action_hidden_dim = int(config.get(\"action_hidden_dim\", self.model.config.output_dim))" in source
+    assert "input_dim=self.action_hidden_dim" in source
+    assert "return_all_hidden_states=self._uses_hidden_action_decoder" in source
+    assert "model_output = all_hidden_states[-1] if self._uses_hidden_action_decoder else projected_output" in source

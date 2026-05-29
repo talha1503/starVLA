@@ -1,32 +1,89 @@
 # @package _global_
 
-rl_games:
-  task: flappy
-  model_alias: openvla
-  initialization_mode: scratch
-  action_carrier: native
-  env_eval:
-    enabled: true
-    interval_steps: 100
-    num_episodes: 5
-    max_episode_steps: 2000
-    frameskip: 1
-    image_size: 224
-    task_description: ""
-    deadly:
-      action_layout: multibinary_7
-    latency:
-      mode: single
-      values: [0]
-      prompt_map_path: null
-    mid_train:
-      enabled: true
-      interval_steps: 100
-      latencies: null
-      num_episodes: 5
-      max_steps_per_episode: 2000
-    post_train:
-      enabled: true
-      latencies: null
-      num_episodes: 5
-      max_steps_per_episode: 2000
+framework:
+  qwenvl:
+    base_vlm: ${paths.base_model_dir}
+    attn_implementation: flash_attention_2
+    enable_gradient_checkpointing: true
+  action_model:
+    state_dim: 1
+    loss_type: l1
+    action_horizon: 1
+    future_action_window_size: 0
+    past_action_window_size: 0
+
+datasets:
+  vla_data:
+    dataset_py: lerobot_datasets
+    include_state: false
+    data_root_dir: playground/Datasets/rl_games
+    data_mix: ${dataset.converted_name}
+    eval_data_mix: null
+    action_type: discrete
+    sequential_step_sampling: false
+    per_device_batch_size: 4
+    load_all_data_for_training: true
+    obs_image_size: [224, 224]
+    video_backend: torchvision_av
+
+dataset:
+  source_hf: ""
+  converted_name: flappy_train
+  single_source_hf: ""
+  mixed_source_hf: ""
+  single_converted_name: flappy_train
+  mixed_converted_name: flappy_mixed_latency_train
+  single_latency_filter: null
+  mixed_latency_filter: null
+  force_download: false
+  setup_force: false
+  verify_rows: 200
+  max_episodes: null
+  latency_filter: null
+  debug_subset:
+    enabled: false
+    max_episodes: 5
+    suffix: debug
+
+base_model:
+  repo_id: StarVLA/Qwen3-VL-4B-Instruct-Action
+
+initialization:
+  checkpoint_local_dir: null
+  checkpoint_hf_repo_id: null
+  checkpoint_filename: null
+
+trainer:
+  max_train_steps: 2000
+  num_warmup_steps: 100
+  save_interval: 100
+  eval_interval: 100
+  eval_num_batches: 20
+  learning_rate:
+    base: 2.0e-05
+    qwen_vl_interface: 1.0e-05
+    action_model: 1.0e-04
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 1.0e-06
+  freeze_modules: ''
+  loss_scale:
+    vla: 1.0
+    vlm: 0.1
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+  logging_frequency: 10
+  gradient_clipping: 1.0
+  gradient_accumulation_steps: 1
+  distributed_backend: deepspeed
+  is_resume: false
+  pretrained_checkpoint: null
+  resume_step: 0
+  reload_modules: null
+  optimizer:
+    name: AdamW
+    betas: [0.9, 0.95]
+    eps: 1.0e-08
+    weight_decay: 1.0e-08
+    fused: false
+  save_format: pt

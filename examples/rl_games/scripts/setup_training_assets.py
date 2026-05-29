@@ -322,8 +322,6 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except Exception:
             return False
-        if args.source_dataset_hf and str(manifest.get("source", "")) != str(args.source_dataset_hf):
-            return False
         if str(manifest.get("action_carrier", "native")) != action_carrier:
             return False
         expected_latency_filter = getattr(args, "latency_filter", None)
