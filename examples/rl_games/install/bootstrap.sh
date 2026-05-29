@@ -131,8 +131,7 @@ validate_active_python_version() {
 
 install_in_active_env() {
   local model="$1"
-  local run_validate="${2:-true}"
-  shift 2
+  shift
   local envs=("$@")
 
   echo "[bootstrap] Installing common dependencies"
@@ -145,7 +144,15 @@ install_in_active_env() {
     echo "[bootstrap] Installing environment dependencies: ${env_name}"
     PYTHON_BIN=python "${SCRIPT_DIR}/env/${env_name}.sh"
   done
+}
 
+install_eval_extra_in_active_env() {
+  echo "[bootstrap] Installing latency-bench eval extra dependencies"
+  PYTHON_BIN=python "${SCRIPT_DIR}/eval_extra.sh"
+}
+
+validate_in_active_env() {
+  local run_validate="${1:-true}"
   if [[ "${run_validate}" == "true" ]]; then
     echo "[bootstrap] Running validation"
     PYTHON_BIN=python "${SCRIPT_DIR}/validate/common.sh"
@@ -162,7 +169,9 @@ if [[ "${SPLIT_ENVS}" == "true" ]]; then
     MODEL_ENVS=("${ENVS_TO_INSTALL[@]}")
 
     echo "[bootstrap] Installing model=${model} in env=${TARGET_ENV_NAME} with env targets: ${MODEL_ENVS[*]}"
-    install_in_active_env "${model}" "${RUN_VALIDATE}" "${MODEL_ENVS[@]}"
+    install_in_active_env "${model}" "${MODEL_ENVS[@]}"
+    install_eval_extra_in_active_env
+    validate_in_active_env "${RUN_VALIDATE}"
   done
 
   echo "[bootstrap] Complete."
@@ -174,7 +183,7 @@ fi
 ensure_conda_env "${CONDA_ENV_NAME}"
 conda activate "${CONDA_ENV_NAME}"
 validate_active_python_version "${CONDA_ENV_NAME}"
-install_in_active_env "${MODELS_TO_INSTALL[0]}" "false" "${ENVS_TO_INSTALL[@]}"
+install_in_active_env "${MODELS_TO_INSTALL[0]}" "${ENVS_TO_INSTALL[@]}"
 
 if [[ ${#MODELS_TO_INSTALL[@]} -gt 1 ]]; then
   for ((i=1; i<${#MODELS_TO_INSTALL[@]}; i++)); do
@@ -183,10 +192,8 @@ if [[ ${#MODELS_TO_INSTALL[@]} -gt 1 ]]; then
   done
 fi
 
-if [[ "${RUN_VALIDATE}" == "true" ]]; then
-  echo "[bootstrap] Running validation"
-  PYTHON_BIN=python "${SCRIPT_DIR}/validate/common.sh"
-fi
+install_eval_extra_in_active_env
+validate_in_active_env "${RUN_VALIDATE}"
 
 echo "[bootstrap] Complete."
 echo "[bootstrap] Activate later with: conda activate ${CONDA_ENV_NAME}"

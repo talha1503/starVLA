@@ -142,6 +142,9 @@ install_stack() {
   echo "[install_stack] Installing environment dependencies: ${ENV_NAME}"
   "${BASE_DIR}/env/${ENV_NAME}.sh"
 
+  echo "[install_stack] Installing latency-bench eval extra dependencies"
+  "${BASE_DIR}/eval_extra.sh"
+
   echo "[install_stack] Running validation"
   "${BASE_DIR}/validate/common.sh"
   local target_validator="${BASE_DIR}/validate/${MODEL}_${ENV_NAME}.sh"
