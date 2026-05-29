@@ -80,23 +80,29 @@ DATASET_NAMED_MIXTURES = {
     "deadly_corridor_fixed_l2_fs2": [("deadly_corridor_fixed_l2_fs2", 1.0, "rl_games_deadly_corridor")],
     "deadly_corridor_fixed_l2_fs4": [("deadly_corridor_fixed_l2_fs4", 1.0, "rl_games_deadly_corridor")],
     "deadly_corridor_fixed_l2_fs6": [("deadly_corridor_fixed_l2_fs6", 1.0, "rl_games_deadly_corridor")],
+    # 10k episode factorized 11 dataset
+    "deadly_corridor_fixed_l2_fs4_10k_eps": [("deadly_corridor_fixed_l2_fs4_10k_eps", 1.0, "rl_games_deadly_corridor")],
     # joint 54 dataset
     "deadly_corridor_fixed_l2_fs1_joint54": [
-        ("deadly_corridor_fixed_l2_fs4_joint54", 1.0, "rl_games_deadly_corridor")
+        ("deadly_corridor_fixed_l2_fs1_joint54", 1.0, "rl_games_deadly_corridor")
     ],
     "deadly_corridor_fixed_l2_fs2_joint54": [
-        ("deadly_corridor_fixed_l2_fs4_joint54", 1.0, "rl_games_deadly_corridor")
+        ("deadly_corridor_fixed_l2_fs2_joint54", 1.0, "rl_games_deadly_corridor")
     ],
     "deadly_corridor_fixed_l2_fs4_joint54": [
         ("deadly_corridor_fixed_l2_fs4_joint54", 1.0, "rl_games_deadly_corridor")
     ],
     "deadly_corridor_fixed_l2_fs6_joint54": [
-        ("deadly_corridor_fixed_l2_fs4_joint54", 1.0, "rl_games_deadly_corridor")
+        ("deadly_corridor_fixed_l2_fs6_joint54", 1.0, "rl_games_deadly_corridor")
     ],
     "deadly_corridor_mixed_latency_train": [
         ("deadly_corridor_mixed_latency_train", 1.0, "rl_games_deadly_corridor")
     ],
     "deadly_corridor_mixed_latency_train_factorized11": [
         ("deadly_corridor_mixed_latency_train_factorized11", 1.0, "rl_games_deadly_corridor")
+    ],
+    # 10k episode joint 54 dataset
+    "deadly_corridor_fixed_l2_fs4_joint54_10k_eps": [
+        ("deadly_corridor_fixed_l2_fs4_joint54_10k_eps", 1.0, "rl_games_deadly_corridor")
     ],
 }
