@@ -24,6 +24,7 @@ bash examples/rl_games/install/bootstrap.sh
 Split bootstrap creates one env per model:
 - `starvla_rl_games_openvla`
 - `starvla_rl_games_pi0`
+- `starvla_rl_games_pi05`
 - `starvla_rl_games_gr00t`
 
 Each split env installs the repo-standard `starVLA` stack plus the requested RL-games env dependencies. With the default `--env all`, every model env gets `flappy`, `demon_attack`, and `deadly_corridor` dependencies.
@@ -35,6 +36,7 @@ Layered installer (manual control):
 ```bash
 bash examples/rl_games/install/install_stack.sh openvla flappy
 bash examples/rl_games/install/install_stack.sh pi0 demon_attack
+bash examples/rl_games/install/install_stack.sh pi05 flappy
 bash examples/rl_games/install/install_stack.sh gr00t flappy
 bash examples/rl_games/install/install_stack.sh gr00t demon_attack
 bash examples/rl_games/install/install_stack.sh gr00t deadly_corridor
@@ -43,13 +45,14 @@ bash examples/rl_games/install/install_stack.sh gr00t deadly_corridor
 By default, layered install uses one conda env per model:
 - `openvla` -> `starvla_rl_games_openvla`
 - `pi0` -> `starvla_rl_games_pi0`
+- `pi05` -> `starvla_rl_games_pi05`
 - `gr00t` -> `starvla_rl_games_gr00t`
 
 You can override with `--conda-env <name>`, or skip conda handling with `--no-conda`.
 
 Available scripts:
 - `examples/rl_games/install/common.sh`
-- `examples/rl_games/install/model/{openvla,pi0,gr00t}.sh`
+- `examples/rl_games/install/model/{openvla,pi0,pi05,gr00t}.sh`
 - `examples/rl_games/install/env/{flappy,demon_attack,deadly_corridor}.sh`
 - `examples/rl_games/install/validate/*.sh`
 
@@ -66,10 +69,24 @@ Available model trees:
 ```text
 examples/rl_games/experiments/openvla/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
 examples/rl_games/experiments/pi0/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
+examples/rl_games/experiments/pi05/bridge/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
 examples/rl_games/experiments/gr00t/{scratch,bridge}/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
 ```
 
 `scratch` trains with the native task action width. `bridge` starts from the released StarVLA Bridge/RT-1 checkpoints, uses `Qwen/Qwen3-VL-4B-Instruct` as the base backbone, and trains through a shared 7D action/state carrier. Losses and inference are masked to the active task action dimensions: 2 for Flappy, 6 for Demon Attack, and 7 for Deadly Corridor.
+
+pi-0.5 Bridge configs:
+
+```text
+examples/rl_games/experiments/pi05/bridge/mixed_latency/flappy.yaml
+examples/rl_games/experiments/pi05/bridge/single/flappy.yaml
+examples/rl_games/experiments/pi05/bridge/mixed_latency/demon_attack.yaml
+examples/rl_games/experiments/pi05/bridge/single/demon_attack.yaml
+examples/rl_games/experiments/pi05/bridge/mixed_latency/deadly_corridor.yaml
+examples/rl_games/experiments/pi05/bridge/single/deadly_corridor.yaml
+```
+
+These pi-0.5 configs use `Qwen/Qwen3-VL-4B-Instruct` as the base backbone and initialize from `StarVLA/Qwen3VL-PI_v3-Bridge-RT_1`. Setup first checks the local initializer at `playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1/checkpoints/steps_50000_pytorch_model.pt`; if it is missing, it falls back to the Hugging Face repo.
 
 Edit `workspace_dir`, `auth`, `wandb`, `dataset`, `base_model`, `checkpoint`, `launch`, `train_data`, and `trainer` in the YAML. Relative asset paths are resolved under `workspace_dir`.
 
@@ -159,6 +176,33 @@ GR00T single-latency Deadly Corridor:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/gr00t/scratch/single/deadly_corridor.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0.5-style mixed-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi05/bridge/mixed_latency/flappy.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0.5-style single-latency Demon Attack:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi05/bridge/single/demon_attack.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0.5-style single-latency Deadly Corridor:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi05/bridge/single/deadly_corridor.yaml \
   workspace_dir=WORKSPACE_DIR \
   wandb.entity=WANDB_ENTITY
 ```

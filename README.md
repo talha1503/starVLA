@@ -169,6 +169,12 @@ For pi-0 Flappy specifically, the direct installer form is:
 bash examples/rl_games/install/install_stack.sh pi0 flappy
 ```
 
+For pi-0.5-style Flappy through StarVLA `QwenPI_v3`, the direct installer form is:
+
+```bash
+bash examples/rl_games/install/install_stack.sh pi05 flappy
+```
+
 For pi-0 Demon Attack:
 
 ```bash
@@ -217,12 +223,21 @@ examples/rl_games/experiments/
   pi0/
     scratch/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
     bridge/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
+  pi05/
+    bridge/{single,mixed_latency}/flappy.yaml
   gr00t/
     scratch/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
     bridge/{single,mixed_latency}/{flappy,demon_attack,deadly_corridor}.yaml
 ```
 
 `scratch` uses each task's native action width. `bridge` starts from the released StarVLA Bridge/RT-1 checkpoints, uses the non-Action Qwen3 backbone (`Qwen/Qwen3-VL-4B-Instruct`), and carries game actions/states through the 7D Bridge convention. The active loss/inference surface is masked to the task: Flappy uses action dims 0..1, Demon Attack uses dims 0..5, and Deadly Corridor uses all 7 semantic button dims.
+
+Current pi-0.5 Bridge Flappy configs:
+
+```text
+examples/rl_games/experiments/pi05/bridge/mixed_latency/flappy.yaml
+examples/rl_games/experiments/pi05/bridge/single/flappy.yaml
+```
 
 Edit the YAML before a real run. The most important field is `workspace_dir`:
 
@@ -237,7 +252,7 @@ paths:
   run_root_dir: results/Checkpoints
   dataset_local_dir: playground/Datasets/rl_games
   dataset_cache_dir: null
-  base_model_dir: playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
+  base_model_dir: playground/Pretrained_models/Qwen3-VL-4B-Instruct
   accelerate_config: starVLA/config/deepseeds/deepspeed_zero2.yaml
 ```
 
@@ -246,8 +261,14 @@ For `workspace_dir: WORKSPACE_DIR`, this means:
 ```text
 checkpoints/results: WORKSPACE_DIR/results/Checkpoints/<run_id>/
 converted dataset:    WORKSPACE_DIR/playground/Datasets/rl_games/<dataset.converted_name>
-base model weights:   WORKSPACE_DIR/playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
+base model weights:   WORKSPACE_DIR/playground/Pretrained_models/Qwen3-VL-4B-Instruct
+bridge initializer:   WORKSPACE_DIR/playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1/checkpoints/steps_50000_pytorch_model.pt
 ```
+
+For bridge initialization, setup checks `initialization.checkpoint_local_dir` first. If the requested
+`initialization.checkpoint_filename` exists there, it is passed to training as
+`trainer.pretrained_checkpoint`; otherwise setup falls back to
+`initialization.checkpoint_hf_repo_id`.
 
 Authentication tokens are read from the shell by default:
 
@@ -404,6 +425,24 @@ pi-0 single-latency Deadly Corridor:
 ```bash
 bash examples/rl_games/scripts/run_experiment.sh \
   examples/rl_games/experiments/pi0/scratch/single/deadly_corridor.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0.5-style mixed-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi05/bridge/mixed_latency/flappy.yaml \
+  workspace_dir=WORKSPACE_DIR \
+  wandb.entity=WANDB_ENTITY
+```
+
+pi-0.5-style single-latency Flappy:
+
+```bash
+bash examples/rl_games/scripts/run_experiment.sh \
+  examples/rl_games/experiments/pi05/bridge/single/flappy.yaml \
   workspace_dir=WORKSPACE_DIR \
   wandb.entity=WANDB_ENTITY
 ```

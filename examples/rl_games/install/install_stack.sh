@@ -18,7 +18,7 @@ Examples:
   bash examples/rl_games/install/install_stack.sh --conda-env my_openvla openvla flappy
 
 Arguments:
-  <model>                  openvla|pi0|gr00t
+  <model>                  openvla|pi0|pi05|gr00t
   <env>                    flappy|demon_attack|deadly_corridor|cross_task
 
 Options:
@@ -73,9 +73,9 @@ parse_args() {
 
 validate_targets() {
   case "${MODEL}" in
-    openvla|pi0|gr00t) ;;
+    openvla|pi0|pi05|gr00t) ;;
     *)
-      echo "[install_stack] Invalid model '${MODEL}'. Expected openvla|pi0|gr00t." >&2
+      echo "[install_stack] Invalid model '${MODEL}'. Expected openvla|pi0|pi05|gr00t." >&2
       exit 1
       ;;
   esac
@@ -86,6 +86,16 @@ validate_targets() {
       echo "[install_stack] Invalid env '${ENV_NAME}'. Expected flappy|demon_attack|deadly_corridor|cross_task." >&2
       exit 1
       ;;
+  esac
+}
+
+target_validator_name() {
+  local model="$1"
+  local env_name="$2"
+  case "${model}:${env_name}" in
+    pi0:demon_attack) echo "pi0_demon.sh" ;;
+    gr00t:deadly_corridor) echo "gr00t_deadly.sh" ;;
+    *) echo "${model}_${env_name}.sh" ;;
   esac
 }
 
@@ -153,7 +163,9 @@ install_stack() {
   echo "[install_stack] Running validation"
   "${BASE_DIR}/validate/common.sh"
   for env_target in "${env_targets[@]}"; do
-    local target_validator="${BASE_DIR}/validate/${MODEL}_${env_target}.sh"
+    local validator_name
+    validator_name="$(target_validator_name "${MODEL}" "${env_target}")"
+    local target_validator="${BASE_DIR}/validate/${validator_name}"
     if [[ -x "${target_validator}" ]]; then
       "${target_validator}"
     elif [[ -f "${target_validator}" ]]; then

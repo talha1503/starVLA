@@ -21,7 +21,7 @@ def test_local_keep_last_n_prunes_old_files(tmp_path: Path):
         path = tmp_path / f"steps_{step}_pytorch_model.pt"
         path.write_text("x", encoding="utf-8")
         files.append(path)
-        manager.register_local_checkpoint(step=step, path=str(path))
+        manager.register_local_checkpoint(step=step, model_path=str(path))
 
     assert not files[0].exists()
     assert files[1].exists()

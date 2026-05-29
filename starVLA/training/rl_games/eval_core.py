@@ -153,6 +153,17 @@ def _load_latency_prompt_map(path: Optional[str]) -> Dict[int, Dict[str, Any]]:
     return out
 
 
+def _cfg_get(container: Any, key: str, default_value: Any) -> Any:
+    if container is None:
+        return default_value
+    if isinstance(container, dict):
+        return container.get(key, default_value)
+    try:
+        return container[key]
+    except (AttributeError, KeyError, TypeError):
+        return getattr(container, key, default_value)
+
+
 def _get_available_button_names(env) -> List[str]:
     def _button_name(button):
         name = getattr(button, "name", None)
@@ -451,9 +462,16 @@ class RlGamesEvalRunner:
         stage_cfg = self._task_stage_cfg(task, stage)
         values = None
         if stage_cfg is not None:
-            values = getattr(stage_cfg, "latencies", None)
+            values = _cfg_get(container=stage_cfg, key="latencies", default_value=None)
         if not values:
-            values = getattr(getattr(env_eval, "latency", {}), "values", []) or [0]
+            latency_cfg = getattr(env_eval, "latency", {})
+            values = _cfg_get(container=latency_cfg, key="values", default_value=[]) or []
+            if not values:
+                prompt_map_path = _cfg_get(container=latency_cfg, key="prompt_map_path", default_value=None)
+                prompt_map = _load_latency_prompt_map(prompt_map_path)
+                if prompt_map:
+                    return sorted(prompt_map)
+                values = [0]
         return [int(v) for v in values]
 
     def _num_episodes(self, stage: str, task: str | None = None) -> int:

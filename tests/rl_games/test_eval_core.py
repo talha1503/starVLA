@@ -1,7 +1,9 @@
 import numpy as np
+from omegaconf import OmegaConf
 
 from starVLA.training.rl_games.eval_core import (
     ActionLatencyQueue,
+    RlGamesEvalRunner,
     decode_deadly_factorized_11,
     decode_deadly_multibinary_7,
     decode_discrete_argmax,
@@ -43,3 +45,31 @@ def test_action_latency_queue():
     queue.reset()
     outputs = [queue.schedule_and_get(a) for a in [1, 2, 3, 4]]
     assert outputs == [0, 0, 1, 2]
+
+
+def test_eval_runner_infers_latencies_from_prompt_map_when_values_empty(tmp_path):
+    prompt_map = tmp_path / "latency_prompt_map.json"
+    prompt_map.write_text(
+        '{"0": {"latency": 0, "latency_ms": 0.0, "prompt": "zero"},'
+        ' "2": {"latency": 2, "latency_ms": 66.6, "prompt": "two"}}',
+        encoding="utf-8",
+    )
+    cfg = OmegaConf.create(
+        {
+            "rl_games": {
+                "task": "demon_attack",
+                "model_alias": "openvla",
+                "env_eval": {
+                    "enabled": True,
+                    "latency": {
+                        "values": [],
+                        "prompt_map_path": str(prompt_map),
+                    },
+                },
+            }
+        }
+    )
+
+    runner = RlGamesEvalRunner(cfg=cfg, output_dir=str(tmp_path))
+
+    assert runner._get_latency_values(stage="mid_train") == [0, 2]

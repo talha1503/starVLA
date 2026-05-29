@@ -18,7 +18,7 @@ Usage: bash examples/rl_games/install/bootstrap.sh [options]
 Options:
   --conda-env <name>        Conda env name (default: ${CONDA_ENV_NAME})
   --python-version <ver>    Python version for new env (default: ${PYTHON_VERSION})
-  --model <name|all>        openvla|pi0|gr00t|all (default: ${MODEL_TARGET})
+  --model <name|all>        openvla|pi0|pi05|gr00t|all (default: ${MODEL_TARGET})
   --env <name|all>          flappy|demon_attack|deadly_corridor|all (default: ${ENV_TARGET})
   --split-envs              Create/use one env per model: <conda-env>_<model>
   --skip-validate           Skip final validation step
@@ -72,7 +72,7 @@ fi
 CONDA_BASE="$(conda info --base)"
 source "${CONDA_BASE}/etc/profile.d/conda.sh"
 
-MODELS=(openvla pi0 gr00t)
+MODELS=(openvla pi0 pi05 gr00t)
 ENVS=(flappy demon_attack deadly_corridor)
 
 if [[ "${MODEL_TARGET}" == "all" ]]; then
@@ -89,9 +89,9 @@ fi
 
 for model in "${MODELS_TO_INSTALL[@]}"; do
   case "${model}" in
-    openvla|pi0|gr00t) ;;
+    openvla|pi0|pi05|gr00t) ;;
     *)
-      echo "[bootstrap] Invalid --model '${model}'. Expected openvla|pi0|gr00t|all." >&2
+      echo "[bootstrap] Invalid --model '${model}'. Expected openvla|pi0|pi05|gr00t|all." >&2
       exit 1
       ;;
   esac
@@ -129,6 +129,39 @@ validate_active_python_version() {
   fi
 }
 
+target_validator_name() {
+  local model="$1"
+  local env_name="$2"
+  case "${model}:${env_name}" in
+    pi0:demon_attack) echo "pi0_demon.sh" ;;
+    gr00t:deadly_corridor) echo "gr00t_deadly.sh" ;;
+    *) echo "${model}_${env_name}.sh" ;;
+  esac
+}
+
+run_common_validation() {
+  PYTHON_BIN=python "${SCRIPT_DIR}/validate/common.sh"
+}
+
+run_target_validators_for_model() {
+  local model="$1"
+  shift
+  local envs=("$@")
+  local env_name validator_name target_validator
+
+  for env_name in "${envs[@]}"; do
+    validator_name="$(target_validator_name "${model}" "${env_name}")"
+    target_validator="${SCRIPT_DIR}/validate/${validator_name}"
+    if [[ -x "${target_validator}" ]]; then
+      PYTHON_BIN=python "${target_validator}"
+    elif [[ -f "${target_validator}" ]]; then
+      PYTHON_BIN=python bash "${target_validator}"
+    else
+      echo "[bootstrap] No target-specific validator found for ${model}/${env_name}; common validation passed."
+    fi
+  done
+}
+
 install_in_active_env() {
   local model="$1"
   local run_validate="${2:-true}"
@@ -148,7 +181,8 @@ install_in_active_env() {
 
   if [[ "${run_validate}" == "true" ]]; then
     echo "[bootstrap] Running validation"
-    PYTHON_BIN=python "${SCRIPT_DIR}/validate/common.sh"
+    run_common_validation
+    run_target_validators_for_model "${model}" "${envs[@]}"
   fi
 }
 
@@ -185,7 +219,10 @@ fi
 
 if [[ "${RUN_VALIDATE}" == "true" ]]; then
   echo "[bootstrap] Running validation"
-  PYTHON_BIN=python "${SCRIPT_DIR}/validate/common.sh"
+  run_common_validation
+  for model in "${MODELS_TO_INSTALL[@]}"; do
+    run_target_validators_for_model "${model}" "${ENVS_TO_INSTALL[@]}"
+  done
 fi
 
 echo "[bootstrap] Complete."

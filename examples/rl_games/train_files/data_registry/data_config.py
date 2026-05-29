@@ -1,9 +1,6 @@
 """RL-games data registry for StarVLA LeRobot datasets."""
 
-from starVLA.dataloader.gr00t_lerobot.datasets import ModalityConfig
 from starVLA.dataloader.gr00t_lerobot.embodiment_tags import EmbodimentTag
-from starVLA.dataloader.gr00t_lerobot.transform.base import ComposedModalityTransform
-from starVLA.dataloader.gr00t_lerobot.transform.state_action import StateActionToTensor
 
 
 class FlappyDataConfig:
@@ -16,6 +13,8 @@ class FlappyDataConfig:
     action_indices = [0]
 
     def modality_config(self):
+        from starVLA.dataloader.gr00t_lerobot.datasets import ModalityConfig
+
         return {
             "video": ModalityConfig(delta_indices=self.observation_indices, modality_keys=self.video_keys),
             "state": ModalityConfig(delta_indices=self.observation_indices, modality_keys=self.state_keys),
@@ -24,6 +23,9 @@ class FlappyDataConfig:
         }
 
     def transform(self):
+        from starVLA.dataloader.gr00t_lerobot.transform.base import ComposedModalityTransform
+        from starVLA.dataloader.gr00t_lerobot.transform.state_action import StateActionToTensor
+
         return ComposedModalityTransform(transforms=[
             StateActionToTensor(apply_to=self.state_keys),
             StateActionToTensor(apply_to=self.action_keys),

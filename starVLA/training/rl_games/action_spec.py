@@ -82,7 +82,7 @@ def apply_action_spec(cfg) -> None:
         action_cfg.action_env_dim = int(env_dim)
         return
 
-    if model_alias in {"pi-0", "gr00t"}:
+    if model_alias in {"pi-0", "pi-0.5", "gr00t"}:
         model_action_dim = int(getattr(action_cfg, "action_dim", 0))
         if model_action_dim < env_dim:
             raise ValueError(
