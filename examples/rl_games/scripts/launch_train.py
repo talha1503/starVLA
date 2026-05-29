@@ -194,6 +194,12 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
 
     dataset_cache_dir = _cfg_get(cfg, "paths.dataset_cache_dir")
     initialization_local_dir = _cfg_get(cfg, "initialization.checkpoint_local_dir")
+    cross_task_cfg = _cfg_get(cfg, "rl_games.cross_task")
+    cross_task = (
+        OmegaConf.to_container(cross_task_cfg, resolve=True)
+        if OmegaConf.is_config(cross_task_cfg)
+        else (cross_task_cfg or {})
+    )
 
     return SimpleNamespace(
         model=str(_cfg_get(cfg, "model")),
@@ -227,7 +233,7 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         ),
         initialization_hf_repo_id=str(_cfg_get(cfg, "initialization.checkpoint_hf_repo_id") or ""),
         initialization_checkpoint_filename=str(_cfg_get(cfg, "initialization.checkpoint_filename") or ""),
-        cross_task=OmegaConf.to_container(_cfg_get(cfg, "rl_games.cross_task") or {}, resolve=True),
+        cross_task=cross_task,
         checkpoint_sync_enabled=str(_as_bool(_cfg_get(cfg, "checkpoint.sync.enabled"))).lower(),
         checkpoint_sync_repo_id=str(_cfg_get(cfg, "checkpoint.sync.repo_id") or ""),
         hf_repo_id="",
