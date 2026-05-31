@@ -375,6 +375,10 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
         ("rl_games.env_eval.latency.mode", "rl_games.env_eval.latency.mode"),
         ("rl_games.env_eval.frameskip", "rl_games.env_eval.frameskip"),
         ("rl_games.env_eval.image_size", "rl_games.env_eval.image_size"),
+        ("rl_games.env_eval.seed", "rl_games.env_eval.seed"),
+        ("rl_games.env_eval.fixed_episode_seeds", "rl_games.env_eval.fixed_episode_seeds"),
+        ("rl_games.env_eval.latency_seed_stride", "rl_games.env_eval.latency_seed_stride"),
+        ("rl_games.env_eval.task_seed_stride", "rl_games.env_eval.task_seed_stride"),
         ("rl_games.env_eval.task_description", "rl_games.env_eval.task_description"),
     ):
         value = _cfg_get(cfg, cfg_path)

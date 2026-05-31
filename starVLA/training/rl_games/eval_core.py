@@ -10,6 +10,12 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
+TASK_SEED_INDEX = {
+    "flappy": 0,
+    "demon_attack": 1,
+    "deadly_corridor": 2,
+}
+
 
 class ActionLatencyQueue:
     def __init__(self, latency: int, default_action):
@@ -197,6 +203,20 @@ def _semantic_to_runtime_multibinary(semantic_values: List[int], runtime_order: 
     return [semantic_map.get(name, 0) for name in runtime_order]
 
 
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _stable_task_seed_index(task: str) -> int:
+    if task in TASK_SEED_INDEX:
+        return TASK_SEED_INDEX[task]
+    return 100 + sum((idx + 1) * ord(char) for idx, char in enumerate(task)) % 10000
+
+
 class _TaskEvaluator:
     def __init__(self, task: str, cfg, task_eval_cfg=None):
         self.task = task
@@ -220,6 +240,10 @@ class _TaskEvaluator:
         self.include_state = bool(getattr(vla_data_cfg, "include_state", False))
         self.state_dim = int(getattr(cfg.framework.action_model, "state_dim", 1) or 1)
         self.deadly_multibinary_threshold = self._resolve_deadly_multibinary_threshold()
+        self.fixed_episode_seeds = _as_bool(getattr(self.env_eval_cfg, "fixed_episode_seeds", True), default=True)
+        self.eval_seed = int(getattr(self.env_eval_cfg, "seed", getattr(cfg, "seed", 42)) or 42)
+        self.latency_seed_stride = int(getattr(self.env_eval_cfg, "latency_seed_stride", 1000) or 1000)
+        self.task_seed_stride = int(getattr(self.env_eval_cfg, "task_seed_stride", 100000) or 100000)
 
     def _resolve_deadly_multibinary_threshold(self) -> float:
         deadly_cfg = getattr(self.env_eval_cfg, "deadly", None)
@@ -317,6 +341,23 @@ class _TaskEvaluator:
             return _semantic_to_runtime_multibinary(semantic, runtime_button_order)
         return decode_discrete_argmax(raw_action, raw_action.shape[-1])
 
+    def _episode_seed(self, latency: int, episode: int) -> int | None:
+        if not self.fixed_episode_seeds:
+            return None
+        task_offset = _stable_task_seed_index(self.task) * self.task_seed_stride
+        latency_offset = int(latency) * self.latency_seed_stride
+        return int(self.eval_seed + task_offset + latency_offset + int(episode))
+
+    def _reset_env(self, env, seed: int | None):
+        if seed is None:
+            return env.reset()
+        try:
+            return env.reset(seed=int(seed))
+        except TypeError:
+            if hasattr(env, "seed"):
+                env.seed(int(seed))
+            return env.reset()
+
     def run_latency(
         self,
         model,
@@ -335,6 +376,7 @@ class _TaskEvaluator:
         rewards: List[float] = []
         lengths: List[int] = []
         action_hist = Counter()
+        episode_seeds: List[int | None] = []
 
         episode_iter = tqdm(
             range(num_episodes),
@@ -345,7 +387,9 @@ class _TaskEvaluator:
             dynamic_ncols=True,
         )
         for episode in episode_iter:
-            obs, _ = env.reset()
+            episode_seed = self._episode_seed(latency=latency, episode=episode)
+            episode_seeds.append(episode_seed)
+            obs, _ = self._reset_env(env, episode_seed)
             model_obs = self._model_observation(env, obs)
             queue.reset()
             done = False
@@ -410,6 +454,9 @@ class _TaskEvaluator:
             "episode_rewards": [float(reward) for reward in rewards],
             "episode_lengths": [int(length) for length in lengths],
             "decoded_action_hist": dict(action_hist),
+            "fixed_episode_seeds": bool(self.fixed_episode_seeds),
+            "eval_seed": int(self.eval_seed),
+            "episode_seeds": episode_seeds,
         }
 
 
@@ -544,6 +591,8 @@ class RlGamesEvalRunner:
             "step": int(step),
             "task": str(getattr(self.cfg.rl_games, "task", "flappy")),
             "model_alias": str(getattr(self.cfg.rl_games, "model_alias", "openvla")),
+            "fixed_episode_seeds": _as_bool(getattr(self.cfg.rl_games.env_eval, "fixed_episode_seeds", True), default=True),
+            "eval_seed": int(getattr(self.cfg.rl_games.env_eval, "seed", getattr(self.cfg, "seed", 42)) or 42),
             "total_episodes": 0,
             "mean_reward": 0.0,
             "mean_length": 0.0,
