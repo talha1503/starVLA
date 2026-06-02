@@ -4,6 +4,7 @@ from omegaconf import OmegaConf
 from starVLA.training.rl_games.eval_core import (
     ActionLatencyQueue,
     RlGamesEvalRunner,
+    _TaskEvaluator,
     decode_deadly_factorized_11,
     decode_deadly_multibinary_7,
     decode_discrete_argmax,
@@ -73,3 +74,49 @@ def test_eval_runner_infers_latencies_from_prompt_map_when_values_empty(tmp_path
     runner = RlGamesEvalRunner(cfg=cfg, output_dir=str(tmp_path))
 
     assert runner._get_latency_values(stage="mid_train") == [0, 2]
+
+
+def test_task_evaluator_reuses_episode_seeds_across_latencies_by_default():
+    cfg = OmegaConf.create(
+        {
+            "seed": 42,
+            "rl_games": {
+                "env_eval": {
+                    "fixed_episode_seeds": True,
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+    evaluator = _TaskEvaluator(task="flappy", cfg=cfg)
+
+    assert [evaluator._episode_seed(latency=0, episode=episode) for episode in range(3)] == [42, 43, 44]
+    assert [evaluator._episode_seed(latency=8, episode=episode) for episode in range(3)] == [42, 43, 44]
+
+
+def test_task_evaluator_respects_explicit_latency_seed_stride():
+    cfg = OmegaConf.create(
+        {
+            "seed": 42,
+            "rl_games": {
+                "env_eval": {
+                    "fixed_episode_seeds": True,
+                    "latency_seed_stride": 1000,
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+    evaluator = _TaskEvaluator(task="flappy", cfg=cfg)
+
+    assert [evaluator._episode_seed(latency=8, episode=episode) for episode in range(3)] == [8042, 8043, 8044]

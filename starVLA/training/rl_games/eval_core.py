@@ -211,6 +211,12 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _as_int(value: Any, default: int) -> int:
+    if value is None:
+        return default
+    return int(value)
+
+
 def _stable_task_seed_index(task: str) -> int:
     if task in TASK_SEED_INDEX:
         return TASK_SEED_INDEX[task]
@@ -241,9 +247,9 @@ class _TaskEvaluator:
         self.state_dim = int(getattr(cfg.framework.action_model, "state_dim", 1) or 1)
         self.deadly_multibinary_threshold = self._resolve_deadly_multibinary_threshold()
         self.fixed_episode_seeds = _as_bool(getattr(self.env_eval_cfg, "fixed_episode_seeds", True), default=True)
-        self.eval_seed = int(getattr(self.env_eval_cfg, "seed", getattr(cfg, "seed", 42)) or 42)
-        self.latency_seed_stride = int(getattr(self.env_eval_cfg, "latency_seed_stride", 1000) or 1000)
-        self.task_seed_stride = int(getattr(self.env_eval_cfg, "task_seed_stride", 100000) or 100000)
+        self.eval_seed = _as_int(getattr(self.env_eval_cfg, "seed", getattr(cfg, "seed", 42)), 42)
+        self.latency_seed_stride = _as_int(getattr(self.env_eval_cfg, "latency_seed_stride", None), 0)
+        self.task_seed_stride = _as_int(getattr(self.env_eval_cfg, "task_seed_stride", None), 100000)
 
     def _resolve_deadly_multibinary_threshold(self) -> float:
         deadly_cfg = getattr(self.env_eval_cfg, "deadly", None)
