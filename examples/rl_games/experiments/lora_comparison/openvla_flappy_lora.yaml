@@ -1,0 +1,129 @@
+# LoRA fine-tuning — flappy / fixed_l2. Runs on local A100 (GPU0).
+# Paired with openvla_flappy_full.yaml for the LoRA-vs-full ablation:
+# everything identical except lora.enabled and the backbone LR.
+workspace_dir: /mnt/data/latency_data
+
+conda:
+  enabled: true
+  env_name: starvla_rl_games_openvla
+
+auth:
+  env_file: null
+  hf_token_env: HF_TOKEN
+  wandb_api_key_env: WANDB_API_KEY
+
+config_name: train
+model: openvla
+env: flappy
+mode: single
+run_id: openvla_flappy_l2_lora
+run_root_dir: results/Checkpoints
+seed: 42
+wandb_entity: saberrr-zju
+wandb_project: starVLA_rl_games
+
+paths:
+  accelerate_config: starVLA/config/deepseeds/deepspeed_zero2.yaml
+
+dataset:
+  converted_hf: null
+  force_download: false
+
+datasets:
+  vla_data:
+    data_root_dir: playground/Datasets/rl_games
+    data_mix: flappy_fixed_l2_fs4
+    eval_data_mix: flappy_fixed_l2_fs4__val
+    action_type: discrete
+    sequential_step_sampling: false
+    load_all_data_for_training: true
+    obs_image_size: [224, 224]
+    video_backend: torchvision_av
+    # Effective (mini) batch = per_device_batch_size * gradient_accumulation_steps = 64.
+    # Split tuned per-GPU via microbench; product MUST match the full config (=64).
+    per_device_batch_size: 16
+
+framework:
+  name: QwenOFT
+  qwenvl:
+    base_vlm: ./playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
+    attn_implementation: flash_attention_2
+    enable_gradient_checkpointing: true
+    lora:
+      enabled: true
+      r: 32
+      alpha: 64
+      dropout: 0.05
+      target_modules: all-linear
+      bias: none
+  action_model:
+    action_layout: flappy_categorical_2
+    loss_type: ce
+
+base_model:
+  repo_id: StarVLA/Qwen3-VL-4B-Instruct-Action
+
+checkpoint:
+  load: none
+  hf_repo_id: null
+  sync:
+    enabled: false
+    keep_last_n: 0
+  local:
+    keep_last_n: 3
+
+launch:
+  use_accelerate: true
+  gpus: 0
+  num_processes: 1
+
+trainer:
+  max_train_steps: 2000
+  num_warmup_steps: 100
+  save_interval: 100
+  eval_interval: 100
+  eval_num_batches: 20
+  logging_frequency: 10
+  # Tuned per-GPU; per_device_batch_size * gradient_accumulation_steps == 64.
+  gradient_accumulation_steps: 4
+  # LoRA: ~10x larger backbone LR than full FT (low-rank update scaled by alpha/r).
+  # action_model LR is held identical to the full run (same from-scratch head).
+  learning_rate:
+    base: 2.0e-04
+    qwen_vl_interface: 2.0e-04
+    action_model: 1.0e-04
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 1.0e-06
+  freeze_modules: ""
+  loss_scale:
+    vla: 1.0
+    vlm: 0.1
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+  gradient_clipping: 1.0
+  save_format: pt
+
+# Real-env evaluation is done externally via latency_bench.run, so disable the
+# in-trainer env eval.
+rl_games:
+  task: flappy
+  model_alias: openvla
+  env_eval:
+    frameskip: 1
+    image_size: 84
+    enabled: false
+    latency:
+      mode: single
+      values: [2]
+    mid_train:
+      enabled: false
+      interval_steps: 100
+      latencies: [2]
+      num_episodes: 5
+      max_steps_per_episode: 2000
+    post_train:
+      enabled: false
+      latencies: [2]
+      num_episodes: 50
+      max_steps_per_episode: 2000
