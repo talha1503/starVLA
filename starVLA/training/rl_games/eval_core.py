@@ -249,7 +249,7 @@ class _TaskEvaluator:
         self.fixed_episode_seeds = _as_bool(getattr(self.env_eval_cfg, "fixed_episode_seeds", True), default=True)
         self.eval_seed = _as_int(getattr(self.env_eval_cfg, "seed", getattr(cfg, "seed", 42)), 42)
         self.latency_seed_stride = _as_int(getattr(self.env_eval_cfg, "latency_seed_stride", None), 0)
-        self.task_seed_stride = _as_int(getattr(self.env_eval_cfg, "task_seed_stride", None), 100000)
+        self.task_seed_stride = _as_int(getattr(self.env_eval_cfg, "task_seed_stride", None), 0)
 
     def _resolve_deadly_multibinary_threshold(self) -> float:
         deadly_cfg = getattr(self.env_eval_cfg, "deadly", None)

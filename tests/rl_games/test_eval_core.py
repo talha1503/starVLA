@@ -76,7 +76,7 @@ def test_eval_runner_infers_latencies_from_prompt_map_when_values_empty(tmp_path
     assert runner._get_latency_values(stage="mid_train") == [0, 2]
 
 
-def test_task_evaluator_reuses_episode_seeds_across_latencies_by_default():
+def test_task_evaluator_reuses_episode_seeds_across_tasks_and_latencies_by_default():
     cfg = OmegaConf.create(
         {
             "seed": 42,
@@ -93,10 +93,10 @@ def test_task_evaluator_reuses_episode_seeds_across_latencies_by_default():
         }
     )
 
-    evaluator = _TaskEvaluator(task="flappy", cfg=cfg)
-
-    assert [evaluator._episode_seed(latency=0, episode=episode) for episode in range(3)] == [42, 43, 44]
-    assert [evaluator._episode_seed(latency=8, episode=episode) for episode in range(3)] == [42, 43, 44]
+    for task in ("flappy", "demon_attack", "deadly_corridor"):
+        evaluator = _TaskEvaluator(task=task, cfg=cfg)
+        assert [evaluator._episode_seed(latency=0, episode=episode) for episode in range(3)] == [42, 43, 44]
+        assert [evaluator._episode_seed(latency=8, episode=episode) for episode in range(3)] == [42, 43, 44]
 
 
 def test_task_evaluator_respects_explicit_latency_seed_stride():
@@ -120,3 +120,26 @@ def test_task_evaluator_respects_explicit_latency_seed_stride():
     evaluator = _TaskEvaluator(task="flappy", cfg=cfg)
 
     assert [evaluator._episode_seed(latency=8, episode=episode) for episode in range(3)] == [8042, 8043, 8044]
+
+
+def test_task_evaluator_respects_explicit_task_seed_stride():
+    cfg = OmegaConf.create(
+        {
+            "seed": 42,
+            "rl_games": {
+                "env_eval": {
+                    "fixed_episode_seeds": True,
+                    "task_seed_stride": 100000,
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+    evaluator = _TaskEvaluator(task="demon_attack", cfg=cfg)
+
+    assert [evaluator._episode_seed(latency=0, episode=episode) for episode in range(3)] == [100042, 100043, 100044]
