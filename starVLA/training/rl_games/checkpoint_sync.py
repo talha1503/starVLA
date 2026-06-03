@@ -70,6 +70,30 @@ class CheckpointSyncManager:
             return
         self._sync_eval_to_hf(eval_path=eval_path, stage=stage, step=step)
 
+    def sync_best_checkpoint(
+        self,
+        state_path: str,
+        metadata_path: str,
+        config_paths: list[str] | None = None,
+    ) -> None:
+        if not self._sync_enabled:
+            logger.info("HF checkpoint sync disabled; skipping best checkpoint upload")
+            return
+        if not self._hf_repo_id:
+            logger.warning("HF checkpoint sync enabled but checkpoint.sync.repo_id is empty; skipping best checkpoint upload")
+            return
+        if not self._hf_token:
+            logger.warning(
+                "HF checkpoint sync enabled for %s but HF_TOKEN/HUGGINGFACE_HUB_TOKEN is not set; skipping best checkpoint upload",
+                self._hf_repo_id,
+            )
+            return
+        self._sync_best_to_hf(
+            state_path=state_path,
+            metadata_path=metadata_path,
+            config_paths=config_paths or [],
+        )
+
     def _prune_local_checkpoints(self) -> None:
         if self._local_keep_last_n <= 0:
             return
@@ -141,6 +165,62 @@ class CheckpointSyncManager:
             )
         except Exception as exc:
             logger.warning("HF eval sync failed for repo %s: %s", self._hf_repo_id, exc)
+            return
+
+    def _sync_best_to_hf(self, state_path: str, metadata_path: str, config_paths: list[str]) -> None:
+        try:
+            from huggingface_hub import HfApi, upload_file, upload_folder
+        except Exception as exc:
+            logger.warning("HF best checkpoint sync skipped: could not import huggingface_hub: %s", exc)
+            return
+        try:
+            api = HfApi(token=self._hf_token)
+            api.create_repo(repo_id=self._hf_repo_id, repo_type="model", exist_ok=True)
+
+            try:
+                files = api.list_repo_files(repo_id=self._hf_repo_id, repo_type="model")
+            except Exception:
+                files = []
+            for file_path in sorted(files):
+                if file_path.startswith("best_state/") or file_path == "best_model_metadata.json":
+                    api.delete_file(
+                        path_in_repo=file_path,
+                        repo_id=self._hf_repo_id,
+                        repo_type="model",
+                        token=self._hf_token,
+                    )
+
+            logger.info("Uploading best checkpoint state folder to HF: %s -> %s/best_state", state_path, self._hf_repo_id)
+            upload_folder(
+                folder_path=state_path,
+                path_in_repo="best_state",
+                repo_id=self._hf_repo_id,
+                repo_type="model",
+                token=self._hf_token,
+            )
+
+            if os.path.isfile(metadata_path):
+                upload_file(
+                    path_or_fileobj=metadata_path,
+                    path_in_repo="best_model_metadata.json",
+                    repo_id=self._hf_repo_id,
+                    repo_type="model",
+                    token=self._hf_token,
+                )
+
+            for config_path in config_paths:
+                if not config_path or not os.path.isfile(config_path):
+                    continue
+                upload_file(
+                    path_or_fileobj=config_path,
+                    path_in_repo=os.path.basename(config_path),
+                    repo_id=self._hf_repo_id,
+                    repo_type="model",
+                    token=self._hf_token,
+                )
+            logger.info("HF best checkpoint sync completed for repo %s", self._hf_repo_id)
+        except Exception as exc:
+            logger.warning("HF best checkpoint sync failed for repo %s: %s", self._hf_repo_id, exc)
             return
 
     def _prune_hf_checkpoints(self) -> None:

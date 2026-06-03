@@ -357,6 +357,7 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         checkpoint_local_dir=checkpoint_dir,
         checkpoint_load=str(_get(cfg, "checkpoint.load", "auto")),
         checkpoint_hf_repo_id=str(_get(cfg, "checkpoint.hf_repo_id", "") or ""),
+        checkpoint_save_best_model=str(_as_bool(_get(cfg, "checkpoint.save_best_model", True))).lower(),
         initialization_local_dir=(
             _resolve_path(_get(cfg, "initialization.checkpoint_local_dir"), workspace_dir)
             if _get(cfg, "initialization.checkpoint_local_dir") not in (None, "")
@@ -387,6 +388,7 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         f"checkpoint.sync.enabled={str(_as_bool(_get(cfg, 'checkpoint.sync_enabled', False))).lower()}",
         f"checkpoint.sync.keep_last_n={_get(cfg, 'checkpoint.hf_keep_last_n', 0)}",
         f"checkpoint.local.keep_last_n={_get(cfg, 'checkpoint.local_keep_last_n', 3)}",
+        f"checkpoint.save_best_model={str(_as_bool(_get(cfg, 'checkpoint.save_best_model', True))).lower()}",
         f"trainer.is_resume={str(bool(setup.get('resume_found'))).lower()}",
     ]
     if setup.get("resume_checkpoint"):

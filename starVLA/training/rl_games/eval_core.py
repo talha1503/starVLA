@@ -656,6 +656,13 @@ class RlGamesEvalRunner:
         if all_lengths:
             aggregate["mean_length"] = float(np.mean(all_lengths))
             aggregate["std_length"] = float(np.std(all_lengths))
+        if per_latency:
+            aggregate["macro_mean_reward"] = float(
+                np.mean([float(metrics.get("mean_reward", 0.0)) for metrics in per_latency.values()])
+            )
+            aggregate["macro_mean_length"] = float(
+                np.mean([float(metrics.get("mean_length", 0.0)) for metrics in per_latency.values()])
+            )
 
         result = EvalResult(per_latency=per_latency, aggregate=aggregate)
         result.path = self._save(result=result, step=step, stage=stage)

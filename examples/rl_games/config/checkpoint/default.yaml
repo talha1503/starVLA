@@ -3,6 +3,7 @@
 checkpoint:
   load: auto
   hf_repo_id: null
+  save_best_model: true
   local:
     keep_last_n: 3
   sync:

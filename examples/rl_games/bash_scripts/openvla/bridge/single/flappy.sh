@@ -16,6 +16,7 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.hf_repo_id="talha1503/openvla_bridge_flappy_single_latency_exp1" \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="talha1503/openvla_bridge_flappy_single_latency_exp1" \
+    dataset.source_hf="talha1503/flappy_bird_zero_latency_parquet" \
     checkpoint.local.keep_last_n=2 \
     trainer.max_train_steps=5000 \
     trainer.num_warmup_steps=0 \

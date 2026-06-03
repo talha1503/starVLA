@@ -50,6 +50,14 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 logger = logging.getLogger(__name__)
 
 
+def _as_bool(value, default: bool = False) -> bool:
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def load_fast_tokenizer():
     return AutoProcessor.from_pretrained("physical-intelligence/fast", trust_remote_code=True)
 
@@ -144,6 +152,14 @@ class VLATrainer(TrainerUtils):
         self._checkpoint_sync_manager = CheckpointSyncManager(cfg=self.config)
         self._rl_games_eval_runner = None
         self._pending_full_state_resume = None
+        self._save_best_model_enabled = _as_bool(
+            getattr(getattr(self.config, "checkpoint", {}), "save_best_model", None),
+            default=True,
+        )
+        self._best_score = float("-inf")
+        self._best_step = 0
+        self._best_state_path = None
+        self._best_metadata_path = None
         if hasattr(self.config, "rl_games") and hasattr(self.config.rl_games, "env_eval"):
             enabled = bool(getattr(self.config.rl_games.env_eval, "enabled", False))
             if enabled:
@@ -236,6 +252,9 @@ class VLATrainer(TrainerUtils):
         """Initialize checkpoint directory and handle checkpoint loading."""
         self.checkpoint_dir = os.path.join(self.config.output_dir, "checkpoints")
         os.makedirs(self.checkpoint_dir, exist_ok=True)
+        self._best_state_path = os.path.join(self.checkpoint_dir, "best_state")
+        self._best_metadata_path = os.path.join(self.checkpoint_dir, "best_model_metadata.json")
+        self._load_best_checkpoint_metadata()
 
         pretrained_checkpoint = getattr(self.config.trainer, "pretrained_checkpoint", None)
         is_resume = getattr(self.config.trainer, "is_resume", False)
@@ -297,6 +316,89 @@ class VLATrainer(TrainerUtils):
         """Load checkpoint."""
         self.accelerator.load_state(checkpoint_path)
         self.accelerator.print(f"Resumed from checkpoint: {checkpoint_path}")
+
+    def _load_best_checkpoint_metadata(self):
+        if not self._best_metadata_path or not os.path.isfile(self._best_metadata_path):
+            return
+        try:
+            with open(self._best_metadata_path, "r", encoding="utf-8") as handle:
+                metadata = json.load(handle)
+            self._best_score = float(metadata.get("best_score", self._best_score))
+            self._best_step = int(metadata.get("best_step", self._best_step))
+            logger.info(
+                "Loaded best checkpoint metadata: step=%s score=%s",
+                self._best_step,
+                self._best_score,
+            )
+        except Exception as exc:
+            logger.warning("Could not load best checkpoint metadata from %s: %s", self._best_metadata_path, exc)
+
+    @staticmethod
+    def _rl_games_best_score(eval_result) -> float:
+        if "macro_mean_reward" in eval_result.aggregate:
+            return float(eval_result.aggregate["macro_mean_reward"])
+        bucket_scores = [
+            float(metrics["mean_reward"])
+            for metrics in eval_result.per_latency.values()
+            if metrics is not None and "mean_reward" in metrics
+        ]
+        if bucket_scores:
+            return float(np.mean(bucket_scores))
+        return float(eval_result.aggregate.get("mean_reward", 0.0))
+
+    def _best_config_paths(self) -> list[str]:
+        output_dir = Path(self.config.output_dir)
+        return [
+            str(output_dir / "config.full.yaml"),
+            str(output_dir / "config.yaml"),
+        ]
+
+    def _save_best_checkpoint(self, eval_result, score: float, stage: str) -> bool:
+        if not self._save_best_model_enabled:
+            return False
+        if score <= self._best_score:
+            return False
+        if not self._best_state_path or not self._best_metadata_path:
+            raise RuntimeError("Best checkpoint paths were not initialized")
+
+        if self.accelerator.is_main_process and os.path.exists(self._best_state_path):
+            shutil.rmtree(self._best_state_path)
+        self.accelerator.wait_for_everyone()
+        self.accelerator.save_state(self._best_state_path, safe_serialization=True)
+        self.accelerator.wait_for_everyone()
+
+        self._best_score = float(score)
+        self._best_step = int(self.completed_steps)
+
+        if self.accelerator.is_main_process:
+            if isinstance(self.config, AccessTrackedConfig):
+                output_dir = Path(self.config.output_dir)
+                self.config.save_accessed_config(output_dir / "config.yaml", use_original_values=False)
+            metadata = {
+                "best_step": self._best_step,
+                "best_score": self._best_score,
+                "score_name": "mid_train_macro_mean_reward",
+                "stage": stage,
+                "eval_result_path": getattr(eval_result, "path", None),
+                "aggregate": eval_result.aggregate,
+                "per_latency_scores": {
+                    key: float(metrics.get("mean_reward", 0.0))
+                    for key, metrics in eval_result.per_latency.items()
+                },
+            }
+            with open(self._best_metadata_path, "w", encoding="utf-8") as handle:
+                json.dump(metadata, handle, indent=2)
+            self.accelerator.print(
+                f"✅ New best checkpoint saved at {self._best_state_path} "
+                f"(step={self._best_step}, score={self._best_score:.6f})"
+            )
+            self._checkpoint_sync_manager.sync_best_checkpoint(
+                state_path=self._best_state_path,
+                metadata_path=self._best_metadata_path,
+                config_paths=self._best_config_paths(),
+            )
+        self.accelerator.wait_for_everyone()
+        return True
 
     def _save_checkpoint(self):
         """Save current training state."""
@@ -373,6 +475,12 @@ class VLATrainer(TrainerUtils):
         step_metrics[f"{prefix}/mean_length"] = float(aggregate.get("mean_length", 0.0))
         step_metrics[f"{prefix}/std_reward"] = float(aggregate.get("std_reward", 0.0))
         step_metrics[f"{prefix}/std_length"] = float(aggregate.get("std_length", 0.0))
+        step_metrics[f"{prefix}/macro_mean_reward"] = float(
+            aggregate.get("macro_mean_reward", aggregate.get("mean_reward", 0.0))
+        )
+        step_metrics[f"{prefix}/macro_mean_length"] = float(
+            aggregate.get("macro_mean_length", aggregate.get("mean_length", 0.0))
+        )
         step_metrics[f"{prefix}/task_count"] = float(aggregate.get("task_count", 0))
 
         for key, metrics in eval_result.per_latency.items():
@@ -459,6 +567,16 @@ class VLATrainer(TrainerUtils):
                                 eval_result=eval_result,
                                 stage="mid_train",
                             )
+                            eval_score = self._rl_games_best_score(eval_result)
+                            is_new_best = self._save_best_checkpoint(
+                                eval_result=eval_result,
+                                score=eval_score,
+                                stage="mid_train",
+                            )
+                            step_metrics["checkpoint/current_eval_score"] = float(eval_score)
+                            step_metrics["checkpoint/best_score"] = float(self._best_score)
+                            step_metrics["checkpoint/best_step"] = float(self._best_step)
+                            step_metrics["checkpoint/is_new_best"] = float(is_new_best)
                             self._checkpoint_sync_manager.sync_eval_result(
                                 eval_path=eval_result.path,
                                 stage="mid_train",
@@ -478,7 +596,7 @@ class VLATrainer(TrainerUtils):
                 completed_steps=self.completed_steps,
                 interval=self.config.trainer.save_interval,
                 gradients_synced=gradients_synced,
-            ):
+            ) and not self._save_best_model_enabled:
                 self._save_checkpoint()
 
             if self.completed_steps >= self.config.trainer.max_train_steps:
@@ -569,11 +687,42 @@ class VLATrainer(TrainerUtils):
     def _finalize_training(self):
         """Training end processing."""
         save_interval = int(getattr(self.config.trainer, "save_interval", 0) or 0)
-        if self.completed_steps > 0 and (save_interval <= 0 or self.completed_steps % save_interval != 0):
+        if (
+            not self._save_best_model_enabled
+            and self.completed_steps > 0
+            and (save_interval <= 0 or self.completed_steps % save_interval != 0)
+        ):
             self._save_checkpoint()
 
         if self.accelerator.is_main_process:
-            logger.info(f"Training complete. Final training state is saved under {self.checkpoint_dir}")
+            if self._save_best_model_enabled:
+                logger.info(
+                    "Training complete. Best checkpoint step=%s score=%s path=%s",
+                    self._best_step,
+                    self._best_score,
+                    self._best_state_path,
+                )
+            else:
+                logger.info(f"Training complete. Final training state is saved under {self.checkpoint_dir}")
+
+        if (
+            self._save_best_model_enabled
+            and self._best_state_path
+            and os.path.isdir(self._best_state_path)
+        ):
+            self.accelerator.print(
+                f"Loading best checkpoint for post-train eval: "
+                f"{self._best_state_path} (step={self._best_step}, score={self._best_score:.6f})"
+            )
+            self._load_checkpoint(self._best_state_path)
+        elif self._save_best_model_enabled:
+            logger.warning(
+                "checkpoint.save_best_model=true but no best_state checkpoint was found; "
+                "post-train eval will use the current in-memory model."
+            )
+        self.accelerator.wait_for_everyone()
+
+        if self.accelerator.is_main_process:
             if self._rl_games_eval_runner is not None and self._rl_games_eval_runner.is_enabled(stage="post_train"):
                 eval_result = self._rl_games_eval_runner.run(
                     model=self.accelerator.unwrap_model(self.model),
@@ -585,6 +734,9 @@ class VLATrainer(TrainerUtils):
                     eval_result=eval_result,
                     stage="post_train",
                 )
+                if self._save_best_model_enabled:
+                    final_metrics["checkpoint/best_score"] = float(self._best_score)
+                    final_metrics["checkpoint/best_step"] = float(self._best_step)
                 self._checkpoint_sync_manager.sync_eval_result(
                     eval_path=eval_result.path,
                     stage="post_train",

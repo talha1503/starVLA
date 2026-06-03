@@ -57,6 +57,12 @@ def _as_bool(value: Any) -> bool:
     return str(value).lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _as_bool_default(value: Any, default: bool) -> bool:
+    if value in (None, ""):
+        return default
+    return _as_bool(value)
+
+
 def _resolve_path(value: Any, workspace_dir: Path) -> str:
     if value in (None, ""):
         return ""
@@ -226,6 +232,7 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         checkpoint_local_dir=checkpoint_dir,
         checkpoint_load=str(_cfg_get(cfg, "checkpoint.load") or "auto"),
         checkpoint_hf_repo_id=str(_cfg_get(cfg, "checkpoint.hf_repo_id") or ""),
+        checkpoint_save_best_model=str(_as_bool_default(_cfg_get(cfg, "checkpoint.save_best_model"), True)).lower(),
         initialization_local_dir=(
             _resolve_path(initialization_local_dir, workspace_dir)
             if initialization_local_dir not in (None, "")
@@ -258,6 +265,7 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
         f"checkpoint.sync.enabled={str(_as_bool(_cfg_get(cfg, 'checkpoint.sync.enabled'))).lower()}",
         f"checkpoint.sync.keep_last_n={_cfg_get(cfg, 'checkpoint.sync.keep_last_n') or 0}",
         f"checkpoint.local.keep_last_n={_cfg_get(cfg, 'checkpoint.local.keep_last_n') or 3}",
+        f"checkpoint.save_best_model={str(_as_bool_default(_cfg_get(cfg, 'checkpoint.save_best_model'), True)).lower()}",
         f"trainer.is_resume={str(bool(setup.get('resume_found'))).lower()}",
     ]
 

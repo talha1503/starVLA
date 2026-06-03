@@ -114,6 +114,30 @@ def _find_latest_local_checkpoint(checkpoint_dir: Path) -> tuple[Path | None, in
     return path, step, kind
 
 
+def _read_best_checkpoint_step(checkpoint_dir: Path) -> int:
+    metadata_path = checkpoint_dir / "best_model_metadata.json"
+    if not metadata_path.exists():
+        return 0
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception:
+        return 0
+    for key in ("best_step", "step"):
+        if metadata.get(key) is not None:
+            try:
+                return int(metadata[key])
+            except Exception:
+                return 0
+    return 0
+
+
+def _find_local_best_checkpoint(checkpoint_dir: Path) -> tuple[Path | None, int, str | None]:
+    best_state = checkpoint_dir / "best_state"
+    if not best_state.is_dir():
+        return None, 0, None
+    return best_state, _read_best_checkpoint_step(checkpoint_dir), "state"
+
+
 def _download_latest_hf_checkpoint(repo_id: str, checkpoint_dir: Path) -> tuple[Path | None, int, str | None, str | None]:
     try:
         from huggingface_hub import HfApi, hf_hub_download, snapshot_download
@@ -168,6 +192,40 @@ def _download_latest_hf_checkpoint(repo_id: str, checkpoint_dir: Path) -> tuple[
     except Exception as exc:
         return None, 0, None, f"could not download HF checkpoint {chosen}: {exc}"
     return Path(local_path), step, kind, None
+
+
+def _download_hf_best_checkpoint(repo_id: str, checkpoint_dir: Path) -> tuple[Path | None, int, str | None, str | None]:
+    try:
+        from huggingface_hub import HfApi, snapshot_download
+    except Exception as exc:
+        return None, 0, None, f"huggingface_hub import failed: {exc}"
+
+    hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+    try:
+        files = HfApi(token=hf_token).list_repo_files(repo_id=repo_id, repo_type="model")
+    except Exception as exc:
+        return None, 0, None, f"could not list HF checkpoint repo {repo_id}: {exc}"
+
+    if not any(file_path.startswith("best_state/") for file_path in files):
+        return None, 0, None, None
+
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        snapshot_download(
+            repo_id=repo_id,
+            repo_type="model",
+            allow_patterns=["best_state/**", "best_model_metadata.json"],
+            local_dir=str(checkpoint_dir),
+            local_dir_use_symlinks=False,
+            token=hf_token,
+        )
+    except Exception as exc:
+        return None, 0, None, f"could not download HF best checkpoint from {repo_id}: {exc}"
+
+    best_state = checkpoint_dir / "best_state"
+    if not best_state.is_dir():
+        return None, 0, None, f"HF best checkpoint from {repo_id} did not contain best_state/"
+    return best_state, _read_best_checkpoint_step(checkpoint_dir), "state", None
 
 
 def _download_hf_checkpoint_file(repo_id: str, filename: str, checkpoint_dir: Path) -> tuple[Path | None, int, str | None]:
@@ -638,8 +696,22 @@ def setup_assets(args) -> dict[str, Any]:
     result.update(_ensure_base_model(args.model, base_model_dir, args.base_model_repo_id))
 
     checkpoint_dir = Path(args.checkpoint_local_dir).expanduser().resolve()
+    save_best_model = _str2bool(getattr(args, "checkpoint_save_best_model", True))
     local_ckpt, local_step, local_kind = (None, 0, None)
-    if args.checkpoint_load in {"auto", "local"}:
+    if save_best_model and args.checkpoint_load in {"auto", "local"}:
+        local_ckpt, local_step, local_kind = _find_local_best_checkpoint(checkpoint_dir)
+        if local_ckpt is not None and args.checkpoint_load == "local":
+            result.update({
+                "resume_found": True,
+                "resume_source": "local_best",
+                "resume_kind": local_kind,
+                "resume_checkpoint": str(local_ckpt),
+                "resume_step": local_step,
+                "checkpoint_local_dir": str(checkpoint_dir),
+            })
+            return result
+
+    if not save_best_model and args.checkpoint_load in {"auto", "local"}:
         local_ckpt, local_step, local_kind = _find_latest_local_checkpoint(checkpoint_dir)
         if local_ckpt is not None and args.checkpoint_load == "local":
             result.update({
@@ -654,7 +726,10 @@ def setup_assets(args) -> dict[str, Any]:
 
     hf_repo_id = args.checkpoint_hf_repo_id or args.hf_repo_id
     if args.checkpoint_load in {"auto", "hf"} and hf_repo_id:
-        hf_ckpt, hf_step, hf_kind, hf_error = _download_latest_hf_checkpoint(hf_repo_id, checkpoint_dir)
+        if save_best_model:
+            hf_ckpt, hf_step, hf_kind, hf_error = _download_hf_best_checkpoint(hf_repo_id, checkpoint_dir)
+        else:
+            hf_ckpt, hf_step, hf_kind, hf_error = _download_latest_hf_checkpoint(hf_repo_id, checkpoint_dir)
         hf_is_better = (
             args.checkpoint_load == "hf"
             or local_ckpt is None
@@ -664,7 +739,7 @@ def setup_assets(args) -> dict[str, Any]:
         if hf_ckpt is not None and hf_is_better:
             result.update({
                 "resume_found": True,
-                "resume_source": "hf",
+                "resume_source": "hf_best" if save_best_model else "hf",
                 "resume_kind": hf_kind,
                 "resume_checkpoint": str(hf_ckpt),
                 "resume_step": hf_step,
@@ -674,7 +749,7 @@ def setup_assets(args) -> dict[str, Any]:
         if local_ckpt is not None:
             result.update({
                 "resume_found": True,
-                "resume_source": "local",
+                "resume_source": "local_best" if save_best_model else "local",
                 "resume_kind": local_kind,
                 "resume_checkpoint": str(local_ckpt),
                 "resume_step": local_step,
@@ -703,7 +778,7 @@ def setup_assets(args) -> dict[str, Any]:
     if local_ckpt is not None:
         result.update({
             "resume_found": True,
-            "resume_source": "local",
+            "resume_source": "local_best" if save_best_model else "local",
             "resume_kind": local_kind,
             "resume_checkpoint": str(local_ckpt),
             "resume_step": local_step,
@@ -813,6 +888,7 @@ def main() -> int:
     parser.add_argument("--checkpoint-local-dir", required=True)
     parser.add_argument("--checkpoint-load", choices=["auto", "none", "local", "hf"], default="auto")
     parser.add_argument("--checkpoint-hf-repo-id", default="")
+    parser.add_argument("--checkpoint-save-best-model", default="true")
     parser.add_argument("--initialization-local-dir", default="")
     parser.add_argument("--initialization-hf-repo-id", default="")
     parser.add_argument("--initialization-checkpoint-filename", default="")
