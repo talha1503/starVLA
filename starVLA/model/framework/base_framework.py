@@ -16,7 +16,7 @@ import torch
 from transformers import PretrainedConfig, PreTrainedModel
 
 from starVLA.model.framework.peft_checkpoint import is_lora_adapter_checkpoint, load_lora_adapter_checkpoint
-from starVLA.model.framework.share_tools import dict_to_namespace, read_mode_config
+from starVLA.model.framework.share_tools import dict_to_namespace, read_mode_config, resolve_checkpoint_path
 from starVLA.model.tools import FRAMEWORK_REGISTRY, FrameworkTools, auto_get_trainable_modules
 from starVLA.training.trainer_utils import initialize_overwatch
 
@@ -232,6 +232,7 @@ class baseframework(PreTrainedModel):
         """
         pretrained_checkpoint = Path(pretrained_checkpoint)
         model_config, norm_stats = read_mode_config(pretrained_checkpoint)  # read config and norm_stats
+        weights_checkpoint = resolve_checkpoint_path(pretrained_checkpoint)
 
         config = dict_to_namespace(model_config)
         model_config = config
@@ -241,15 +242,15 @@ class baseframework(PreTrainedModel):
         # set for action un-norm
         FrameworkModel.norm_stats = norm_stats
         # Load from Checkpoint (Custom --> should load both *projector* and *llm* weights)
-        if is_lora_adapter_checkpoint(pretrained_checkpoint):
-            FrameworkModel = load_lora_adapter_checkpoint(FrameworkModel, pretrained_checkpoint)
+        if is_lora_adapter_checkpoint(weights_checkpoint):
+            FrameworkModel = load_lora_adapter_checkpoint(FrameworkModel, weights_checkpoint)
         else:
-            if pretrained_checkpoint.suffix == ".safetensors":
+            if weights_checkpoint.suffix == ".safetensors":
                 from safetensors.torch import load_file
 
-                model_state_dict = load_file(str(pretrained_checkpoint))
+                model_state_dict = load_file(str(weights_checkpoint))
             else:
-                model_state_dict = torch.load(pretrained_checkpoint, map_location="cpu")
+                model_state_dict = torch.load(weights_checkpoint, map_location="cpu")
             # logger.info(f"Loading model weights from `{pretrained_checkpoint}`")
             model_keys = set(FrameworkModel.state_dict().keys())
             checkpoint_keys = set(model_state_dict.keys())

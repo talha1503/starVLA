@@ -21,6 +21,9 @@ from starVLA.training.trainer_utils import initialize_overwatch
 # Initialize Overwatch =>> Wraps `logging.Logger`
 overwatch = initialize_overwatch(__name__)
 
+CHECKPOINT_FILE_SUFFIXES = {".pt", ".pth", ".safetensors"}
+FULL_MODEL_CHECKPOINT_FILENAMES = ("pytorch_model.pt", "pytorch_model.pth", "model.safetensors")
+
 
 class NamespaceWithGet(SimpleNamespace):
     def get(self, key, default=None):
@@ -295,6 +298,36 @@ def populate_layerwise_dit_cfg(cfg, *, dit_hidden_dim: int, num_dit_layers: int)
     return dit_cfg
 
 
+def resolve_checkpoint_path(pretrained_checkpoint):
+    checkpoint_pt = Path(pretrained_checkpoint)
+    if checkpoint_pt.is_file():
+        assert checkpoint_pt.suffix in CHECKPOINT_FILE_SUFFIXES
+        return checkpoint_pt
+    if checkpoint_pt.is_dir() and (checkpoint_pt / "adapter_config.json").exists():
+        return checkpoint_pt
+    if checkpoint_pt.is_dir() and checkpoint_pt.name == "final_model":
+        candidates = [
+            checkpoint_pt / name
+            for name in FULL_MODEL_CHECKPOINT_FILENAMES
+            if (checkpoint_pt / name).is_file()
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates:
+            raise FileNotFoundError(f"No full-model checkpoint file found in `{checkpoint_pt}`")
+        raise RuntimeError(f"Ambiguous full-model checkpoint files in `{checkpoint_pt}`: {candidates}")
+    return checkpoint_pt
+
+
+def run_dir_from_checkpoint_path(pretrained_checkpoint):
+    resolved_checkpoint = resolve_checkpoint_path(pretrained_checkpoint)
+    if resolved_checkpoint.is_file():
+        return resolved_checkpoint.parents[1]
+    if resolved_checkpoint.name == "final_model":
+        return resolved_checkpoint.parent
+    return resolved_checkpoint.parents[1]
+
+
 def read_model_config(pretrained_checkpoint):
     """
     Load global model configuration and dataset normalization statistics
@@ -319,16 +352,7 @@ def read_model_config(pretrained_checkpoint):
     """
     if os.path.isfile(pretrained_checkpoint) or os.path.isdir(pretrained_checkpoint):
         overwatch.info(f"Loading from local checkpoint path `{(checkpoint_pt := Path(pretrained_checkpoint))}`")
-
-        if checkpoint_pt.is_file():
-            # [Validate] Checkpoint Path should look like
-            # `.../<RUN_ID>/checkpoints/<CHECKPOINT_PATH>.pt|.safetensors`
-            assert checkpoint_pt.suffix in {".pt", ".safetensors"}
-            run_dir = checkpoint_pt.parents[1]
-        elif checkpoint_pt.name == "final_model":
-            run_dir = checkpoint_pt.parent
-        else:
-            run_dir = checkpoint_pt.parents[1]
+        run_dir = run_dir_from_checkpoint_path(checkpoint_pt)
 
         # Get paths for `config.json`, `dataset_statistics.json` and pretrained checkpoint
         config_json, dataset_statistics_json = run_dir / "config.json", run_dir / "dataset_statistics.json"
@@ -373,16 +397,7 @@ def read_mode_config(pretrained_checkpoint):
     """
     if os.path.isfile(pretrained_checkpoint) or os.path.isdir(pretrained_checkpoint):
         overwatch.info(f"Loading from local checkpoint path `{(checkpoint_pt := Path(pretrained_checkpoint))}`")
-
-        if checkpoint_pt.is_file():
-            # [Validate] Checkpoint Path should look like
-            # `.../<RUN_ID>/checkpoints/<CHECKPOINT_PATH>.pt|.safetensors`
-            assert checkpoint_pt.suffix in {".pt", ".safetensors"}
-            run_dir = checkpoint_pt.parents[1]
-        elif checkpoint_pt.name == "final_model":
-            run_dir = checkpoint_pt.parent
-        else:
-            run_dir = checkpoint_pt.parents[1]
+        run_dir = run_dir_from_checkpoint_path(checkpoint_pt)
 
         # Get paths for `config.json`, `dataset_statistics.json` and pretrained checkpoint
         config_yaml, dataset_statistics_json = run_dir / "config.yaml", run_dir / "dataset_statistics.json"
