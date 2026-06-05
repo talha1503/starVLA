@@ -138,8 +138,30 @@ def _find_local_best_checkpoint(checkpoint_dir: Path) -> tuple[Path | None, int,
     return best_state, _read_best_checkpoint_step(checkpoint_dir), "state"
 
 
-def _resolve_explicit_resume_checkpoint(checkpoint: str) -> tuple[Path, int, str]:
-    checkpoint_path = Path(checkpoint).expanduser().resolve()
+def _candidate_resume_paths(checkpoint: str, checkpoint_dir: Path) -> list[Path]:
+    checkpoint_path = Path(checkpoint).expanduser()
+    if checkpoint_path.is_absolute():
+        return [checkpoint_path]
+
+    run_dir = checkpoint_dir.parent
+    return [
+        run_dir / checkpoint_path,
+        checkpoint_dir / checkpoint_path.name,
+        checkpoint_dir / checkpoint_path,
+    ]
+
+
+def _resolve_existing_resume_path(checkpoint: str, checkpoint_dir: Path) -> Path:
+    candidates = _candidate_resume_paths(checkpoint, checkpoint_dir)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    checked = ", ".join(str(candidate.resolve()) for candidate in candidates)
+    raise FileNotFoundError(f"explicit resume checkpoint does not exist: {checkpoint}. Checked: {checked}")
+
+
+def _resolve_explicit_resume_checkpoint(checkpoint: str, checkpoint_dir: Path) -> tuple[Path, int, str]:
+    checkpoint_path = _resolve_existing_resume_path(checkpoint, checkpoint_dir)
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"explicit resume checkpoint does not exist: {checkpoint_path}")
     if checkpoint_path.is_dir():
@@ -729,7 +751,7 @@ def setup_assets(args) -> dict[str, Any]:
     checkpoint_dir = Path(args.checkpoint_local_dir).expanduser().resolve()
     explicit_checkpoint = str(getattr(args, "checkpoint", "") or "")
     if explicit_checkpoint:
-        resume_checkpoint, resume_step, resume_kind = _resolve_explicit_resume_checkpoint(explicit_checkpoint)
+        resume_checkpoint, resume_step, resume_kind = _resolve_explicit_resume_checkpoint(explicit_checkpoint, checkpoint_dir)
         result.update({
             "resume_found": True,
             "resume_source": "explicit",

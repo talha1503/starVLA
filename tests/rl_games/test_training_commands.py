@@ -39,6 +39,7 @@ def test_training_command_matrix_targets_hydra_launcher() -> None:
             assert "trainer.batch_size=" not in command_text
             assert "datasets.vla_data.per_device_batch_size=16" in command_text
             assert "dataset.source_hf=data/" not in command_text
+            assert "checkpoint.save_pt_file=false" in command_text
 
 
 def test_training_commands_are_valid_bash() -> None:
@@ -113,6 +114,41 @@ def test_launcher_defaults_workspace_to_repo_root_when_env_is_unset(monkeypatch)
     assert launch_train._workspace_dir(cfg) == launch_train.REPO_ROOT
 
 
+def test_launcher_treats_checkpoint_load_path_as_explicit_checkpoint(tmp_path: Path) -> None:
+    checkpoint_path = tmp_path / "runs" / "run_1" / "checkpoints" / "steps_400_state"
+    cfg = OmegaConf.create(
+        {
+            "run_id": "run_1",
+            "model": "openvla",
+            "env": "flappy",
+            "mode": "single",
+            "rl_games": {"initialization_mode": "bridge", "action_carrier": "bridge"},
+            "dataset": {"converted_name": "flappy_train"},
+            "paths": {
+                "dataset_local_dir": "datasets",
+                "base_model_dir": "base_model",
+            },
+            "base_model": {"repo_id": "Qwen/Qwen3-VL-4B-Instruct"},
+            "checkpoint": {
+                "load": str(checkpoint_path),
+                "hf_repo_id": "",
+                "save_best_model": True,
+                "sync": {"enabled": False, "repo_id": ""},
+            },
+            "initialization": {
+                "checkpoint_local_dir": "",
+                "checkpoint_hf_repo_id": "",
+                "checkpoint_filename": "",
+            },
+        }
+    )
+
+    namespace = launch_train.setup_namespace_from_cfg(cfg, tmp_path, str(tmp_path / "runs"))
+
+    assert namespace.checkpoint == str(checkpoint_path)
+    assert namespace.checkpoint_load == "none"
+
+
 def test_vla_trainer_saves_last_checkpoints_independently_from_best_model() -> None:
     trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
 
@@ -144,8 +180,21 @@ def test_explicit_best_state_resume_reads_best_metadata(tmp_path: Path) -> None:
     best_state.mkdir(parents=True)
     (checkpoint_dir / "best_model_metadata.json").write_text('{"best_step": 2500}', encoding="utf-8")
 
-    checkpoint, step, kind = _resolve_explicit_resume_checkpoint(str(best_state))
+    checkpoint, step, kind = _resolve_explicit_resume_checkpoint(str(best_state), checkpoint_dir)
 
     assert checkpoint == best_state.resolve()
     assert step == 2500
+    assert kind == "state"
+
+
+def test_explicit_resume_checkpoint_matches_eval_relative_checkpoint_resolution(tmp_path: Path) -> None:
+    checkpoint_dir = tmp_path / "run" / "checkpoints"
+    state_dir = checkpoint_dir / "steps_300_state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "model.safetensors").write_text("weights", encoding="utf-8")
+
+    checkpoint, step, kind = _resolve_explicit_resume_checkpoint("steps_300_state", checkpoint_dir)
+
+    assert checkpoint == state_dir.resolve()
+    assert step == 300
     assert kind == "state"
