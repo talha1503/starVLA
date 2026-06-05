@@ -43,6 +43,40 @@ class ActionLatencyQueue:
         return self.current_action
 
 
+class DemonAttackNoopResetWrapper:
+    def __init__(self, env: Any, noop_max: int):
+        self.env = env
+        self.noop_max = int(noop_max)
+
+    def reset(self, **kwargs: Any) -> tuple[Any, Dict[str, Any]]:
+        obs, info = self.env.reset(**kwargs)
+        if self.noop_max <= 0:
+            return obs, info
+
+        np_random = getattr(self.env, "np_random", None)
+        if np_random is None or not hasattr(np_random, "integers"):
+            raise RuntimeError("Demon Attack no-op reset requires env.np_random with an integers method")
+
+        noops = int(np_random.integers(1, self.noop_max + 1))
+        for _ in range(noops):
+            obs, _, terminated, truncated, info = self.env.step(0)
+            if terminated or truncated:
+                obs, info = self.env.reset(**kwargs)
+        return obs, info
+
+    def step(self, action: Any) -> tuple[Any, float, bool, bool, Dict[str, Any]]:
+        return self.env.step(action)
+
+    def close(self) -> None:
+        self.env.close()
+
+    def render(self) -> Any:
+        return self.env.render()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.env, name)
+
+
 @dataclass
 class EvalResult:
     per_latency: Dict[str, Dict]
@@ -277,6 +311,8 @@ class _TaskEvaluator:
             import ale_py  # noqa: F401
             import gymnasium as gym
 
+            demon_attack_cfg = getattr(self.env_eval_cfg, "demon_attack", None)
+            noop_max = _as_int(getattr(demon_attack_cfg, "noop_max", None), 30)
             attempts = [
                 "ALE/DemonAttack-v5",
                 "ALE/DemonAttack-v4",
@@ -284,11 +320,12 @@ class _TaskEvaluator:
             last_exc = None
             for env_id in attempts:
                 try:
-                    return gym.make(
+                    env = gym.make(
                         env_id,
                         frameskip=self.frameskip,
                         repeat_action_probability=0.0,
                     )
+                    return DemonAttackNoopResetWrapper(env=env, noop_max=noop_max)
                 except Exception as exc:
                     last_exc = exc
             raise RuntimeError(f"Failed to create DemonAttack env: {last_exc}")

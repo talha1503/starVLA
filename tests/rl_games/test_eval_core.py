@@ -1,4 +1,6 @@
 import numpy as np
+import sys
+import types
 from omegaconf import OmegaConf
 
 from starVLA.training.rl_games.eval_core import (
@@ -143,3 +145,58 @@ def test_task_evaluator_respects_explicit_task_seed_stride():
     evaluator = _TaskEvaluator(task="demon_attack", cfg=cfg)
 
     assert [evaluator._episode_seed(latency=0, episode=episode) for episode in range(3)] == [100042, 100043, 100044]
+
+
+class _FixedRng:
+    def __init__(self, value: int):
+        self.value = value
+
+    def integers(self, low: int, high: int) -> int:
+        assert low == 1
+        assert high == 31
+        return self.value
+
+
+class _FakeDemonAttackEnv:
+    def __init__(self):
+        self.np_random = _FixedRng(value=30)
+        self.reset_calls = []
+        self.step_actions = []
+
+    def reset(self, **kwargs):
+        self.reset_calls.append(kwargs)
+        return "reset_obs", {"reset": True}
+
+    def step(self, action):
+        self.step_actions.append(action)
+        return "noop_obs", 0.0, False, False, {"noop": True}
+
+
+def test_demon_attack_env_uses_noop_reset_max_30_by_default(monkeypatch):
+    fake_env = _FakeDemonAttackEnv()
+    fake_gym = types.SimpleNamespace(make=lambda *args, **kwargs: fake_env)
+    monkeypatch.setitem(sys.modules, "gymnasium", fake_gym)
+    monkeypatch.setitem(sys.modules, "ale_py", types.SimpleNamespace())
+    cfg = OmegaConf.create(
+        {
+            "rl_games": {
+                "env_eval": {
+                    "frameskip": 4,
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+    evaluator = _TaskEvaluator(task="demon_attack", cfg=cfg)
+    env = evaluator._make_env()
+    obs, info = env.reset(seed=42)
+
+    assert obs == "noop_obs"
+    assert info == {"noop": True}
+    assert fake_env.reset_calls == [{"seed": 42}]
+    assert fake_env.step_actions == [0] * 30
