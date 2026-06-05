@@ -4,7 +4,7 @@ import json
 import os
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import numpy as np
 from PIL import Image
@@ -401,6 +401,34 @@ class _TaskEvaluator:
                 env.seed(int(seed))
             return env.reset()
 
+    def _build_latency_metrics(
+        self,
+        latency: int,
+        num_episodes: int,
+        rewards: List[float],
+        lengths: List[int],
+        action_hist: Counter,
+        episode_seeds: List[int | None],
+    ) -> Dict[str, Any]:
+        mean_reward = float(np.mean(rewards)) if rewards else 0.0
+        mean_length = float(np.mean(lengths)) if lengths else 0.0
+        std_reward = float(np.std(rewards)) if rewards else 0.0
+        std_length = float(np.std(lengths)) if lengths else 0.0
+        return {
+            "latency": int(latency),
+            "num_episodes": int(num_episodes),
+            "mean_reward": mean_reward,
+            "mean_length": mean_length,
+            "std_reward": std_reward,
+            "std_length": std_length,
+            "episode_rewards": [float(reward) for reward in rewards],
+            "episode_lengths": [int(length) for length in lengths],
+            "decoded_action_hist": dict(action_hist),
+            "fixed_episode_seeds": bool(self.fixed_episode_seeds),
+            "eval_seed": int(self.eval_seed),
+            "episode_seeds": episode_seeds,
+        }
+
     def run_latency(
         self,
         model,
@@ -410,6 +438,7 @@ class _TaskEvaluator:
         num_episodes: int,
         progress_desc: str | None = None,
         progress_position: int = 0,
+        on_episode_complete: Callable[[Dict[str, Any]], None] | None = None,
     ) -> Dict[str, Any]:
         env = self._make_env()
         runtime_button_order = _get_available_button_names(env) if self.task == "deadly_corridor" else None
@@ -481,26 +510,27 @@ class _TaskEvaluator:
                 "reward": f"{total_reward:.2f}",
                 "steps": steps,
             })
+            if on_episode_complete is not None:
+                on_episode_complete(
+                    self._build_latency_metrics(
+                        latency=latency,
+                        num_episodes=len(rewards),
+                        rewards=rewards,
+                        lengths=lengths,
+                        action_hist=action_hist,
+                        episode_seeds=episode_seeds,
+                    )
+                )
 
         env.close()
-        mean_reward = float(np.mean(rewards)) if rewards else 0.0
-        mean_length = float(np.mean(lengths)) if lengths else 0.0
-        std_reward = float(np.std(rewards)) if rewards else 0.0
-        std_length = float(np.std(lengths)) if lengths else 0.0
-        return {
-            "latency": int(latency),
-            "num_episodes": int(num_episodes),
-            "mean_reward": mean_reward,
-            "mean_length": mean_length,
-            "std_reward": std_reward,
-            "std_length": std_length,
-            "episode_rewards": [float(reward) for reward in rewards],
-            "episode_lengths": [int(length) for length in lengths],
-            "decoded_action_hist": dict(action_hist),
-            "fixed_episode_seeds": bool(self.fixed_episode_seeds),
-            "eval_seed": int(self.eval_seed),
-            "episode_seeds": episode_seeds,
-        }
+        return self._build_latency_metrics(
+            latency=latency,
+            num_episodes=num_episodes,
+            rewards=rewards,
+            lengths=lengths,
+            action_hist=action_hist,
+            episode_seeds=episode_seeds,
+        )
 
 
 class RlGamesEvalRunner:
@@ -629,23 +659,6 @@ class RlGamesEvalRunner:
     def run(self, model, step: int, stage: str = "mid_train") -> EvalResult:
         tasks = self._get_tasks()
         per_latency: Dict[str, Dict] = {}
-        aggregate = {
-            "stage": stage,
-            "step": int(step),
-            "task": str(getattr(self.cfg.rl_games, "task", "flappy")),
-            "model_alias": str(getattr(self.cfg.rl_games, "model_alias", "openvla")),
-            "fixed_episode_seeds": _as_bool(getattr(self.cfg.rl_games.env_eval, "fixed_episode_seeds", True), default=True),
-            "eval_seed": int(getattr(self.cfg.rl_games.env_eval, "seed", getattr(self.cfg, "seed", 42)) or 42),
-            "total_episodes": 0,
-            "mean_reward": 0.0,
-            "mean_length": 0.0,
-            "std_reward": 0.0,
-            "std_length": 0.0,
-            "task_count": len(tasks),
-        }
-
-        all_rewards = []
-        all_lengths = []
 
         rollout_plan = [
             (task_name, latency)
@@ -672,6 +685,18 @@ class RlGamesEvalRunner:
             task_eval_cfg = self._cross_task_cfg(task_name)
             task_eval = _TaskEvaluator(task=task_name, cfg=self.cfg, task_eval_cfg=task_eval_cfg)
             prompt = self._resolve_prompt(latency=latency, mapping=prompt_maps.get(task_name, {}), task=task_name)
+            key = f"{task_name}/latency_{latency}"
+
+            def save_episode_progress(metrics: Dict[str, Any]) -> None:
+                per_latency[key] = metrics
+                aggregate = self._build_aggregate(
+                    per_latency=per_latency,
+                    step=step,
+                    stage=stage,
+                    task_count=len(tasks),
+                )
+                self._save(result=EvalResult(per_latency=per_latency, aggregate=aggregate), step=step, stage=stage)
+
             metrics = task_eval.run_latency(
                 model=model,
                 latency=latency,
@@ -680,19 +705,46 @@ class RlGamesEvalRunner:
                 num_episodes=self._num_episodes(stage=stage, task=task_name),
                 progress_desc=f"{stage} {task_name} latency={latency}",
                 progress_position=1,
+                on_episode_complete=save_episode_progress,
             )
-            key = f"{task_name}/latency_{latency}"
             per_latency[key] = metrics
-            aggregate["total_episodes"] += metrics["num_episodes"]
-            all_rewards.extend(float(reward) for reward in metrics.get("episode_rewards", []))
-            all_lengths.extend(float(length) for length in metrics.get("episode_lengths", []))
 
-        if all_rewards:
-            aggregate["mean_reward"] = float(np.mean(all_rewards))
-            aggregate["std_reward"] = float(np.std(all_rewards))
-        if all_lengths:
-            aggregate["mean_length"] = float(np.mean(all_lengths))
-            aggregate["std_length"] = float(np.std(all_lengths))
+        aggregate = self._build_aggregate(
+            per_latency=per_latency,
+            step=step,
+            stage=stage,
+            task_count=len(tasks),
+        )
+
+        result = EvalResult(per_latency=per_latency, aggregate=aggregate)
+        result.path = self._save(result=result, step=step, stage=stage)
+        return result
+
+    def _build_aggregate(self, per_latency: Dict[str, Dict], step: int, stage: str, task_count: int) -> Dict[str, Any]:
+        all_rewards = [
+            float(reward)
+            for metrics in per_latency.values()
+            for reward in metrics.get("episode_rewards", [])
+        ]
+        all_lengths = [
+            float(length)
+            for metrics in per_latency.values()
+            for length in metrics.get("episode_lengths", [])
+        ]
+        aggregate = {
+            "stage": stage,
+            "step": int(step),
+            "task": str(getattr(self.cfg.rl_games, "task", "flappy")),
+            "model_alias": str(getattr(self.cfg.rl_games, "model_alias", "openvla")),
+            "fixed_episode_seeds": _as_bool(getattr(self.cfg.rl_games.env_eval, "fixed_episode_seeds", True), default=True),
+            "eval_seed": int(getattr(self.cfg.rl_games.env_eval, "seed", getattr(self.cfg, "seed", 42)) or 42),
+            "total_episodes": int(sum(int(metrics.get("num_episodes", 0)) for metrics in per_latency.values())),
+            "mean_reward": float(np.mean(all_rewards)) if all_rewards else 0.0,
+            "mean_length": float(np.mean(all_lengths)) if all_lengths else 0.0,
+            "std_reward": float(np.std(all_rewards)) if all_rewards else 0.0,
+            "std_length": float(np.std(all_lengths)) if all_lengths else 0.0,
+            "task_count": int(task_count),
+        }
         if per_latency:
             aggregate["macro_mean_reward"] = float(
                 np.mean([float(metrics.get("mean_reward", 0.0)) for metrics in per_latency.values()])
@@ -700,10 +752,7 @@ class RlGamesEvalRunner:
             aggregate["macro_mean_length"] = float(
                 np.mean([float(metrics.get("mean_length", 0.0)) for metrics in per_latency.values()])
             )
-
-        result = EvalResult(per_latency=per_latency, aggregate=aggregate)
-        result.path = self._save(result=result, step=step, stage=stage)
-        return result
+        return aggregate
 
     def _save(self, result: EvalResult, step: int, stage: str) -> str:
         eval_dir = os.path.join(self.output_dir, "eval", stage)

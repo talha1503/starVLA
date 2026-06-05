@@ -200,3 +200,78 @@ def test_demon_attack_env_uses_noop_reset_max_30_by_default(monkeypatch):
     assert info == {"noop": True}
     assert fake_env.reset_calls == [{"seed": 42}]
     assert fake_env.step_actions == [0] * 30
+
+
+def test_eval_runner_saves_result_after_each_episode(monkeypatch, tmp_path):
+    cfg = OmegaConf.create(
+        {
+            "seed": 42,
+            "rl_games": {
+                "task": "demon_attack",
+                "model_alias": "openvla",
+                "env_eval": {
+                    "enabled": True,
+                    "seed": 42,
+                    "post_train": {
+                        "enabled": True,
+                        "latencies": [0],
+                        "num_episodes": 2,
+                        "max_steps_per_episode": 1,
+                    },
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+    save_totals = []
+    original_save = RlGamesEvalRunner._save
+
+    def spy_save(self, result, step, stage):
+        save_totals.append(int(result.aggregate["total_episodes"]))
+        return original_save(self, result, step, stage)
+
+    def fake_run_latency(self, **kwargs):
+        first_episode_metrics = {
+            "latency": 0,
+            "num_episodes": 1,
+            "mean_reward": 1.0,
+            "mean_length": 1.0,
+            "std_reward": 0.0,
+            "std_length": 0.0,
+            "episode_rewards": [1.0],
+            "episode_lengths": [1],
+            "decoded_action_hist": {"0": 1},
+            "fixed_episode_seeds": True,
+            "eval_seed": 42,
+            "episode_seeds": [42],
+        }
+        second_episode_metrics = {
+            "latency": 0,
+            "num_episodes": 2,
+            "mean_reward": 1.5,
+            "mean_length": 1.0,
+            "std_reward": 0.5,
+            "std_length": 0.0,
+            "episode_rewards": [1.0, 2.0],
+            "episode_lengths": [1, 1],
+            "decoded_action_hist": {"0": 2},
+            "fixed_episode_seeds": True,
+            "eval_seed": 42,
+            "episode_seeds": [42, 43],
+        }
+        kwargs["on_episode_complete"](first_episode_metrics)
+        kwargs["on_episode_complete"](second_episode_metrics)
+        return second_episode_metrics
+
+    monkeypatch.setattr(RlGamesEvalRunner, "_save", spy_save)
+    monkeypatch.setattr(_TaskEvaluator, "run_latency", fake_run_latency)
+
+    runner = RlGamesEvalRunner(cfg=cfg, output_dir=str(tmp_path))
+    result = runner.run(model=object(), step=2500, stage="post_train")
+
+    assert save_totals == [1, 2, 2]
+    assert result.path == str(tmp_path / "eval" / "post_train" / "step_2500.json")
