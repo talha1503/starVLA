@@ -63,6 +63,12 @@ def _as_bool_default(value: Any, default: bool) -> bool:
     return _as_bool(value)
 
 
+def _default_if_empty(value: Any, default: Any) -> Any:
+    if value in (None, ""):
+        return default
+    return value
+
+
 def _resolve_path(value: Any, workspace_dir: Path) -> str:
     if value in (None, ""):
         return ""
@@ -264,8 +270,9 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
         f"rl_games.env_eval.enabled={str(_as_bool(_cfg_get(cfg, 'rl_games.env_eval.enabled'))).lower()}",
         f"checkpoint.sync.enabled={str(_as_bool(_cfg_get(cfg, 'checkpoint.sync.enabled'))).lower()}",
         f"checkpoint.sync.keep_last_n={_cfg_get(cfg, 'checkpoint.sync.keep_last_n') or 0}",
-        f"checkpoint.local.keep_last_n={_cfg_get(cfg, 'checkpoint.local.keep_last_n') or 3}",
+        f"checkpoint.local.keep_last_n={_default_if_empty(_cfg_get(cfg, 'checkpoint.local.keep_last_n'), 1)}",
         f"checkpoint.save_best_model={str(_as_bool_default(_cfg_get(cfg, 'checkpoint.save_best_model'), True)).lower()}",
+        f"checkpoint.save_pt_file={str(_as_bool_default(_cfg_get(cfg, 'checkpoint.save_pt_file'), False)).lower()}",
         f"trainer.is_resume={str(bool(setup.get('resume_found'))).lower()}",
     ]
 

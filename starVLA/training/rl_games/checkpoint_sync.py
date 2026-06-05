@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional
 
 
 logger = logging.getLogger(__name__)
+STEP_FILE_RE = re.compile(r"steps_(\d+)_(?:pytorch_model\.pt|model\.safetensors)$")
+STEP_STATE_RE = re.compile(r"steps_(\d+)_state$")
 
 
 @dataclass
@@ -35,7 +39,11 @@ class CheckpointSyncManager:
         state_path: str | None = None,
         model_path: str | None = None,
     ) -> None:
-        self._saved.append(CheckpointRecord(step=step, state_path=state_path, model_path=model_path))
+        checkpoint_dir = self._checkpoint_dir(state_path=state_path, model_path=model_path)
+        if checkpoint_dir is not None:
+            self._saved = self._discover_local_checkpoints(checkpoint_dir)
+        else:
+            self._saved.append(CheckpointRecord(step=step, state_path=state_path, model_path=model_path))
         self._saved.sort(key=lambda record: record.step)
         self._prune_local_checkpoints()
         if not self._sync_enabled:
@@ -52,6 +60,35 @@ class CheckpointSyncManager:
             return
         self._sync_to_hf(state_path=state_path, model_path=model_path)
         self._prune_hf_checkpoints()
+
+    @staticmethod
+    def _checkpoint_dir(state_path: str | None, model_path: str | None) -> Path | None:
+        for path in (state_path, model_path):
+            if not path:
+                continue
+            return Path(path).expanduser().resolve().parent
+        return None
+
+    @staticmethod
+    def _discover_local_checkpoints(checkpoint_dir: Path) -> List[CheckpointRecord]:
+        records_by_step: dict[int, CheckpointRecord] = {}
+        if not checkpoint_dir.exists():
+            return []
+        for item in checkpoint_dir.iterdir():
+            if item.is_dir():
+                match = STEP_STATE_RE.match(item.name)
+                if match:
+                    step = int(match.group(1))
+                    record = records_by_step.setdefault(step, CheckpointRecord(step=step))
+                    record.state_path = str(item)
+                continue
+            if item.is_file():
+                match = STEP_FILE_RE.match(item.name)
+                if match:
+                    step = int(match.group(1))
+                    record = records_by_step.setdefault(step, CheckpointRecord(step=step))
+                    record.model_path = str(item)
+        return sorted(records_by_step.values(), key=lambda record: record.step)
 
     def sync_eval_result(self, eval_path: str | None, stage: str, step: int) -> None:
         if not eval_path or not os.path.isfile(eval_path):

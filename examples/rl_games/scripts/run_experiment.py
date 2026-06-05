@@ -387,8 +387,9 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         f"rl_games.env_eval.enabled={str(_as_bool(_first_config_value(cfg, ['rl_games.env_eval_enabled'], True))).lower()}",
         f"checkpoint.sync.enabled={str(_as_bool(_get(cfg, 'checkpoint.sync_enabled', False))).lower()}",
         f"checkpoint.sync.keep_last_n={_get(cfg, 'checkpoint.hf_keep_last_n', 0)}",
-        f"checkpoint.local.keep_last_n={_get(cfg, 'checkpoint.local_keep_last_n', 3)}",
+        f"checkpoint.local.keep_last_n={_get(cfg, 'checkpoint.local_keep_last_n', 1)}",
         f"checkpoint.save_best_model={str(_as_bool(_get(cfg, 'checkpoint.save_best_model', True))).lower()}",
+        f"checkpoint.save_pt_file={str(_as_bool(_get(cfg, 'checkpoint.save_pt_file', False))).lower()}",
         f"trainer.is_resume={str(bool(setup.get('resume_found'))).lower()}",
     ]
     if setup.get("resume_checkpoint"):

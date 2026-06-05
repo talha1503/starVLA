@@ -123,6 +123,34 @@ def _to_omegaconf(x: Any):
     return OmegaConf.create(x)
 
 
+def resolve_pretrained_checkpoint_path(pretrained_checkpoint: str | os.PathLike[str]) -> tuple[Path, Path]:
+    checkpoint_path = Path(pretrained_checkpoint).expanduser().resolve()
+    if checkpoint_path.is_dir():
+        for candidate_name in ("model.safetensors", "pytorch_model.bin"):
+            candidate_path = checkpoint_path / candidate_name
+            if candidate_path.exists():
+                return candidate_path, checkpoint_path.parents[1]
+        raise FileNotFoundError(
+            f"Checkpoint state directory `{checkpoint_path}` does not contain model.safetensors or pytorch_model.bin"
+        )
+
+    if not checkpoint_path.is_file():
+        overwatch.error(f"❌ Pretrained checkpoint `{pretrained_checkpoint}` does not exist.")
+        raise FileNotFoundError(f"Pretrained checkpoint `{pretrained_checkpoint}` does not exist.")
+
+    if checkpoint_path.parent.name.endswith("_state") or checkpoint_path.parent.name == "best_state":
+        if checkpoint_path.name not in {"model.safetensors", "pytorch_model.bin"}:
+            raise ValueError(
+                f"Unsupported checkpoint file inside state directory: `{checkpoint_path}`. "
+                "Expected model.safetensors or pytorch_model.bin."
+            )
+        return checkpoint_path, checkpoint_path.parents[2]
+
+    if checkpoint_path.suffix not in {".pt", ".safetensors"}:
+        raise ValueError(f"Unsupported checkpoint file `{checkpoint_path}`. Expected .pt or .safetensors.")
+    return checkpoint_path, checkpoint_path.parents[1]
+
+
 def merge_pram_config(init):
     """
     Decorator for __init__ to unify config handling.
@@ -335,13 +363,13 @@ def read_model_config(pretrained_checkpoint):
         FileNotFoundError: If checkpoint or required JSON files are missing.
         AssertionError: If file suffix or structure invalid.
     """
-    if os.path.isfile(pretrained_checkpoint):
-        overwatch.info(f"Loading from local checkpoint path `{(checkpoint_pt := Path(pretrained_checkpoint))}`")
-
-        # [Validate] Checkpoint Path should look like
-        # `.../<RUN_ID>/checkpoints/<CHECKPOINT_PATH>.pt|.safetensors`
-        assert checkpoint_pt.suffix in {".pt", ".safetensors"}
-        run_dir = checkpoint_pt.parents[1]
+    try:
+        checkpoint_pt, run_dir = resolve_pretrained_checkpoint_path(pretrained_checkpoint)
+    except FileNotFoundError:
+        overwatch.error(f"❌ Pretrained checkpoint `{pretrained_checkpoint}` does not exist.")
+        raise
+    if checkpoint_pt.exists():
+        overwatch.info(f"Loading from local checkpoint path `{checkpoint_pt}`")
 
         # Get paths for `config.json`, `dataset_statistics.json` and pretrained checkpoint
         config_json, dataset_statistics_json = run_dir / "config.json", run_dir / "dataset_statistics.json"
@@ -366,9 +394,6 @@ def read_model_config(pretrained_checkpoint):
         # Load Dataset Statistics for Action Denormalization
         with open(dataset_statistics_json, "r") as f:
             norm_stats = json.load(f)
-    else:
-        overwatch.error(f"❌ Pretrained checkpoint `{pretrained_checkpoint}` does not exist.")
-        raise FileNotFoundError(f"Pretrained checkpoint `{pretrained_checkpoint}` does not exist.")
     return global_cfg, norm_stats
 
 
@@ -384,13 +409,13 @@ def read_mode_config(pretrained_checkpoint):
             vla_cfg (dict)
             norm_stats (dict)
     """
-    if os.path.isfile(pretrained_checkpoint):
-        overwatch.info(f"Loading from local checkpoint path `{(checkpoint_pt := Path(pretrained_checkpoint))}`")
-
-        # [Validate] Checkpoint Path should look like
-        # `.../<RUN_ID>/checkpoints/<CHECKPOINT_PATH>.pt|.safetensors`
-        assert checkpoint_pt.suffix in {".pt", ".safetensors"}
-        run_dir = checkpoint_pt.parents[1]
+    try:
+        checkpoint_pt, run_dir = resolve_pretrained_checkpoint_path(pretrained_checkpoint)
+    except FileNotFoundError:
+        overwatch.error(f"❌ Pretrained checkpoint `{pretrained_checkpoint}` does not exist.")
+        raise
+    if checkpoint_pt.exists():
+        overwatch.info(f"Loading from local checkpoint path `{checkpoint_pt}`")
 
         # Get paths for `config.json`, `dataset_statistics.json` and pretrained checkpoint
         config_yaml, dataset_statistics_json = run_dir / "config.yaml", run_dir / "dataset_statistics.json"
@@ -411,9 +436,6 @@ def read_mode_config(pretrained_checkpoint):
         # Load Dataset Statistics for Action Denormalization
         with open(dataset_statistics_json, "r") as f:
             norm_stats = json.load(f)
-    else:
-        overwatch.error(f"❌ Pretrained checkpoint `{pretrained_checkpoint}` does not exist.")
-        raise FileNotFoundError(f"Pretrained checkpoint `{pretrained_checkpoint}` does not exist.")
     return global_cfg, norm_stats
 
 

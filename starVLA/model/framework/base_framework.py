@@ -15,7 +15,7 @@ import numpy as np
 import torch
 from transformers import PretrainedConfig, PreTrainedModel
 
-from starVLA.model.framework.share_tools import dict_to_namespace, read_mode_config
+from starVLA.model.framework.share_tools import dict_to_namespace, read_mode_config, resolve_pretrained_checkpoint_path
 from starVLA.model.tools import FRAMEWORK_REGISTRY, FrameworkTools, auto_get_trainable_modules
 from starVLA.training.trainer_utils import initialize_overwatch
 
@@ -229,7 +229,7 @@ class baseframework(PreTrainedModel):
             RuntimeError: If state_dict key mismatch occurs under strict=True.
             FileNotFoundError: If underlying files are missing (surfaced earlier).
         """
-        pretrained_checkpoint = Path(pretrained_checkpoint)
+        pretrained_checkpoint, _ = resolve_pretrained_checkpoint_path(pretrained_checkpoint)
         model_config, norm_stats = read_mode_config(pretrained_checkpoint)  # read config and norm_stats
 
         config = dict_to_namespace(model_config)
@@ -266,4 +266,3 @@ class baseframework(PreTrainedModel):
         # **ensure model is on GPU**
         FrameworkModel = FrameworkModel
         return FrameworkModel
-

@@ -74,6 +74,28 @@ def test_launcher_forwards_canonical_per_device_batch_size_override(tmp_path: Pa
     assert "datasets.vla_data.per_device_batch_size=16" in cmd
 
 
+def test_launcher_defaults_to_one_last_checkpoint_and_no_pt_file(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="flappy",
+        init="bridge",
+        mode="single",
+        overrides=[],
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "base_model"),
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert "checkpoint.local.keep_last_n=1" in cmd
+    assert "checkpoint.save_best_model=true" in cmd
+    assert "checkpoint.save_pt_file=false" in cmd
+
+
 def test_launcher_defaults_workspace_to_repo_root_when_env_is_unset(monkeypatch) -> None:
     original_exists = Path.exists
 
@@ -90,13 +112,18 @@ def test_launcher_defaults_workspace_to_repo_root_when_env_is_unset(monkeypatch)
     assert launch_train._workspace_dir(cfg) == launch_train.REPO_ROOT
 
 
-def test_vla_trainer_saves_lightweight_model_checkpoint() -> None:
+def test_vla_trainer_saves_last_checkpoints_independently_from_best_model() -> None:
     trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
 
-    assert 'getattr(self.config.trainer, "save_format", "pt")' in trainer_text
+    assert ") and not self._save_best_model_enabled:" not in trainer_text
+
+
+def test_vla_trainer_pt_checkpoint_file_is_optional() -> None:
+    trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
+
+    assert "self._save_pt_file_enabled" in trainer_text
+    assert "safe_serialization=True" in trainer_text
     assert "self.accelerator.get_state_dict(self.model)" in trainer_text
     assert 'model_checkpoint_path = checkpoint_path + "_pytorch_model.pt"' in trainer_text
     assert "torch.save(state_dict, model_checkpoint_path)" in trainer_text
-    assert 'model_checkpoint_path = checkpoint_path + "_model.safetensors"' in trainer_text
-    assert "save_file(state_dict, model_checkpoint_path)" in trainer_text
     assert "model_path=model_checkpoint_path" in trainer_text

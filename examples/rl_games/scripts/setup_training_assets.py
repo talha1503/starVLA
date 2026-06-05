@@ -696,22 +696,8 @@ def setup_assets(args) -> dict[str, Any]:
     result.update(_ensure_base_model(args.model, base_model_dir, args.base_model_repo_id))
 
     checkpoint_dir = Path(args.checkpoint_local_dir).expanduser().resolve()
-    save_best_model = _str2bool(getattr(args, "checkpoint_save_best_model", True))
     local_ckpt, local_step, local_kind = (None, 0, None)
-    if save_best_model and args.checkpoint_load in {"auto", "local"}:
-        local_ckpt, local_step, local_kind = _find_local_best_checkpoint(checkpoint_dir)
-        if local_ckpt is not None and args.checkpoint_load == "local":
-            result.update({
-                "resume_found": True,
-                "resume_source": "local_best",
-                "resume_kind": local_kind,
-                "resume_checkpoint": str(local_ckpt),
-                "resume_step": local_step,
-                "checkpoint_local_dir": str(checkpoint_dir),
-            })
-            return result
-
-    if not save_best_model and args.checkpoint_load in {"auto", "local"}:
+    if args.checkpoint_load in {"auto", "local"}:
         local_ckpt, local_step, local_kind = _find_latest_local_checkpoint(checkpoint_dir)
         if local_ckpt is not None and args.checkpoint_load == "local":
             result.update({
@@ -726,10 +712,7 @@ def setup_assets(args) -> dict[str, Any]:
 
     hf_repo_id = args.checkpoint_hf_repo_id or args.hf_repo_id
     if args.checkpoint_load in {"auto", "hf"} and hf_repo_id:
-        if save_best_model:
-            hf_ckpt, hf_step, hf_kind, hf_error = _download_hf_best_checkpoint(hf_repo_id, checkpoint_dir)
-        else:
-            hf_ckpt, hf_step, hf_kind, hf_error = _download_latest_hf_checkpoint(hf_repo_id, checkpoint_dir)
+        hf_ckpt, hf_step, hf_kind, hf_error = _download_latest_hf_checkpoint(hf_repo_id, checkpoint_dir)
         hf_is_better = (
             args.checkpoint_load == "hf"
             or local_ckpt is None
@@ -739,7 +722,7 @@ def setup_assets(args) -> dict[str, Any]:
         if hf_ckpt is not None and hf_is_better:
             result.update({
                 "resume_found": True,
-                "resume_source": "hf_best" if save_best_model else "hf",
+                "resume_source": "hf",
                 "resume_kind": hf_kind,
                 "resume_checkpoint": str(hf_ckpt),
                 "resume_step": hf_step,
@@ -749,7 +732,7 @@ def setup_assets(args) -> dict[str, Any]:
         if local_ckpt is not None:
             result.update({
                 "resume_found": True,
-                "resume_source": "local_best" if save_best_model else "local",
+                "resume_source": "local",
                 "resume_kind": local_kind,
                 "resume_checkpoint": str(local_ckpt),
                 "resume_step": local_step,
@@ -778,7 +761,7 @@ def setup_assets(args) -> dict[str, Any]:
     if local_ckpt is not None:
         result.update({
             "resume_found": True,
-            "resume_source": "local_best" if save_best_model else "local",
+            "resume_source": "local",
             "resume_kind": local_kind,
             "resume_checkpoint": str(local_ckpt),
             "resume_step": local_step,

@@ -52,6 +52,7 @@ Options:
   --hf-keep-last-n <int>       checkpoint.sync.keep_last_n
   --local-keep-last-n <int>    checkpoint.local.keep_last_n
   --save-best-model <true|false> checkpoint.save_best_model (default: true)
+  --save-pt-file <true|false> checkpoint.save_pt_file (default: false)
   --dataset-mode <none|local|hf>  Dataset bootstrap mode (default: none)
   --dataset-local-dir <dir>    Dataset local directory (default: playground/Datasets/rl_games)
   --dataset-hf-repo-id <repo>  HF dataset repo id for dataset-mode=hf
@@ -117,7 +118,7 @@ DEADLY_ACTION_LAYOUT="multibinary_7"
 HF_SYNC_ENABLED="false"
 HF_REPO_ID=""
 HF_KEEP_LAST_N="0"
-LOCAL_KEEP_LAST_N="3"
+LOCAL_KEEP_LAST_N="1"
 DATASET_MODE="none"
 DATASET_LOCAL_DIR="playground/Datasets/rl_games"
 DATASET_HF_REPO_ID=""
@@ -136,6 +137,7 @@ BASE_MODEL_REPO_ID_EXPLICIT="false"
 CHECKPOINT_LOAD="auto"
 CHECKPOINT_HF_REPO_ID=""
 SAVE_BEST_MODEL="true"
+SAVE_PT_FILE="false"
 INITIALIZATION_HF_REPO_ID=""
 INITIALIZATION_LOCAL_DIR=""
 INITIALIZATION_CHECKPOINT_FILENAME=""
@@ -201,6 +203,7 @@ while [[ $# -gt 0 ]]; do
     --checkpoint-load) CHECKPOINT_LOAD="$2"; shift 2 ;;
     --checkpoint-hf-repo-id) CHECKPOINT_HF_REPO_ID="$2"; shift 2 ;;
     --save-best-model) SAVE_BEST_MODEL="$2"; shift 2 ;;
+    --save-pt-file) SAVE_PT_FILE="$2"; shift 2 ;;
     --initialization-local-dir) INITIALIZATION_LOCAL_DIR="$2"; shift 2 ;;
     --initialization-hf-repo-id) INITIALIZATION_HF_REPO_ID="$2"; shift 2 ;;
     --initialization-checkpoint-filename) INITIALIZATION_CHECKPOINT_FILENAME="$2"; shift 2 ;;
@@ -404,6 +407,7 @@ CMD=(
   "checkpoint.sync.keep_last_n=$HF_KEEP_LAST_N"
   "checkpoint.local.keep_last_n=$LOCAL_KEEP_LAST_N"
   "checkpoint.save_best_model=$SAVE_BEST_MODEL"
+  "checkpoint.save_pt_file=$SAVE_PT_FILE"
   "rl_games.initialization_mode=$INIT_MODE"
   "rl_games.action_carrier=$ACTION_CARRIER"
 )

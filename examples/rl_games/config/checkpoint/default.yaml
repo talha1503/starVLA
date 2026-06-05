@@ -4,8 +4,9 @@ checkpoint:
   load: auto
   hf_repo_id: null
   save_best_model: true
+  save_pt_file: false
   local:
-    keep_last_n: 3
+    keep_last_n: 1
   sync:
     enabled: false
     repo_id: null
