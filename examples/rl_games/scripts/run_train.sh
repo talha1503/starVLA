@@ -66,6 +66,7 @@ Options:
   --preprocess-cmd <cmd>       Optional preprocessing command run before training
   --base-model-dir <dir>      Local base model directory
   --base-model-repo-id <repo> HF repo for base model download
+  --checkpoint <path>         Explicit checkpoint to resume from
   --checkpoint-load <auto|none|local|hf>  Resume policy (default: auto; local first, then HF)
   --checkpoint-hf-repo-id <repo>  HF model repo id for checkpoint-load=hf
   --initialization-local-dir <dir> Local Bridge initializer repo directory checked before HF
@@ -135,6 +136,7 @@ BASE_MODEL_REPO_ID="StarVLA/Qwen3-VL-4B-Instruct-Action"
 BASE_MODEL_DIR_EXPLICIT="false"
 BASE_MODEL_REPO_ID_EXPLICIT="false"
 CHECKPOINT_LOAD="auto"
+RESUME_CHECKPOINT=""
 CHECKPOINT_HF_REPO_ID=""
 SAVE_BEST_MODEL="true"
 SAVE_PT_FILE="false"
@@ -200,6 +202,7 @@ while [[ $# -gt 0 ]]; do
     --preprocess-cmd) PREPROCESS_CMD="$2"; shift 2 ;;
     --base-model-dir) BASE_MODEL_DIR="$2"; BASE_MODEL_DIR_EXPLICIT="true"; shift 2 ;;
     --base-model-repo-id) BASE_MODEL_REPO_ID="$2"; BASE_MODEL_REPO_ID_EXPLICIT="true"; shift 2 ;;
+    --checkpoint) RESUME_CHECKPOINT="$2"; shift 2 ;;
     --checkpoint-load) CHECKPOINT_LOAD="$2"; shift 2 ;;
     --checkpoint-hf-repo-id) CHECKPOINT_HF_REPO_ID="$2"; shift 2 ;;
     --save-best-model) SAVE_BEST_MODEL="$2"; shift 2 ;;
@@ -467,6 +470,7 @@ SETUP_JSON="$(
     --base-model-dir "$BASE_MODEL_DIR" \
     --base-model-repo-id "${BASE_MODEL_REPO_ID:-}" \
     --checkpoint-local-dir "$CHECKPOINT_LOCAL_DIR" \
+    --checkpoint "${RESUME_CHECKPOINT:-}" \
     --checkpoint-load "$CHECKPOINT_LOAD" \
     --checkpoint-hf-repo-id "${CHECKPOINT_HF_REPO_ID:-}" \
     --checkpoint-save-best-model "$SAVE_BEST_MODEL" \

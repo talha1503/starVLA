@@ -138,6 +138,37 @@ def _find_local_best_checkpoint(checkpoint_dir: Path) -> tuple[Path | None, int,
     return best_state, _read_best_checkpoint_step(checkpoint_dir), "state"
 
 
+def _resolve_explicit_resume_checkpoint(checkpoint: str) -> tuple[Path, int, str]:
+    checkpoint_path = Path(checkpoint).expanduser().resolve()
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"explicit resume checkpoint does not exist: {checkpoint_path}")
+    if checkpoint_path.is_dir():
+        state_match = STEP_STATE_RE.match(checkpoint_path.name)
+        if state_match:
+            return checkpoint_path, int(state_match.group(1)), "state"
+        if checkpoint_path.name == "best_state":
+            return checkpoint_path, _read_best_checkpoint_step(checkpoint_path.parent), "state"
+        raise ValueError(
+            f"unsupported explicit resume checkpoint directory: {checkpoint_path}. "
+            "Expected steps_<N>_state/ or best_state/."
+        )
+    if checkpoint_path.is_file():
+        file_match = STEP_FILE_RE.match(checkpoint_path.name)
+        if file_match:
+            return checkpoint_path, int(file_match.group(1)), "model"
+        if checkpoint_path.parent.name.endswith("_state"):
+            state_match = STEP_STATE_RE.match(checkpoint_path.parent.name)
+            if state_match and checkpoint_path.name in {"model.safetensors", "pytorch_model.bin"}:
+                return checkpoint_path.parent, int(state_match.group(1)), "state"
+        if checkpoint_path.parent.name == "best_state" and checkpoint_path.name in {"model.safetensors", "pytorch_model.bin"}:
+            return checkpoint_path.parent, _read_best_checkpoint_step(checkpoint_path.parent.parent), "state"
+    raise ValueError(
+        f"unsupported explicit resume checkpoint: {checkpoint_path}. "
+        "Expected steps_<N>_state/, steps_<N>_pytorch_model.pt, steps_<N>_model.safetensors, "
+        "best_state/, or a model file inside a state directory."
+    )
+
+
 def _download_latest_hf_checkpoint(repo_id: str, checkpoint_dir: Path) -> tuple[Path | None, int, str | None, str | None]:
     try:
         from huggingface_hub import HfApi, hf_hub_download, snapshot_download
@@ -696,6 +727,19 @@ def setup_assets(args) -> dict[str, Any]:
     result.update(_ensure_base_model(args.model, base_model_dir, args.base_model_repo_id))
 
     checkpoint_dir = Path(args.checkpoint_local_dir).expanduser().resolve()
+    explicit_checkpoint = str(getattr(args, "checkpoint", "") or "")
+    if explicit_checkpoint:
+        resume_checkpoint, resume_step, resume_kind = _resolve_explicit_resume_checkpoint(explicit_checkpoint)
+        result.update({
+            "resume_found": True,
+            "resume_source": "explicit",
+            "resume_kind": resume_kind,
+            "resume_checkpoint": str(resume_checkpoint),
+            "resume_step": resume_step,
+            "checkpoint_local_dir": str(checkpoint_dir),
+        })
+        return result
+
     local_ckpt, local_step, local_kind = (None, 0, None)
     if args.checkpoint_load in {"auto", "local"}:
         local_ckpt, local_step, local_kind = _find_latest_local_checkpoint(checkpoint_dir)
@@ -869,6 +913,7 @@ def main() -> int:
     parser.add_argument("--base-model-dir", required=True)
     parser.add_argument("--base-model-repo-id", default=None)
     parser.add_argument("--checkpoint-local-dir", required=True)
+    parser.add_argument("--checkpoint", default="")
     parser.add_argument("--checkpoint-load", choices=["auto", "none", "local", "hf"], default="auto")
     parser.add_argument("--checkpoint-hf-repo-id", default="")
     parser.add_argument("--checkpoint-save-best-model", default="true")

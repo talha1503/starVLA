@@ -6,6 +6,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 
 from examples.rl_games.scripts import launch_train
+from examples.rl_games.scripts.setup_training_assets import _resolve_explicit_resume_checkpoint
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -127,3 +128,24 @@ def test_vla_trainer_pt_checkpoint_file_is_optional() -> None:
     assert 'model_checkpoint_path = checkpoint_path + "_pytorch_model.pt"' in trainer_text
     assert "torch.save(state_dict, model_checkpoint_path)" in trainer_text
     assert "model_path=model_checkpoint_path" in trainer_text
+
+
+def test_run_train_accepts_explicit_resume_checkpoint() -> None:
+    script_text = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "run_train.sh").read_text(encoding="utf-8")
+
+    assert "--checkpoint <path>" in script_text
+    assert '--checkpoint) RESUME_CHECKPOINT="$2"; shift 2 ;;' in script_text
+    assert '--checkpoint "${RESUME_CHECKPOINT:-}"' in script_text
+
+
+def test_explicit_best_state_resume_reads_best_metadata(tmp_path: Path) -> None:
+    checkpoint_dir = tmp_path / "checkpoints"
+    best_state = checkpoint_dir / "best_state"
+    best_state.mkdir(parents=True)
+    (checkpoint_dir / "best_model_metadata.json").write_text('{"best_step": 2500}', encoding="utf-8")
+
+    checkpoint, step, kind = _resolve_explicit_resume_checkpoint(str(best_state))
+
+    assert checkpoint == best_state.resolve()
+    assert step == 2500
+    assert kind == "state"
