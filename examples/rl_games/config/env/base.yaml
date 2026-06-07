@@ -7,5 +7,5 @@ rl_games:
     seed: ${seed}
     fixed_episode_seeds: true
     latency_seed_stride: 0
-    task_seed_stride: 100000
+    task_seed_stride: 0
     task_description: ""

@@ -63,6 +63,12 @@ def _as_bool_default(value: Any, default: bool) -> bool:
     return _as_bool(value)
 
 
+def _default_if_empty(value: Any, default: Any) -> Any:
+    if value in (None, ""):
+        return default
+    return value
+
+
 def _resolve_path(value: Any, workspace_dir: Path) -> str:
     if value in (None, ""):
         return ""
@@ -231,6 +237,13 @@ def _optional_int_list(value: Any) -> list[int] | None:
     return [int(item) for item in value]
 
 
+def _checkpoint_request(load_value: Any) -> tuple[str, str]:
+    raw_value = str(load_value or "auto")
+    if raw_value in {"auto", "none", "local", "hf"}:
+        return raw_value, ""
+    return "none", raw_value
+
+
 def compose_training_config(
     config_name: str,
     model: str,
@@ -257,6 +270,7 @@ def compose_training_config(
 def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -> SimpleNamespace:
     run_id = str(_cfg_get(cfg, "run_id"))
     checkpoint_dir = str(Path(run_root_dir) / run_id / "checkpoints")
+    checkpoint_load, checkpoint = _checkpoint_request(_cfg_get(cfg, "checkpoint.load"))
     converted_dataset_name, max_episodes = _dataset_setup_values(cfg)
 
     dataset_cache_dir = _cfg_get(cfg, "paths.dataset_cache_dir")
@@ -296,7 +310,8 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         base_model_dir=_resolve_path(_cfg_get(cfg, "paths.base_model_dir"), workspace_dir),
         base_model_repo_id=_cfg_get(cfg, "base_model.repo_id"),
         checkpoint_local_dir=checkpoint_dir,
-        checkpoint_load=str(_cfg_get(cfg, "checkpoint.load") or "auto"),
+        checkpoint=checkpoint,
+        checkpoint_load=checkpoint_load,
         checkpoint_hf_repo_id=str(_cfg_get(cfg, "checkpoint.hf_repo_id") or ""),
         checkpoint_save_best_model=str(_as_bool_default(_cfg_get(cfg, "checkpoint.save_best_model"), True)).lower(),
         initialization_local_dir=(
@@ -330,8 +345,9 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
         f"rl_games.env_eval.enabled={str(_as_bool(_cfg_get(cfg, 'rl_games.env_eval.enabled'))).lower()}",
         f"checkpoint.sync.enabled={str(_as_bool(_cfg_get(cfg, 'checkpoint.sync.enabled'))).lower()}",
         f"checkpoint.sync.keep_last_n={_cfg_get(cfg, 'checkpoint.sync.keep_last_n') or 0}",
-        f"checkpoint.local.keep_last_n={_cfg_get(cfg, 'checkpoint.local.keep_last_n') or 3}",
+        f"checkpoint.local.keep_last_n={_default_if_empty(_cfg_get(cfg, 'checkpoint.local.keep_last_n'), 1)}",
         f"checkpoint.save_best_model={str(_as_bool_default(_cfg_get(cfg, 'checkpoint.save_best_model'), True)).lower()}",
+        f"checkpoint.save_pt_file={str(_as_bool_default(_cfg_get(cfg, 'checkpoint.save_pt_file'), False)).lower()}",
         f"trainer.is_resume={str(bool(setup.get('resume_found'))).lower()}",
     ]
 

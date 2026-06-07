@@ -1,4 +1,6 @@
 import numpy as np
+import sys
+import types
 from omegaconf import OmegaConf
 
 from starVLA.training.rl_games.eval_core import (
@@ -76,7 +78,7 @@ def test_eval_runner_infers_latencies_from_prompt_map_when_values_empty(tmp_path
     assert runner._get_latency_values(stage="mid_train") == [0, 2]
 
 
-def test_task_evaluator_reuses_episode_seeds_across_latencies_by_default():
+def test_task_evaluator_reuses_episode_seeds_across_tasks_and_latencies_by_default():
     cfg = OmegaConf.create(
         {
             "seed": 42,
@@ -93,10 +95,10 @@ def test_task_evaluator_reuses_episode_seeds_across_latencies_by_default():
         }
     )
 
-    evaluator = _TaskEvaluator(task="flappy", cfg=cfg)
-
-    assert [evaluator._episode_seed(latency=0, episode=episode) for episode in range(3)] == [42, 43, 44]
-    assert [evaluator._episode_seed(latency=8, episode=episode) for episode in range(3)] == [42, 43, 44]
+    for task in ("flappy", "demon_attack", "deadly_corridor"):
+        evaluator = _TaskEvaluator(task=task, cfg=cfg)
+        assert [evaluator._episode_seed(latency=0, episode=episode) for episode in range(3)] == [42, 43, 44]
+        assert [evaluator._episode_seed(latency=8, episode=episode) for episode in range(3)] == [42, 43, 44]
 
 
 def test_task_evaluator_respects_explicit_latency_seed_stride():
@@ -120,3 +122,156 @@ def test_task_evaluator_respects_explicit_latency_seed_stride():
     evaluator = _TaskEvaluator(task="flappy", cfg=cfg)
 
     assert [evaluator._episode_seed(latency=8, episode=episode) for episode in range(3)] == [8042, 8043, 8044]
+
+
+def test_task_evaluator_respects_explicit_task_seed_stride():
+    cfg = OmegaConf.create(
+        {
+            "seed": 42,
+            "rl_games": {
+                "env_eval": {
+                    "fixed_episode_seeds": True,
+                    "task_seed_stride": 100000,
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+    evaluator = _TaskEvaluator(task="demon_attack", cfg=cfg)
+
+    assert [evaluator._episode_seed(latency=0, episode=episode) for episode in range(3)] == [100042, 100043, 100044]
+
+
+class _FixedRng:
+    def __init__(self, value: int):
+        self.value = value
+
+    def integers(self, low: int, high: int) -> int:
+        assert low == 1
+        assert high == 31
+        return self.value
+
+
+class _FakeDemonAttackEnv:
+    def __init__(self):
+        self.np_random = _FixedRng(value=30)
+        self.reset_calls = []
+        self.step_actions = []
+
+    def reset(self, **kwargs):
+        self.reset_calls.append(kwargs)
+        return "reset_obs", {"reset": True}
+
+    def step(self, action):
+        self.step_actions.append(action)
+        return "noop_obs", 0.0, False, False, {"noop": True}
+
+
+def test_demon_attack_env_uses_noop_reset_max_30_by_default(monkeypatch):
+    fake_env = _FakeDemonAttackEnv()
+    fake_gym = types.SimpleNamespace(make=lambda *args, **kwargs: fake_env)
+    monkeypatch.setitem(sys.modules, "gymnasium", fake_gym)
+    monkeypatch.setitem(sys.modules, "ale_py", types.SimpleNamespace())
+    cfg = OmegaConf.create(
+        {
+            "rl_games": {
+                "env_eval": {
+                    "frameskip": 4,
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+    evaluator = _TaskEvaluator(task="demon_attack", cfg=cfg)
+    env = evaluator._make_env()
+    obs, info = env.reset(seed=42)
+
+    assert obs == "noop_obs"
+    assert info == {"noop": True}
+    assert fake_env.reset_calls == [{"seed": 42}]
+    assert fake_env.step_actions == [0] * 30
+
+
+def test_eval_runner_saves_result_after_each_episode(monkeypatch, tmp_path):
+    cfg = OmegaConf.create(
+        {
+            "seed": 42,
+            "rl_games": {
+                "task": "demon_attack",
+                "model_alias": "openvla",
+                "env_eval": {
+                    "enabled": True,
+                    "seed": 42,
+                    "post_train": {
+                        "enabled": True,
+                        "latencies": [0],
+                        "num_episodes": 2,
+                        "max_steps_per_episode": 1,
+                    },
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+    save_totals = []
+    original_save = RlGamesEvalRunner._save
+
+    def spy_save(self, result, step, stage):
+        save_totals.append(int(result.aggregate["total_episodes"]))
+        return original_save(self, result, step, stage)
+
+    def fake_run_latency(self, **kwargs):
+        first_episode_metrics = {
+            "latency": 0,
+            "num_episodes": 1,
+            "mean_reward": 1.0,
+            "mean_length": 1.0,
+            "std_reward": 0.0,
+            "std_length": 0.0,
+            "episode_rewards": [1.0],
+            "episode_lengths": [1],
+            "decoded_action_hist": {"0": 1},
+            "fixed_episode_seeds": True,
+            "eval_seed": 42,
+            "episode_seeds": [42],
+        }
+        second_episode_metrics = {
+            "latency": 0,
+            "num_episodes": 2,
+            "mean_reward": 1.5,
+            "mean_length": 1.0,
+            "std_reward": 0.5,
+            "std_length": 0.0,
+            "episode_rewards": [1.0, 2.0],
+            "episode_lengths": [1, 1],
+            "decoded_action_hist": {"0": 2},
+            "fixed_episode_seeds": True,
+            "eval_seed": 42,
+            "episode_seeds": [42, 43],
+        }
+        kwargs["on_episode_complete"](first_episode_metrics)
+        kwargs["on_episode_complete"](second_episode_metrics)
+        return second_episode_metrics
+
+    monkeypatch.setattr(RlGamesEvalRunner, "_save", spy_save)
+    monkeypatch.setattr(_TaskEvaluator, "run_latency", fake_run_latency)
+
+    runner = RlGamesEvalRunner(cfg=cfg, output_dir=str(tmp_path))
+    result = runner.run(model=object(), step=2500, stage="post_train")
+
+    assert save_totals == [1, 2, 2]
+    assert result.path == str(tmp_path / "eval" / "post_train" / "step_2500.json")

@@ -4,7 +4,7 @@ import json
 import os
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import numpy as np
 from PIL import Image
@@ -41,6 +41,40 @@ class ActionLatencyQueue:
             self.current_action = matured
         self.step_count += 1
         return self.current_action
+
+
+class DemonAttackNoopResetWrapper:
+    def __init__(self, env: Any, noop_max: int):
+        self.env = env
+        self.noop_max = int(noop_max)
+
+    def reset(self, **kwargs: Any) -> tuple[Any, Dict[str, Any]]:
+        obs, info = self.env.reset(**kwargs)
+        if self.noop_max <= 0:
+            return obs, info
+
+        np_random = getattr(self.env, "np_random", None)
+        if np_random is None or not hasattr(np_random, "integers"):
+            raise RuntimeError("Demon Attack no-op reset requires env.np_random with an integers method")
+
+        noops = int(np_random.integers(1, self.noop_max + 1))
+        for _ in range(noops):
+            obs, _, terminated, truncated, info = self.env.step(0)
+            if terminated or truncated:
+                obs, info = self.env.reset(**kwargs)
+        return obs, info
+
+    def step(self, action: Any) -> tuple[Any, float, bool, bool, Dict[str, Any]]:
+        return self.env.step(action)
+
+    def close(self) -> None:
+        self.env.close()
+
+    def render(self) -> Any:
+        return self.env.render()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.env, name)
 
 
 @dataclass
@@ -249,7 +283,7 @@ class _TaskEvaluator:
         self.fixed_episode_seeds = _as_bool(getattr(self.env_eval_cfg, "fixed_episode_seeds", True), default=True)
         self.eval_seed = _as_int(getattr(self.env_eval_cfg, "seed", getattr(cfg, "seed", 42)), 42)
         self.latency_seed_stride = _as_int(getattr(self.env_eval_cfg, "latency_seed_stride", None), 0)
-        self.task_seed_stride = _as_int(getattr(self.env_eval_cfg, "task_seed_stride", None), 100000)
+        self.task_seed_stride = _as_int(getattr(self.env_eval_cfg, "task_seed_stride", None), 0)
 
     def _resolve_deadly_multibinary_threshold(self) -> float:
         deadly_cfg = getattr(self.env_eval_cfg, "deadly", None)
@@ -277,6 +311,8 @@ class _TaskEvaluator:
             import ale_py  # noqa: F401
             import gymnasium as gym
 
+            demon_attack_cfg = getattr(self.env_eval_cfg, "demon_attack", None)
+            noop_max = _as_int(getattr(demon_attack_cfg, "noop_max", None), 30)
             attempts = [
                 "ALE/DemonAttack-v5",
                 "ALE/DemonAttack-v4",
@@ -284,11 +320,12 @@ class _TaskEvaluator:
             last_exc = None
             for env_id in attempts:
                 try:
-                    return gym.make(
+                    env = gym.make(
                         env_id,
                         frameskip=self.frameskip,
                         repeat_action_probability=0.0,
                     )
+                    return DemonAttackNoopResetWrapper(env=env, noop_max=noop_max)
                 except Exception as exc:
                     last_exc = exc
             raise RuntimeError(f"Failed to create DemonAttack env: {last_exc}")
@@ -416,6 +453,42 @@ class _TaskEvaluator:
             "episode_indices": [],
         }
 
+    def _build_latency_metrics(
+        self,
+        latency: int,
+        num_episodes: int,
+        rewards: List[float],
+        lengths: List[int],
+        action_hist: Counter,
+        episode_seeds: List[int | None],
+        episode_indices: Optional[List[int]] = None,
+        vectorized_batch_size: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        mean_reward = float(np.mean(rewards)) if rewards else 0.0
+        mean_length = float(np.mean(lengths)) if lengths else 0.0
+        std_reward = float(np.std(rewards)) if rewards else 0.0
+        std_length = float(np.std(lengths)) if lengths else 0.0
+        metrics = {
+            "latency": int(latency),
+            "num_episodes": int(num_episodes),
+            "mean_reward": mean_reward,
+            "mean_length": mean_length,
+            "std_reward": std_reward,
+            "std_length": std_length,
+            "episode_rewards": [float(reward) for reward in rewards],
+            "episode_lengths": [int(length) for length in lengths],
+            "decoded_action_hist": dict(action_hist),
+            "fixed_episode_seeds": bool(self.fixed_episode_seeds),
+            "eval_seed": int(self.eval_seed),
+            "episode_seeds": episode_seeds,
+        }
+        if episode_indices is not None:
+            metrics["episode_indices"] = [int(episode) for episode in episode_indices]
+        if vectorized_batch_size is not None:
+            metrics["vectorized_eval"] = True
+            metrics["vectorized_batch_size"] = int(vectorized_batch_size)
+        return metrics
+
     def _run_latency_vectorized(
         self,
         model,
@@ -427,6 +500,7 @@ class _TaskEvaluator:
         progress_desc: str | None,
         progress_position: int,
         batch_size: int,
+        on_episode_complete: Callable[[Dict[str, Any]], None] | None = None,
     ) -> Dict[str, Any]:
         pending = list(episode_indices)
         if not pending:
@@ -507,6 +581,24 @@ class _TaskEvaluator:
                                 "steps": int(slot["steps"]),
                                 "batch": len(active_slots),
                             })
+                            if on_episode_complete is not None:
+                                completed_episodes = [
+                                    int(item)
+                                    for item in episode_indices
+                                    if int(item) in rewards_by_episode
+                                ]
+                                on_episode_complete(
+                                    self._build_latency_metrics(
+                                        latency=latency,
+                                        num_episodes=len(completed_episodes),
+                                        rewards=[rewards_by_episode[item] for item in completed_episodes],
+                                        lengths=[lengths_by_episode[item] for item in completed_episodes],
+                                        action_hist=action_hist,
+                                        episode_seeds=[seeds_by_episode[item] for item in completed_episodes],
+                                        episode_indices=completed_episodes,
+                                        vectorized_batch_size=batch_size,
+                                    )
+                                )
                             if pending:
                                 _start_episode(slot, pending.pop(0))
                             else:
@@ -521,27 +613,16 @@ class _TaskEvaluator:
         rewards = [float(rewards_by_episode[episode]) for episode in ordered_episodes]
         lengths = [int(lengths_by_episode[episode]) for episode in ordered_episodes]
         episode_seeds = [seeds_by_episode[episode] for episode in ordered_episodes]
-        mean_reward = float(np.mean(rewards)) if rewards else 0.0
-        mean_length = float(np.mean(lengths)) if lengths else 0.0
-        std_reward = float(np.std(rewards)) if rewards else 0.0
-        std_length = float(np.std(lengths)) if lengths else 0.0
-        return {
-            "latency": int(latency),
-            "num_episodes": int(num_episodes),
-            "mean_reward": mean_reward,
-            "mean_length": mean_length,
-            "std_reward": std_reward,
-            "std_length": std_length,
-            "episode_rewards": rewards,
-            "episode_lengths": lengths,
-            "decoded_action_hist": dict(action_hist),
-            "fixed_episode_seeds": bool(self.fixed_episode_seeds),
-            "eval_seed": int(self.eval_seed),
-            "episode_seeds": episode_seeds,
-            "episode_indices": ordered_episodes,
-            "vectorized_eval": True,
-            "vectorized_batch_size": int(batch_size),
-        }
+        return self._build_latency_metrics(
+            latency=latency,
+            num_episodes=num_episodes,
+            rewards=rewards,
+            lengths=lengths,
+            action_hist=action_hist,
+            episode_seeds=episode_seeds,
+            episode_indices=ordered_episodes,
+            vectorized_batch_size=batch_size,
+        )
 
     def run_latency(
         self,
@@ -553,6 +634,7 @@ class _TaskEvaluator:
         episode_indices: Optional[List[int]] = None,
         progress_desc: str | None = None,
         progress_position: int = 0,
+        on_episode_complete: Callable[[Dict[str, Any]], None] | None = None,
     ) -> Dict[str, Any]:
         episode_indices = list(range(num_episodes)) if episode_indices is None else list(episode_indices)
         if not episode_indices:
@@ -570,6 +652,7 @@ class _TaskEvaluator:
                 progress_desc=progress_desc,
                 progress_position=progress_position,
                 batch_size=vectorized_batch_size,
+                on_episode_complete=on_episode_complete,
             )
 
         env = self._make_env()
@@ -623,27 +706,29 @@ class _TaskEvaluator:
                 "reward": f"{total_reward:.2f}",
                 "steps": steps,
             })
+            if on_episode_complete is not None:
+                on_episode_complete(
+                    self._build_latency_metrics(
+                        latency=latency,
+                        num_episodes=len(rewards),
+                        rewards=rewards,
+                        lengths=lengths,
+                        action_hist=action_hist,
+                        episode_seeds=episode_seeds,
+                        episode_indices=[int(item) for item in episode_indices[:len(rewards)]],
+                    )
+                )
 
         env.close()
-        mean_reward = float(np.mean(rewards)) if rewards else 0.0
-        mean_length = float(np.mean(lengths)) if lengths else 0.0
-        std_reward = float(np.std(rewards)) if rewards else 0.0
-        std_length = float(np.std(lengths)) if lengths else 0.0
-        return {
-            "latency": int(latency),
-            "num_episodes": int(num_episodes),
-            "mean_reward": mean_reward,
-            "mean_length": mean_length,
-            "std_reward": std_reward,
-            "std_length": std_length,
-            "episode_rewards": [float(reward) for reward in rewards],
-            "episode_lengths": [int(length) for length in lengths],
-            "decoded_action_hist": dict(action_hist),
-            "fixed_episode_seeds": bool(self.fixed_episode_seeds),
-            "eval_seed": int(self.eval_seed),
-            "episode_seeds": episode_seeds,
-            "episode_indices": [int(episode) for episode in episode_indices],
-        }
+        return self._build_latency_metrics(
+            latency=latency,
+            num_episodes=num_episodes,
+            rewards=rewards,
+            lengths=lengths,
+            action_hist=action_hist,
+            episode_seeds=episode_seeds,
+            episode_indices=[int(episode) for episode in episode_indices],
+        )
 
 
 class RlGamesEvalRunner:
@@ -939,6 +1024,20 @@ class RlGamesEvalRunner:
                 for episode in range(num_episodes)
                 if int(episode) % max(1, int(shard_count)) == int(shard_rank)
             ]
+            key = f"{task_name}/latency_{latency}"
+
+            def save_episode_progress(metrics: Dict[str, Any]) -> None:
+                per_latency[key] = metrics
+                aggregate = self._aggregate_result(
+                    per_latency=per_latency,
+                    stage=stage,
+                    step=step,
+                    cfg=self.cfg,
+                    task_count=len(tasks),
+                )
+                aggregate["distributed_eval"] = int(shard_count) > 1
+                self._save(result=EvalResult(per_latency=per_latency, aggregate=aggregate), step=step, stage=stage)
+
             metrics = task_eval.run_latency(
                 model=model,
                 latency=latency,
@@ -948,8 +1047,8 @@ class RlGamesEvalRunner:
                 episode_indices=episode_indices,
                 progress_desc=f"{stage} {task_name} latency={latency}",
                 progress_position=1,
+                on_episode_complete=save_episode_progress if save else None,
             )
-            key = f"{task_name}/latency_{latency}"
             per_latency[key] = metrics
 
         aggregate = self._aggregate_result(

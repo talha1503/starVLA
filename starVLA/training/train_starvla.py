@@ -157,6 +157,10 @@ class VLATrainer(TrainerUtils):
             getattr(getattr(self.config, "checkpoint", {}), "save_best_model", None),
             default=True,
         )
+        self._save_pt_file_enabled = _as_bool(
+            getattr(getattr(self.config, "checkpoint", {}), "save_pt_file", None),
+            default=False,
+        )
         self._best_score = float("-inf")
         self._best_step = 0
         self._best_state_path = None
@@ -458,30 +462,24 @@ class VLATrainer(TrainerUtils):
         if self.accelerator.is_main_process and os.path.exists(state_checkpoint_path):
             shutil.rmtree(state_checkpoint_path)
         self.accelerator.wait_for_everyone()
-        self.accelerator.save_state(state_checkpoint_path)
+        self.accelerator.save_state(state_checkpoint_path, safe_serialization=True)
         self.accelerator.wait_for_everyone()
         if self.accelerator.is_main_process:
             self.accelerator.print(f"✅ Full training state saved at {state_checkpoint_path}")
 
         if self.accelerator.is_main_process:
-            save_format = getattr(self.config.trainer, "save_format", "pt")
-            state_dict = self.accelerator.get_state_dict(self.model)
-            if save_format == "safetensors":
-                from safetensors.torch import save_file
-
-                model_checkpoint_path = checkpoint_path + "_model.safetensors"
-                save_file(state_dict, model_checkpoint_path)
-            elif save_format == "pt":
+            model_checkpoint_path = None
+            if self._save_pt_file_enabled:
+                state_dict = self.accelerator.get_state_dict(self.model)
                 model_checkpoint_path = checkpoint_path + "_pytorch_model.pt"
                 torch.save(state_dict, model_checkpoint_path)
-            else:
-                raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
 
             summary_data = {"steps": self.completed_steps}
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
                 f.write(json.dumps(summary_data) + "\n")
             self.accelerator.print(f"✅ Checkpoint state saved at {state_checkpoint_path}")
-            self.accelerator.print(f"✅ Model checkpoint saved at {model_checkpoint_path}")
+            if model_checkpoint_path is not None:
+                self.accelerator.print(f"✅ Model checkpoint saved at {model_checkpoint_path}")
             self._checkpoint_sync_manager.register_local_checkpoint(
                 step=self.completed_steps,
                 state_path=state_checkpoint_path,
@@ -649,7 +647,7 @@ class VLATrainer(TrainerUtils):
                 completed_steps=self.completed_steps,
                 interval=self.config.trainer.save_interval,
                 gradients_synced=gradients_synced,
-            ) and not self._save_best_model_enabled:
+            ):
                 self._save_checkpoint()
 
             if self.completed_steps >= self.config.trainer.max_train_steps:
@@ -741,8 +739,7 @@ class VLATrainer(TrainerUtils):
         """Training end processing."""
         save_interval = int(getattr(self.config.trainer, "save_interval", 0) or 0)
         if (
-            not self._save_best_model_enabled
-            and self.completed_steps > 0
+            self.completed_steps > 0
             and (save_interval <= 0 or self.completed_steps % save_interval != 0)
         ):
             self._save_checkpoint()

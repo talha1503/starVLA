@@ -138,6 +138,59 @@ def _find_local_best_checkpoint(checkpoint_dir: Path) -> tuple[Path | None, int,
     return best_state, _read_best_checkpoint_step(checkpoint_dir), "state"
 
 
+def _candidate_resume_paths(checkpoint: str, checkpoint_dir: Path) -> list[Path]:
+    checkpoint_path = Path(checkpoint).expanduser()
+    if checkpoint_path.is_absolute():
+        return [checkpoint_path]
+
+    run_dir = checkpoint_dir.parent
+    return [
+        run_dir / checkpoint_path,
+        checkpoint_dir / checkpoint_path.name,
+        checkpoint_dir / checkpoint_path,
+    ]
+
+
+def _resolve_existing_resume_path(checkpoint: str, checkpoint_dir: Path) -> Path:
+    candidates = _candidate_resume_paths(checkpoint, checkpoint_dir)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    checked = ", ".join(str(candidate.resolve()) for candidate in candidates)
+    raise FileNotFoundError(f"explicit resume checkpoint does not exist: {checkpoint}. Checked: {checked}")
+
+
+def _resolve_explicit_resume_checkpoint(checkpoint: str, checkpoint_dir: Path) -> tuple[Path, int, str]:
+    checkpoint_path = _resolve_existing_resume_path(checkpoint, checkpoint_dir)
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"explicit resume checkpoint does not exist: {checkpoint_path}")
+    if checkpoint_path.is_dir():
+        state_match = STEP_STATE_RE.match(checkpoint_path.name)
+        if state_match:
+            return checkpoint_path, int(state_match.group(1)), "state"
+        if checkpoint_path.name == "best_state":
+            return checkpoint_path, _read_best_checkpoint_step(checkpoint_path.parent), "state"
+        raise ValueError(
+            f"unsupported explicit resume checkpoint directory: {checkpoint_path}. "
+            "Expected steps_<N>_state/ or best_state/."
+        )
+    if checkpoint_path.is_file():
+        file_match = STEP_FILE_RE.match(checkpoint_path.name)
+        if file_match:
+            return checkpoint_path, int(file_match.group(1)), "model"
+        if checkpoint_path.parent.name.endswith("_state"):
+            state_match = STEP_STATE_RE.match(checkpoint_path.parent.name)
+            if state_match and checkpoint_path.name in {"model.safetensors", "pytorch_model.bin"}:
+                return checkpoint_path.parent, int(state_match.group(1)), "state"
+        if checkpoint_path.parent.name == "best_state" and checkpoint_path.name in {"model.safetensors", "pytorch_model.bin"}:
+            return checkpoint_path.parent, _read_best_checkpoint_step(checkpoint_path.parent.parent), "state"
+    raise ValueError(
+        f"unsupported explicit resume checkpoint: {checkpoint_path}. "
+        "Expected steps_<N>_state/, steps_<N>_pytorch_model.pt, steps_<N>_model.safetensors, "
+        "best_state/, or a model file inside a state directory."
+    )
+
+
 def _download_latest_hf_checkpoint(repo_id: str, checkpoint_dir: Path) -> tuple[Path | None, int, str | None, str | None]:
     try:
         from huggingface_hub import HfApi, hf_hub_download, snapshot_download
@@ -696,22 +749,21 @@ def setup_assets(args) -> dict[str, Any]:
     result.update(_ensure_base_model(args.model, base_model_dir, args.base_model_repo_id))
 
     checkpoint_dir = Path(args.checkpoint_local_dir).expanduser().resolve()
-    save_best_model = _str2bool(getattr(args, "checkpoint_save_best_model", True))
-    local_ckpt, local_step, local_kind = (None, 0, None)
-    if save_best_model and args.checkpoint_load in {"auto", "local"}:
-        local_ckpt, local_step, local_kind = _find_local_best_checkpoint(checkpoint_dir)
-        if local_ckpt is not None and args.checkpoint_load == "local":
-            result.update({
-                "resume_found": True,
-                "resume_source": "local_best",
-                "resume_kind": local_kind,
-                "resume_checkpoint": str(local_ckpt),
-                "resume_step": local_step,
-                "checkpoint_local_dir": str(checkpoint_dir),
-            })
-            return result
+    explicit_checkpoint = str(getattr(args, "checkpoint", "") or "")
+    if explicit_checkpoint:
+        resume_checkpoint, resume_step, resume_kind = _resolve_explicit_resume_checkpoint(explicit_checkpoint, checkpoint_dir)
+        result.update({
+            "resume_found": True,
+            "resume_source": "explicit",
+            "resume_kind": resume_kind,
+            "resume_checkpoint": str(resume_checkpoint),
+            "resume_step": resume_step,
+            "checkpoint_local_dir": str(checkpoint_dir),
+        })
+        return result
 
-    if not save_best_model and args.checkpoint_load in {"auto", "local"}:
+    local_ckpt, local_step, local_kind = (None, 0, None)
+    if args.checkpoint_load in {"auto", "local"}:
         local_ckpt, local_step, local_kind = _find_latest_local_checkpoint(checkpoint_dir)
         if local_ckpt is not None and args.checkpoint_load == "local":
             result.update({
@@ -726,10 +778,7 @@ def setup_assets(args) -> dict[str, Any]:
 
     hf_repo_id = args.checkpoint_hf_repo_id or args.hf_repo_id
     if args.checkpoint_load in {"auto", "hf"} and hf_repo_id:
-        if save_best_model:
-            hf_ckpt, hf_step, hf_kind, hf_error = _download_hf_best_checkpoint(hf_repo_id, checkpoint_dir)
-        else:
-            hf_ckpt, hf_step, hf_kind, hf_error = _download_latest_hf_checkpoint(hf_repo_id, checkpoint_dir)
+        hf_ckpt, hf_step, hf_kind, hf_error = _download_latest_hf_checkpoint(hf_repo_id, checkpoint_dir)
         hf_is_better = (
             args.checkpoint_load == "hf"
             or local_ckpt is None
@@ -739,7 +788,7 @@ def setup_assets(args) -> dict[str, Any]:
         if hf_ckpt is not None and hf_is_better:
             result.update({
                 "resume_found": True,
-                "resume_source": "hf_best" if save_best_model else "hf",
+                "resume_source": "hf",
                 "resume_kind": hf_kind,
                 "resume_checkpoint": str(hf_ckpt),
                 "resume_step": hf_step,
@@ -749,7 +798,7 @@ def setup_assets(args) -> dict[str, Any]:
         if local_ckpt is not None:
             result.update({
                 "resume_found": True,
-                "resume_source": "local_best" if save_best_model else "local",
+                "resume_source": "local",
                 "resume_kind": local_kind,
                 "resume_checkpoint": str(local_ckpt),
                 "resume_step": local_step,
@@ -778,7 +827,7 @@ def setup_assets(args) -> dict[str, Any]:
     if local_ckpt is not None:
         result.update({
             "resume_found": True,
-            "resume_source": "local_best" if save_best_model else "local",
+            "resume_source": "local",
             "resume_kind": local_kind,
             "resume_checkpoint": str(local_ckpt),
             "resume_step": local_step,
@@ -887,6 +936,7 @@ def main() -> int:
     parser.add_argument("--base-model-dir", required=True)
     parser.add_argument("--base-model-repo-id", default=None)
     parser.add_argument("--checkpoint-local-dir", required=True)
+    parser.add_argument("--checkpoint", default="")
     parser.add_argument("--checkpoint-load", choices=["auto", "none", "local", "hf"], default="auto")
     parser.add_argument("--checkpoint-hf-repo-id", default="")
     parser.add_argument("--checkpoint-save-best-model", default="true")

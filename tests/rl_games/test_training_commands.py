@@ -6,6 +6,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 
 from examples.rl_games.scripts import launch_train
+from examples.rl_games.scripts.setup_training_assets import _resolve_explicit_resume_checkpoint
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -38,6 +39,7 @@ def test_training_command_matrix_targets_hydra_launcher() -> None:
             assert "trainer.batch_size=" not in command_text
             assert "datasets.vla_data.per_device_batch_size=16" in command_text
             assert "dataset.source_hf=data/" not in command_text
+            assert "checkpoint.save_pt_file=false" in command_text
 
 
 def test_training_commands_are_valid_bash() -> None:
@@ -139,6 +141,28 @@ def test_deadly_corridor_loss_selector_accepts_multibinary_ce_alias(tmp_path: Pa
     assert "framework.action_model.loss_type=multibinary_bce" in cmd
 
 
+def test_launcher_defaults_to_one_last_checkpoint_and_no_pt_file(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="flappy",
+        init="bridge",
+        mode="single",
+        overrides=[],
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "base_model"),
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert "checkpoint.local.keep_last_n=1" in cmd
+    assert "checkpoint.save_best_model=true" in cmd
+    assert "checkpoint.save_pt_file=false" in cmd
+
+
 def test_run_train_exposes_deadly_loss_type_option() -> None:
     run_train_text = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "run_train.sh").read_text(
         encoding="utf-8"
@@ -164,41 +188,6 @@ def test_launch_train_exposes_distributed_eval_option() -> None:
 
     assert "--eval-distributed-mode" in launcher_text
     assert "rl_games.env_eval.distributed_mode={cli_args.eval_distributed_mode}" in launcher_text
-
-
-def test_launch_train_cross_task_role_flags_map_to_train_task_overrides() -> None:
-    args = launch_train._parse_args(
-        [
-            "--cross-task-a-source-hf",
-            "talha1503/demon_attack_mixed_latency_parquet",
-            "--cross-task-a-prompt-source-hf",
-            "talha1503/demon_attack_mixed_latency_parquet",
-            "--cross-task-a-latencies",
-            "0,1,2,3,4",
-            "--cross-task-a-episodes-per-latency",
-            "50",
-            "--cross-task-b-source-hf",
-            "talha1503/flappy_bird_zero_latency_parquet",
-            "--cross-task-b-prompt-source-hf",
-            "talha1503/flappy_bird_mixed_latency_parquet",
-            "--cross-task-b-latencies",
-            "0",
-            "--cross-task-b-max-episodes",
-            "100",
-        ]
-    )
-    overrides = []
-
-    launch_train._append_cross_task_train_task_cli_overrides(overrides, args)
-
-    assert "rl_games.cross_task.train_tasks.0.train_source_hf=talha1503/demon_attack_mixed_latency_parquet" in overrides
-    assert "rl_games.cross_task.train_tasks.0.prompt_source_hf=talha1503/demon_attack_mixed_latency_parquet" in overrides
-    assert "rl_games.cross_task.train_tasks.0.train_latency_filter=[0,1,2,3,4]" in overrides
-    assert "rl_games.cross_task.train_tasks.0.episodes_per_latency=50" in overrides
-    assert "rl_games.cross_task.train_tasks.1.train_source_hf=talha1503/flappy_bird_zero_latency_parquet" in overrides
-    assert "rl_games.cross_task.train_tasks.1.prompt_source_hf=talha1503/flappy_bird_mixed_latency_parquet" in overrides
-    assert "rl_games.cross_task.train_tasks.1.train_latency_filter=[0]" in overrides
-    assert "rl_games.cross_task.train_tasks.1.max_episodes=100" in overrides
 
 
 def test_deadly_corridor_openvla_wrapper_passes_extra_args() -> None:
@@ -319,13 +308,87 @@ def test_launcher_defaults_workspace_to_repo_root_when_env_is_unset(monkeypatch)
     assert launch_train._workspace_dir(cfg) == launch_train.REPO_ROOT
 
 
-def test_vla_trainer_saves_lightweight_model_checkpoint() -> None:
+def test_launcher_treats_checkpoint_load_path_as_explicit_checkpoint(tmp_path: Path) -> None:
+    checkpoint_path = tmp_path / "runs" / "run_1" / "checkpoints" / "steps_400_state"
+    cfg = OmegaConf.create(
+        {
+            "run_id": "run_1",
+            "model": "openvla",
+            "env": "flappy",
+            "mode": "single",
+            "rl_games": {"initialization_mode": "bridge", "action_carrier": "bridge"},
+            "dataset": {"converted_name": "flappy_train"},
+            "paths": {
+                "dataset_local_dir": "datasets",
+                "base_model_dir": "base_model",
+            },
+            "base_model": {"repo_id": "Qwen/Qwen3-VL-4B-Instruct"},
+            "checkpoint": {
+                "load": str(checkpoint_path),
+                "hf_repo_id": "",
+                "save_best_model": True,
+                "sync": {"enabled": False, "repo_id": ""},
+            },
+            "initialization": {
+                "checkpoint_local_dir": "",
+                "checkpoint_hf_repo_id": "",
+                "checkpoint_filename": "",
+            },
+        }
+    )
+
+    namespace = launch_train.setup_namespace_from_cfg(cfg, tmp_path, str(tmp_path / "runs"))
+
+    assert namespace.checkpoint == str(checkpoint_path)
+    assert namespace.checkpoint_load == "none"
+
+
+def test_vla_trainer_saves_last_checkpoints_independently_from_best_model() -> None:
     trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
 
-    assert 'getattr(self.config.trainer, "save_format", "pt")' in trainer_text
+    assert ") and not self._save_best_model_enabled:" not in trainer_text
+
+
+def test_vla_trainer_pt_checkpoint_file_is_optional() -> None:
+    trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
+
+    assert "self._save_pt_file_enabled" in trainer_text
+    assert "safe_serialization=True" in trainer_text
     assert "self.accelerator.get_state_dict(self.model)" in trainer_text
     assert 'model_checkpoint_path = checkpoint_path + "_pytorch_model.pt"' in trainer_text
     assert "torch.save(state_dict, model_checkpoint_path)" in trainer_text
-    assert 'model_checkpoint_path = checkpoint_path + "_model.safetensors"' in trainer_text
-    assert "save_file(state_dict, model_checkpoint_path)" in trainer_text
     assert "model_path=model_checkpoint_path" in trainer_text
+
+
+def test_run_train_accepts_explicit_resume_checkpoint() -> None:
+    script_text = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "run_train.sh").read_text(encoding="utf-8")
+
+    assert "--checkpoint <path>" in script_text
+    assert '--checkpoint) RESUME_CHECKPOINT="$2"; shift 2 ;;' in script_text
+    assert '--checkpoint "${RESUME_CHECKPOINT:-}"' in script_text
+
+
+def test_explicit_best_state_resume_reads_best_metadata(tmp_path: Path) -> None:
+    checkpoint_dir = tmp_path / "checkpoints"
+    best_state = checkpoint_dir / "best_state"
+    best_state.mkdir(parents=True)
+    (checkpoint_dir / "best_model_metadata.json").write_text('{"best_step": 2500}', encoding="utf-8")
+
+    checkpoint, step, kind = _resolve_explicit_resume_checkpoint(str(best_state), checkpoint_dir)
+
+    assert checkpoint == best_state.resolve()
+    assert step == 2500
+    assert kind == "state"
+
+
+def test_explicit_resume_checkpoint_matches_eval_relative_checkpoint_resolution(tmp_path: Path) -> None:
+    checkpoint_dir = tmp_path / "run" / "checkpoints"
+    state_dir = checkpoint_dir / "steps_300_state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "model.safetensors").write_text("weights", encoding="utf-8")
+
+    checkpoint, step, kind = _resolve_explicit_resume_checkpoint("steps_300_state", checkpoint_dir)
+
+    assert checkpoint == state_dir.resolve()
+    assert step == 300
+    assert kind == "state"
