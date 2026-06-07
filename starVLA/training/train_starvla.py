@@ -138,6 +138,29 @@ def _build_accelerator(cfg) -> Accelerator:
     return local_accelerator
 
 
+def _pin_cuda_device_from_local_rank() -> None:
+    if not torch.cuda.is_available():
+        return
+    local_rank = os.environ.get("LOCAL_RANK")
+    if local_rank in (None, ""):
+        return
+    try:
+        device_idx = int(local_rank)
+    except ValueError:
+        logger.warning("Ignoring invalid LOCAL_RANK=%r for CUDA device pinning", local_rank)
+        return
+
+    visible_devices = torch.cuda.device_count()
+    if device_idx < 0 or device_idx >= visible_devices:
+        logger.warning(
+            "LOCAL_RANK=%s cannot be mapped to a CUDA device; visible CUDA device count is %s",
+            local_rank,
+            visible_devices,
+        )
+        return
+    torch.cuda.set_device(device_idx)
+
+
 class VLATrainer(TrainerUtils):
     def __init__(self, cfg, model, vla_train_dataloader, vla_eval_dataloader, optimizer, lr_scheduler, accelerator):
         self.config = cfg
@@ -807,6 +830,7 @@ class VLATrainer(TrainerUtils):
 
 
 def main(cfg) -> None:
+    _pin_cuda_device_from_local_rank()
     logger.info("VLA Training :: Warming Up")
     if hasattr(cfg, "rl_games"):
         login_training_services(cfg, workspace_dir=getattr(cfg, "workspace_dir", None))
