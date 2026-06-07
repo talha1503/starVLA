@@ -86,6 +86,7 @@ class QwenOFTDefaultConfig:
             # How many past steps included in action chunk (usually 0)
             "past_action_window_size": 0,
             # Loss over predicted actions. Supported: "l1", "discrete_ce", "multibinary_bce".
+            # "multibinary_ce" is accepted as a CLI alias for "multibinary_bce".
             "loss_type": "l1",
         }
     )
@@ -185,7 +186,7 @@ class Qwenvl_OFT(baseframework):
                 target_class.reshape(-1),
             )
 
-        if self.action_loss_type in {"multibinary_bce", "bce", "binary_cross_entropy"}:
+        if self.action_loss_type in {"multibinary_bce", "multibinary_ce", "bce", "binary_cross_entropy"}:
             logits = pred_actions[..., :effective_dim]
             targets = (actions_target[..., :effective_dim] > 0).to(dtype=logits.dtype)
             return F.binary_cross_entropy_with_logits(logits, targets)

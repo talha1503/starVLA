@@ -259,7 +259,7 @@ class _TaskEvaluator:
 
         action_cfg = getattr(getattr(self.cfg, "framework", None), "action_model", None)
         loss_type = str(getattr(action_cfg, "loss_type", "") or "").lower()
-        if loss_type in {"multibinary_bce", "bce", "binary_cross_entropy"}:
+        if loss_type in {"multibinary_bce", "multibinary_ce", "bce", "binary_cross_entropy"}:
             # BCE-with-logits outputs are thresholded at the zero logit, not at
             # probability-space 0.5. Flow/regression models keep the 0.5 target threshold.
             return 0.0
@@ -364,6 +364,185 @@ class _TaskEvaluator:
                 env.seed(int(seed))
             return env.reset()
 
+    def _vectorized_batch_size(self) -> int:
+        vectorized_cfg = getattr(self.env_eval_cfg, "vectorized", None)
+        if not _as_bool(getattr(vectorized_cfg, "enabled", False), default=False):
+            return 1
+        return max(1, _as_int(getattr(vectorized_cfg, "batch_size", 1), 1))
+
+    def _queue_default_action(self):
+        return [0] * 7 if self.task == "deadly_corridor" else 0
+
+    def _make_model_example(self, model_obs, prompt: str) -> Dict[str, Any]:
+        obs_rgb = _resize_rgb(
+            model_obs,
+            image_size=self.image_size,
+            prefer_area=self.task == "flappy",
+        )
+        example = {
+            "image": [Image.fromarray(obs_rgb)],
+            "lang": prompt,
+        }
+        if self.include_state:
+            example["state"] = np.zeros((1, self.state_dim), dtype=np.float32)
+        return example
+
+    def _step_env_once(self, env, action):
+        step_reward = 0.0
+        terminated = False
+        truncated = False
+        repeat_count = 1 if self._uses_native_frameskip() else self.frameskip
+        for _ in range(repeat_count):
+            obs, reward, terminated, truncated, _ = env.step(action)
+            step_reward += float(reward)
+            if terminated or truncated:
+                break
+        return obs, step_reward, terminated, truncated
+
+    def _empty_latency_metrics(self, latency: int) -> Dict[str, Any]:
+        return {
+            "latency": int(latency),
+            "num_episodes": 0,
+            "mean_reward": 0.0,
+            "mean_length": 0.0,
+            "std_reward": 0.0,
+            "std_length": 0.0,
+            "episode_rewards": [],
+            "episode_lengths": [],
+            "decoded_action_hist": {},
+            "fixed_episode_seeds": bool(self.fixed_episode_seeds),
+            "eval_seed": int(self.eval_seed),
+            "episode_seeds": [],
+            "episode_indices": [],
+        }
+
+    def _run_latency_vectorized(
+        self,
+        model,
+        latency: int,
+        prompt: str,
+        max_steps: int,
+        num_episodes: int,
+        episode_indices: List[int],
+        progress_desc: str | None,
+        progress_position: int,
+        batch_size: int,
+    ) -> Dict[str, Any]:
+        pending = list(episode_indices)
+        if not pending:
+            return self._empty_latency_metrics(latency)
+
+        rewards_by_episode: Dict[int, float] = {}
+        lengths_by_episode: Dict[int, int] = {}
+        seeds_by_episode: Dict[int, int | None] = {}
+        action_hist = Counter()
+        slots: List[Dict[str, Any]] = []
+
+        def _start_episode(slot: Dict[str, Any], episode: int) -> None:
+            episode_seed = self._episode_seed(latency=latency, episode=episode)
+            obs, _ = self._reset_env(slot["env"], episode_seed)
+            slot.update({
+                "active": True,
+                "episode": int(episode),
+                "seed": episode_seed,
+                "model_obs": self._model_observation(slot["env"], obs),
+                "queue": ActionLatencyQueue(latency=latency, default_action=self._queue_default_action()),
+                "reward": 0.0,
+                "steps": 0,
+            })
+            seeds_by_episode[int(episode)] = episode_seed
+
+        try:
+            for _ in range(min(max(1, int(batch_size)), len(pending))):
+                env = self._make_env()
+                slot = {
+                    "env": env,
+                    "runtime_button_order": _get_available_button_names(env) if self.task == "deadly_corridor" else None,
+                    "active": False,
+                }
+                _start_episode(slot, pending.pop(0))
+                slots.append(slot)
+
+            progress = tqdm(
+                total=len(episode_indices),
+                desc=progress_desc or f"{self.task} latency={latency}",
+                leave=False,
+                position=progress_position,
+                dynamic_ncols=True,
+            )
+            try:
+                while any(slot.get("active", False) for slot in slots):
+                    active_slots = [slot for slot in slots if slot.get("active", False)]
+                    examples = [self._make_model_example(slot["model_obs"], prompt) for slot in active_slots]
+                    output = model.predict_action(examples=examples)
+                    actions = output["normalized_actions"]
+                    if actions.ndim != 3:
+                        raise RuntimeError(f"Expected normalized_actions shape [B,T,D], got {actions.shape}")
+                    if actions.shape[0] != len(active_slots):
+                        raise RuntimeError(
+                            f"Expected {len(active_slots)} batched actions, got normalized_actions shape {actions.shape}"
+                        )
+
+                    for slot, raw_action in zip(active_slots, actions[:, 0, :]):
+                        decoded = self._decode_action(
+                            raw_action,
+                            runtime_button_order=slot["runtime_button_order"],
+                        )
+                        effective_action = slot["queue"].schedule_and_get(decoded)
+                        action_hist[str(effective_action)] += 1
+
+                        obs, step_reward, terminated, truncated = self._step_env_once(slot["env"], effective_action)
+                        slot["model_obs"] = self._model_observation(slot["env"], obs)
+                        slot["reward"] += step_reward
+                        slot["steps"] += 1
+                        done = terminated or truncated or slot["steps"] >= max_steps
+
+                        if done:
+                            episode = int(slot["episode"])
+                            rewards_by_episode[episode] = float(slot["reward"])
+                            lengths_by_episode[episode] = int(slot["steps"])
+                            progress.update(1)
+                            progress.set_postfix({
+                                "reward": f"{slot['reward']:.2f}",
+                                "steps": int(slot["steps"]),
+                                "batch": len(active_slots),
+                            })
+                            if pending:
+                                _start_episode(slot, pending.pop(0))
+                            else:
+                                slot["active"] = False
+            finally:
+                progress.close()
+        finally:
+            for slot in slots:
+                slot["env"].close()
+
+        ordered_episodes = [int(episode) for episode in episode_indices]
+        rewards = [float(rewards_by_episode[episode]) for episode in ordered_episodes]
+        lengths = [int(lengths_by_episode[episode]) for episode in ordered_episodes]
+        episode_seeds = [seeds_by_episode[episode] for episode in ordered_episodes]
+        mean_reward = float(np.mean(rewards)) if rewards else 0.0
+        mean_length = float(np.mean(lengths)) if lengths else 0.0
+        std_reward = float(np.std(rewards)) if rewards else 0.0
+        std_length = float(np.std(lengths)) if lengths else 0.0
+        return {
+            "latency": int(latency),
+            "num_episodes": int(num_episodes),
+            "mean_reward": mean_reward,
+            "mean_length": mean_length,
+            "std_reward": std_reward,
+            "std_length": std_length,
+            "episode_rewards": rewards,
+            "episode_lengths": lengths,
+            "decoded_action_hist": dict(action_hist),
+            "fixed_episode_seeds": bool(self.fixed_episode_seeds),
+            "eval_seed": int(self.eval_seed),
+            "episode_seeds": episode_seeds,
+            "episode_indices": ordered_episodes,
+            "vectorized_eval": True,
+            "vectorized_batch_size": int(batch_size),
+        }
+
     def run_latency(
         self,
         model,
@@ -371,13 +550,31 @@ class _TaskEvaluator:
         prompt: str,
         max_steps: int,
         num_episodes: int,
+        episode_indices: Optional[List[int]] = None,
         progress_desc: str | None = None,
         progress_position: int = 0,
     ) -> Dict[str, Any]:
+        episode_indices = list(range(num_episodes)) if episode_indices is None else list(episode_indices)
+        if not episode_indices:
+            return self._empty_latency_metrics(latency)
+
+        vectorized_batch_size = self._vectorized_batch_size()
+        if vectorized_batch_size > 1:
+            return self._run_latency_vectorized(
+                model=model,
+                latency=latency,
+                prompt=prompt,
+                max_steps=max_steps,
+                num_episodes=num_episodes,
+                episode_indices=episode_indices,
+                progress_desc=progress_desc,
+                progress_position=progress_position,
+                batch_size=vectorized_batch_size,
+            )
+
         env = self._make_env()
         runtime_button_order = _get_available_button_names(env) if self.task == "deadly_corridor" else None
-        queue_default = [0] * 7 if self.task == "deadly_corridor" else 0
-        queue = ActionLatencyQueue(latency=latency, default_action=queue_default)
+        queue = ActionLatencyQueue(latency=latency, default_action=self._queue_default_action())
 
         rewards: List[float] = []
         lengths: List[int] = []
@@ -385,9 +582,9 @@ class _TaskEvaluator:
         episode_seeds: List[int | None] = []
 
         episode_iter = tqdm(
-            range(num_episodes),
+            episode_indices,
             desc=progress_desc or f"{self.task} latency={latency}",
-            total=num_episodes,
+            total=len(episode_indices),
             leave=False,
             position=progress_position,
             dynamic_ncols=True,
@@ -403,17 +600,7 @@ class _TaskEvaluator:
             steps = 0
 
             while not done and steps < max_steps:
-                obs_rgb = _resize_rgb(
-                    model_obs,
-                    image_size=self.image_size,
-                    prefer_area=self.task == "flappy",
-                )
-                example = {
-                    "image": [Image.fromarray(obs_rgb)],
-                    "lang": prompt,
-                }
-                if self.include_state:
-                    example["state"] = np.zeros((1, self.state_dim), dtype=np.float32)
+                example = self._make_model_example(model_obs, prompt)
                 output = model.predict_action(examples=[example])
                 actions = output["normalized_actions"]
                 if actions.ndim != 3:
@@ -423,15 +610,7 @@ class _TaskEvaluator:
                 effective_action = queue.schedule_and_get(decoded)
                 action_hist[str(effective_action)] += 1
 
-                step_reward = 0.0
-                terminated = False
-                truncated = False
-                repeat_count = 1 if self._uses_native_frameskip() else self.frameskip
-                for _ in range(repeat_count):
-                    obs, reward, terminated, truncated, _ = env.step(effective_action)
-                    step_reward += float(reward)
-                    if terminated or truncated:
-                        break
+                obs, step_reward, terminated, truncated = self._step_env_once(env, effective_action)
                 model_obs = self._model_observation(env, obs)
 
                 total_reward += step_reward
@@ -463,6 +642,7 @@ class _TaskEvaluator:
             "fixed_episode_seeds": bool(self.fixed_episode_seeds),
             "eval_seed": int(self.eval_seed),
             "episode_seeds": episode_seeds,
+            "episode_indices": [int(episode) for episode in episode_indices],
         }
 
 
@@ -589,26 +769,144 @@ class RlGamesEvalRunner:
             return [str(x) for x in eval_tasks]
         return ["flappy", "demon_attack"]
 
-    def run(self, model, step: int, stage: str = "mid_train") -> EvalResult:
-        tasks = self._get_tasks()
-        per_latency: Dict[str, Dict] = {}
+    @staticmethod
+    def _merge_latency_metrics(metrics_list: List[Dict[str, Any]]) -> Dict[str, Any]:
+        if not metrics_list:
+            return {}
+
+        episode_rows = []
+        action_hist = Counter()
+        for metrics in metrics_list:
+            rewards = metrics.get("episode_rewards", [])
+            lengths = metrics.get("episode_lengths", [])
+            seeds = metrics.get("episode_seeds", [])
+            indices = metrics.get("episode_indices", list(range(len(rewards))))
+            episode_rows.extend(
+                (
+                    int(index),
+                    float(reward),
+                    int(length),
+                    seed,
+                )
+                for index, reward, length, seed in zip(indices, rewards, lengths, seeds)
+            )
+            action_hist.update(metrics.get("decoded_action_hist", {}))
+
+        episode_rows.sort(key=lambda row: row[0])
+        episode_indices = [row[0] for row in episode_rows]
+        rewards = [row[1] for row in episode_rows]
+        lengths = [row[2] for row in episode_rows]
+        episode_seeds = [row[3] for row in episode_rows]
+        first = metrics_list[0]
+        merged = {
+            "latency": int(first.get("latency", 0)),
+            "num_episodes": len(rewards),
+            "mean_reward": float(np.mean(rewards)) if rewards else 0.0,
+            "mean_length": float(np.mean(lengths)) if lengths else 0.0,
+            "std_reward": float(np.std(rewards)) if rewards else 0.0,
+            "std_length": float(np.std(lengths)) if lengths else 0.0,
+            "episode_rewards": rewards,
+            "episode_lengths": lengths,
+            "decoded_action_hist": dict(action_hist),
+            "fixed_episode_seeds": bool(first.get("fixed_episode_seeds", True)),
+            "eval_seed": int(first.get("eval_seed", 0)),
+            "episode_seeds": episode_seeds,
+            "episode_indices": episode_indices,
+        }
+        vectorized_batch_sizes = [
+            int(metrics.get("vectorized_batch_size", 1))
+            for metrics in metrics_list
+            if bool(metrics.get("vectorized_eval", False))
+        ]
+        if vectorized_batch_sizes:
+            merged["vectorized_eval"] = True
+            merged["vectorized_batch_size"] = max(vectorized_batch_sizes)
+        return merged
+
+    @staticmethod
+    def _aggregate_result(per_latency: Dict[str, Dict], *, stage: str, step: int, cfg, task_count: int) -> Dict:
         aggregate = {
             "stage": stage,
             "step": int(step),
-            "task": str(getattr(self.cfg.rl_games, "task", "flappy")),
-            "model_alias": str(getattr(self.cfg.rl_games, "model_alias", "openvla")),
-            "fixed_episode_seeds": _as_bool(getattr(self.cfg.rl_games.env_eval, "fixed_episode_seeds", True), default=True),
-            "eval_seed": int(getattr(self.cfg.rl_games.env_eval, "seed", getattr(self.cfg, "seed", 42)) or 42),
+            "task": str(getattr(cfg.rl_games, "task", "flappy")),
+            "model_alias": str(getattr(cfg.rl_games, "model_alias", "openvla")),
+            "fixed_episode_seeds": _as_bool(getattr(cfg.rl_games.env_eval, "fixed_episode_seeds", True), default=True),
+            "eval_seed": int(getattr(cfg.rl_games.env_eval, "seed", getattr(cfg, "seed", 42)) or 42),
             "total_episodes": 0,
             "mean_reward": 0.0,
             "mean_length": 0.0,
             "std_reward": 0.0,
             "std_length": 0.0,
-            "task_count": len(tasks),
+            "task_count": task_count,
         }
-
         all_rewards = []
         all_lengths = []
+        for metrics in per_latency.values():
+            aggregate["total_episodes"] += int(metrics.get("num_episodes", 0))
+            all_rewards.extend(float(reward) for reward in metrics.get("episode_rewards", []))
+            all_lengths.extend(float(length) for length in metrics.get("episode_lengths", []))
+
+        if all_rewards:
+            aggregate["mean_reward"] = float(np.mean(all_rewards))
+            aggregate["std_reward"] = float(np.std(all_rewards))
+        if all_lengths:
+            aggregate["mean_length"] = float(np.mean(all_lengths))
+            aggregate["std_length"] = float(np.std(all_lengths))
+        if per_latency:
+            aggregate["macro_mean_reward"] = float(
+                np.mean([float(metrics.get("mean_reward", 0.0)) for metrics in per_latency.values()])
+            )
+            aggregate["macro_mean_length"] = float(
+                np.mean([float(metrics.get("mean_length", 0.0)) for metrics in per_latency.values()])
+            )
+        vectorized_batch_sizes = [
+            int(metrics.get("vectorized_batch_size", 1))
+            for metrics in per_latency.values()
+            if bool(metrics.get("vectorized_eval", False))
+        ]
+        if vectorized_batch_sizes:
+            aggregate["vectorized_eval"] = True
+            aggregate["vectorized_batch_size"] = max(vectorized_batch_sizes)
+        return aggregate
+
+    def merge_results(self, results: List[EvalResult], *, step: int, stage: str) -> EvalResult:
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for result in results:
+            if result is None:
+                continue
+            for key, metrics in result.per_latency.items():
+                grouped.setdefault(key, []).append(metrics)
+
+        per_latency = {
+            key: self._merge_latency_metrics(metrics_list)
+            for key, metrics_list in grouped.items()
+        }
+        aggregate = self._aggregate_result(
+            per_latency=per_latency,
+            stage=stage,
+            step=step,
+            cfg=self.cfg,
+            task_count=len(self._get_tasks()),
+        )
+        aggregate["distributed_eval"] = True
+        result = EvalResult(per_latency=per_latency, aggregate=aggregate)
+        return result
+
+    def save(self, result: EvalResult, step: int, stage: str) -> str:
+        result.path = self._save(result=result, step=step, stage=stage)
+        return result.path
+
+    def run(
+        self,
+        model,
+        step: int,
+        stage: str = "mid_train",
+        shard_rank: int = 0,
+        shard_count: int = 1,
+        save: bool = True,
+    ) -> EvalResult:
+        tasks = self._get_tasks()
+        per_latency: Dict[str, Dict] = {}
 
         rollout_plan = [
             (task_name, latency)
@@ -635,37 +933,37 @@ class RlGamesEvalRunner:
             task_eval_cfg = self._cross_task_cfg(task_name)
             task_eval = _TaskEvaluator(task=task_name, cfg=self.cfg, task_eval_cfg=task_eval_cfg)
             prompt = self._resolve_prompt(latency=latency, mapping=prompt_maps.get(task_name, {}), task=task_name)
+            num_episodes = self._num_episodes(stage=stage, task=task_name)
+            episode_indices = [
+                episode
+                for episode in range(num_episodes)
+                if int(episode) % max(1, int(shard_count)) == int(shard_rank)
+            ]
             metrics = task_eval.run_latency(
                 model=model,
                 latency=latency,
                 prompt=prompt,
                 max_steps=self._max_steps_per_episode(stage=stage, task=task_name),
-                num_episodes=self._num_episodes(stage=stage, task=task_name),
+                num_episodes=num_episodes,
+                episode_indices=episode_indices,
                 progress_desc=f"{stage} {task_name} latency={latency}",
                 progress_position=1,
             )
             key = f"{task_name}/latency_{latency}"
             per_latency[key] = metrics
-            aggregate["total_episodes"] += metrics["num_episodes"]
-            all_rewards.extend(float(reward) for reward in metrics.get("episode_rewards", []))
-            all_lengths.extend(float(length) for length in metrics.get("episode_lengths", []))
 
-        if all_rewards:
-            aggregate["mean_reward"] = float(np.mean(all_rewards))
-            aggregate["std_reward"] = float(np.std(all_rewards))
-        if all_lengths:
-            aggregate["mean_length"] = float(np.mean(all_lengths))
-            aggregate["std_length"] = float(np.std(all_lengths))
-        if per_latency:
-            aggregate["macro_mean_reward"] = float(
-                np.mean([float(metrics.get("mean_reward", 0.0)) for metrics in per_latency.values()])
-            )
-            aggregate["macro_mean_length"] = float(
-                np.mean([float(metrics.get("mean_length", 0.0)) for metrics in per_latency.values()])
-            )
+        aggregate = self._aggregate_result(
+            per_latency=per_latency,
+            stage=stage,
+            step=step,
+            cfg=self.cfg,
+            task_count=len(tasks),
+        )
+        aggregate["distributed_eval"] = int(shard_count) > 1
 
         result = EvalResult(per_latency=per_latency, aggregate=aggregate)
-        result.path = self._save(result=result, step=step, stage=stage)
+        if save:
+            self.save(result=result, step=step, stage=stage)
         return result
 
     def _save(self, result: EvalResult, step: int, stage: str) -> str:

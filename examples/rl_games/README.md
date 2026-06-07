@@ -129,6 +129,25 @@ python examples/rl_games/scripts/launch_train.py \
   rl_games.env_eval.post_train.enabled=false
 ```
 
+Cross-task OpenVLA bridge runs use the same launcher with a named setup from
+`examples/rl_games/config/cross_task_setup`:
+
+```bash
+python examples/rl_games/scripts/launch_train.py \
+  model=openvla \
+  env=cross_task \
+  init=bridge \
+  mode=cross_task \
+  cross_task_setup=flappy_mixed_demon_zero
+```
+
+Canonical wrappers are available at:
+
+```bash
+bash examples/rl_games/bash_scripts/openvla/bridge/cross_task/flappy_mixed_demon_zero.sh
+bash examples/rl_games/bash_scripts/openvla/bridge/cross_task/demon_mixed_flappy_zero.sh
+```
+
 ## Configuration
 
 RL-games training uses one Hydra configuration tree under `examples/rl_games/config`.
@@ -138,6 +157,7 @@ The primary config groups are:
 - `env`
 - `init`
 - `mode`
+- `cross_task_setup`
 
 Use `python examples/rl_games/scripts/launch_train.py ...` to compose runs from those groups. Do not add new YAML files under the legacy `experiments` directory; it is intentionally removed from the active training path.
 

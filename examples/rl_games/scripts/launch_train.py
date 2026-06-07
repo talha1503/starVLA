@@ -104,6 +104,14 @@ def _latencies_expr(values: Any) -> str | None:
     return "[" + ",".join(str(int(value)) for value in values) + "]"
 
 
+def _csv_int_list_expr(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        value = [item.strip() for item in value.split(",") if item.strip()]
+    return "[" + ",".join(str(int(item)) for item in value) + "]"
+
+
 def _hydra_value(value: Any) -> str:
     if isinstance(value, bool):
         return str(value).lower()
@@ -112,6 +120,28 @@ def _hydra_value(value: Any) -> str:
     if isinstance(value, str) and any(ch.isspace() or ch in {",", ":", "{", "}", "[", "]"} for ch in value):
         return shlex.quote(value)
     return str(value)
+
+
+def _append_cross_task_train_task_cli_overrides(hydra_overrides: list[str], cli_args: argparse.Namespace) -> None:
+    for role, index in (("a", 0), ("b", 1)):
+        prefix = f"cross_task_{role}"
+        hydra_prefix = f"rl_games.cross_task.train_tasks.{index}"
+        for arg_name, cfg_name in (
+            ("name", "name"),
+            ("train_source_hf", "train_source_hf"),
+            ("prompt_source_hf", "prompt_source_hf"),
+            ("converted_name", "converted_name"),
+            ("episodes_per_latency", "episodes_per_latency"),
+            ("max_episodes", "max_episodes"),
+            ("weight", "weight"),
+        ):
+            value = getattr(cli_args, f"{prefix}_{arg_name}", None)
+            if value not in (None, ""):
+                hydra_overrides.append(f"{hydra_prefix}.{cfg_name}={_hydra_value(value)}")
+
+        latencies = _csv_int_list_expr(getattr(cli_args, f"{prefix}_latencies", None))
+        if latencies:
+            hydra_overrides.append(f"{hydra_prefix}.train_latency_filter={latencies}")
 
 
 def _append_override(cmd: list[str], cfg: Any, cfg_path: str, hydra_path: str) -> None:
@@ -138,6 +168,37 @@ def _append_eval_stage_overrides(cmd: list[str], cfg: Any, stage_name: str, hydr
     latencies = _cfg_get(cfg, f"{prefix}.latencies")
     if latencies not in (None, ""):
         cmd.append(f"{hydra_prefix}.latencies={_latencies_expr(latencies)}")
+
+
+def _mapping_items(value: Any):
+    if value in (None, ""):
+        return []
+    if OmegaConf.is_config(value):
+        value = OmegaConf.to_container(value, resolve=True)
+    if isinstance(value, dict):
+        return value.items()
+    return []
+
+
+def _append_cross_task_eval_overrides(cmd: list[str], cfg: Any) -> None:
+    eval_tasks = _cfg_get(cfg, "rl_games.cross_task.eval_tasks")
+    for task_name, task_cfg in _mapping_items(eval_tasks):
+        base = f"rl_games.cross_task.eval_tasks.{task_name}"
+        for key in ("frameskip", "image_size", "task_description", "prompt_map_path"):
+            value = _cfg_get(task_cfg, key)
+            if value not in (None, ""):
+                cmd.append(f"{base}.{key}={_hydra_value(value)}")
+
+        for stage in ("mid_train", "post_train"):
+            stage_cfg = _cfg_get(task_cfg, stage)
+            stage_base = f"{base}.{stage}"
+            for key in ("enabled", "num_episodes", "max_steps_per_episode"):
+                value = _cfg_get(stage_cfg, key)
+                if value not in (None, ""):
+                    cmd.append(f"{stage_base}.{key}={_hydra_value(value)}")
+            latencies = _cfg_get(stage_cfg, "latencies")
+            if latencies not in (None, ""):
+                cmd.append(f"{stage_base}.latencies={_latencies_expr(latencies)}")
 
 
 def _safe_suffix(value: Any) -> str:
@@ -226,6 +287,11 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         setup_force=str(_as_bool(_cfg_get(cfg, "dataset.setup_force"))).lower(),
         verify_rows=int(_cfg_get(cfg, "dataset.verify_rows") or 200),
         max_episodes=max_episodes,
+        episodes_per_latency=(
+            None
+            if _cfg_get(cfg, "dataset.episodes_per_latency") in (None, "")
+            else int(_cfg_get(cfg, "dataset.episodes_per_latency"))
+        ),
         latency_filter=_optional_int_list(_cfg_get(cfg, "dataset.latency_filter")),
         base_model_dir=_resolve_path(_cfg_get(cfg, "paths.base_model_dir"), workspace_dir),
         base_model_repo_id=_cfg_get(cfg, "base_model.repo_id"),
@@ -372,6 +438,8 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
         cmd.append(f"datasets.vla_data.data_mix={setup['data_mix']}")
     if setup.get("eval_data_mix"):
         cmd.append(f"datasets.vla_data.eval_data_mix={setup['eval_data_mix']}")
+    if setup.get("custom_mixtures_path"):
+        cmd.append(f"datasets.vla_data.custom_mixtures_path={setup['custom_mixtures_path']}")
     if setup.get("base_model_dir"):
         cmd.append(f"framework.qwenvl.base_vlm={setup['base_model_dir']}")
 
@@ -380,6 +448,7 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
         ("rl_games.model_alias", "rl_games.model_alias"),
         ("rl_games.initialization_mode", "rl_games.initialization_mode"),
         ("rl_games.action_carrier", "rl_games.action_carrier"),
+        ("rl_games.env_eval.distributed_mode", "rl_games.env_eval.distributed_mode"),
         ("rl_games.env_eval.latency.mode", "rl_games.env_eval.latency.mode"),
         ("rl_games.env_eval.frameskip", "rl_games.env_eval.frameskip"),
         ("rl_games.env_eval.image_size", "rl_games.env_eval.image_size"),
@@ -400,7 +469,10 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
     prompt_map = setup.get("latency_prompt_map_path") or _cfg_get(cfg, "rl_games.env_eval.latency.prompt_map_path")
     if prompt_map not in (None, ""):
         cmd.append(f"rl_games.env_eval.latency.prompt_map_path={prompt_map}")
+    for task_name, task_prompt_map in (setup.get("cross_task_prompt_maps") or {}).items():
+        cmd.append(f"rl_games.cross_task.eval_tasks.{task_name}.prompt_map_path={task_prompt_map}")
 
+    _append_cross_task_eval_overrides(cmd, cfg)
     _append_eval_stage_overrides(cmd, cfg, "env_eval.mid_train", "mid_train")
     _append_eval_stage_overrides(cmd, cfg, "env_eval.post_train", "post_train")
 
@@ -444,6 +516,17 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--mode", default=DEFAULT_MODE)
     parser.add_argument("--workspace-dir", default=None)
     parser.add_argument("--run-root-dir", default=None)
+    parser.add_argument("--deadly-loss-type", default=None, choices=("l1", "multibinary_bce", "multibinary_ce"))
+    parser.add_argument("--eval-distributed-mode", default=None, choices=("none", "rank_sharded"))
+    for role in ("a", "b"):
+        parser.add_argument(f"--cross-task-{role}-name", default=None)
+        parser.add_argument(f"--cross-task-{role}-train-source-hf", f"--cross-task-{role}-source-hf", default=None)
+        parser.add_argument(f"--cross-task-{role}-prompt-source-hf", default=None)
+        parser.add_argument(f"--cross-task-{role}-converted-name", default=None)
+        parser.add_argument(f"--cross-task-{role}-latencies", default=None)
+        parser.add_argument(f"--cross-task-{role}-episodes-per-latency", type=int, default=None)
+        parser.add_argument(f"--cross-task-{role}-max-episodes", type=int, default=None)
+        parser.add_argument(f"--cross-task-{role}-weight", type=float, default=None)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("overrides", nargs="*")
     return parser.parse_args(list(argv))
@@ -458,6 +541,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if cli_args.run_root_dir not in (None, ""):
         hydra_overrides.append(f"paths.run_root_dir={cli_args.run_root_dir}")
         hydra_overrides.append(f"run_root_dir={cli_args.run_root_dir}")
+    if cli_args.deadly_loss_type not in (None, ""):
+        hydra_overrides.append(f"rl_games.deadly_corridor_loss_type={cli_args.deadly_loss_type}")
+    if cli_args.eval_distributed_mode not in (None, ""):
+        hydra_overrides.append(f"rl_games.env_eval.distributed_mode={cli_args.eval_distributed_mode}")
+    _append_cross_task_train_task_cli_overrides(hydra_overrides, cli_args)
     if cli_args.dry_run:
         hydra_overrides.append("launch.dry_run=true")
 

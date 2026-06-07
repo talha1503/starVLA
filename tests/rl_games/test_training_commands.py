@@ -74,6 +74,235 @@ def test_launcher_forwards_canonical_per_device_batch_size_override(tmp_path: Pa
     assert "datasets.vla_data.per_device_batch_size=16" in cmd
 
 
+def test_deadly_corridor_loss_selector_forwards_l1(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="deadly_corridor",
+        init="bridge",
+        mode="single",
+        overrides=["rl_games.deadly_corridor_loss_type=l1"],
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "base_model"),
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert cfg.framework.action_model.loss_type == "l1"
+    assert "framework.action_model.loss_type=l1" in cmd
+
+
+def test_launcher_setup_namespace_forwards_episodes_per_latency(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="flappy",
+        init="bridge",
+        mode="mixed_latency",
+        overrides=["dataset.episodes_per_latency=100"],
+    )
+
+    setup_args = launch_train.setup_namespace_from_cfg(cfg, tmp_path, "results/Checkpoints")
+
+    assert setup_args.episodes_per_latency == 100
+
+
+def test_setup_training_assets_exposes_episodes_per_latency_option() -> None:
+    setup_text = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "setup_training_assets.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "--episodes-per-latency" in setup_text
+
+
+def test_deadly_corridor_loss_selector_accepts_multibinary_ce_alias(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="deadly_corridor",
+        init="bridge",
+        mode="single",
+        overrides=["rl_games.deadly_corridor_loss_type=multibinary_ce"],
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "base_model"),
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert cfg.framework.action_model.loss_type == "multibinary_bce"
+    assert "framework.action_model.loss_type=multibinary_bce" in cmd
+
+
+def test_run_train_exposes_deadly_loss_type_option() -> None:
+    run_train_text = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "run_train.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "--deadly-loss-type <l1|multibinary_bce|multibinary_ce>" in run_train_text
+    assert "rl_games.deadly_corridor_loss_type=$DEADLY_LOSS_TYPE" in run_train_text
+
+
+def test_run_train_exposes_distributed_eval_option() -> None:
+    run_train_text = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "run_train.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "--eval-distributed-mode <none|rank_sharded>" in run_train_text
+    assert "rl_games.env_eval.distributed_mode=$EVAL_DISTRIBUTED_MODE" in run_train_text
+
+
+def test_launch_train_exposes_distributed_eval_option() -> None:
+    launcher_text = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "launch_train.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "--eval-distributed-mode" in launcher_text
+    assert "rl_games.env_eval.distributed_mode={cli_args.eval_distributed_mode}" in launcher_text
+
+
+def test_launch_train_cross_task_role_flags_map_to_train_task_overrides() -> None:
+    args = launch_train._parse_args(
+        [
+            "--cross-task-a-source-hf",
+            "talha1503/demon_attack_mixed_latency_parquet",
+            "--cross-task-a-prompt-source-hf",
+            "talha1503/demon_attack_mixed_latency_parquet",
+            "--cross-task-a-latencies",
+            "0,1,2,3,4",
+            "--cross-task-a-episodes-per-latency",
+            "50",
+            "--cross-task-b-source-hf",
+            "talha1503/flappy_bird_zero_latency_parquet",
+            "--cross-task-b-prompt-source-hf",
+            "talha1503/flappy_bird_mixed_latency_parquet",
+            "--cross-task-b-latencies",
+            "0",
+            "--cross-task-b-max-episodes",
+            "100",
+        ]
+    )
+    overrides = []
+
+    launch_train._append_cross_task_train_task_cli_overrides(overrides, args)
+
+    assert "rl_games.cross_task.train_tasks.0.train_source_hf=talha1503/demon_attack_mixed_latency_parquet" in overrides
+    assert "rl_games.cross_task.train_tasks.0.prompt_source_hf=talha1503/demon_attack_mixed_latency_parquet" in overrides
+    assert "rl_games.cross_task.train_tasks.0.train_latency_filter=[0,1,2,3,4]" in overrides
+    assert "rl_games.cross_task.train_tasks.0.episodes_per_latency=50" in overrides
+    assert "rl_games.cross_task.train_tasks.1.train_source_hf=talha1503/flappy_bird_zero_latency_parquet" in overrides
+    assert "rl_games.cross_task.train_tasks.1.prompt_source_hf=talha1503/flappy_bird_mixed_latency_parquet" in overrides
+    assert "rl_games.cross_task.train_tasks.1.train_latency_filter=[0]" in overrides
+    assert "rl_games.cross_task.train_tasks.1.max_episodes=100" in overrides
+
+
+def test_deadly_corridor_openvla_wrapper_passes_extra_args() -> None:
+    command_text = _command_path("openvla", "deadly_corridor").read_text(encoding="utf-8")
+
+    assert '"$@"' in command_text
+
+
+def test_launcher_forwards_cross_task_setup_outputs(tmp_path: Path) -> None:
+    cfg = OmegaConf.create({
+        "config_name": "train",
+        "model": "openvla",
+        "env": "cross_task",
+        "init": "bridge",
+        "mode": "cross_task",
+        "run_id": "cross_task_test",
+        "seed": 42,
+        "wandb_entity": "entity",
+        "wandb_project": "project",
+        "paths": {"dataset_local_dir": "datasets"},
+        "checkpoint": {
+            "sync": {"enabled": False, "keep_last_n": 0, "repo_id": ""},
+            "local": {"keep_last_n": 3},
+            "save_best_model": True,
+        },
+        "trainer": {"is_resume": False},
+        "rl_games": {
+            "task": "cross_task",
+            "model_alias": "openvla",
+            "initialization_mode": "bridge",
+            "action_carrier": "bridge",
+            "env_eval": {
+                "enabled": True,
+                "distributed_mode": "rank_sharded",
+                "latency": {"mode": "mixed", "values": [0, 1]},
+                "mid_train": {"interval_steps": 500},
+                "post_train": {"enabled": True},
+            },
+            "cross_task": {
+                "eval_tasks": {
+                    "flappy": {
+                        "frameskip": 1,
+                        "image_size": 224,
+                        "mid_train": {
+                            "enabled": True,
+                            "latencies": [0, 1],
+                            "num_episodes": 2,
+                            "max_steps_per_episode": 200,
+                        },
+                    },
+                    "demon_attack": {
+                        "frameskip": 4,
+                        "image_size": 224,
+                        "mid_train": {
+                            "enabled": True,
+                            "latencies": [0],
+                            "num_episodes": 3,
+                            "max_steps_per_episode": 300,
+                        },
+                    },
+                }
+            },
+        },
+        "datasets": {"vla_data": {"include_state": False}},
+    })
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "data_mix": "cross__flappy__demon",
+        "eval_data_mix": "cross__flappy__demon__val",
+        "custom_mixtures_path": str(tmp_path / "datasets" / "_generated_mixtures" / "cross.json"),
+        "base_model_dir": str(tmp_path / "base"),
+        "resume_found": False,
+        "pretrained_checkpoint": str(tmp_path / "init.pt"),
+        "cross_task_prompt_maps": {
+            "flappy": str(tmp_path / "flappy_prompt_map.json"),
+            "demon_attack": str(tmp_path / "demon_prompt_map.json"),
+        },
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert "datasets.vla_data.data_mix=cross__flappy__demon" in cmd
+    assert "datasets.vla_data.eval_data_mix=cross__flappy__demon__val" in cmd
+    assert f"datasets.vla_data.custom_mixtures_path={setup['custom_mixtures_path']}" in cmd
+    assert "rl_games.env_eval.distributed_mode=rank_sharded" in cmd
+    assert f"rl_games.cross_task.eval_tasks.flappy.prompt_map_path={setup['cross_task_prompt_maps']['flappy']}" in cmd
+    assert (
+        f"rl_games.cross_task.eval_tasks.demon_attack.prompt_map_path="
+        f"{setup['cross_task_prompt_maps']['demon_attack']}"
+    ) in cmd
+    assert "rl_games.cross_task.eval_tasks.flappy.mid_train.latencies=[0,1]" in cmd
+    assert "rl_games.cross_task.eval_tasks.flappy.mid_train.num_episodes=2" in cmd
+    assert "rl_games.cross_task.eval_tasks.demon_attack.mid_train.max_steps_per_episode=300" in cmd
+
+
+def test_cross_task_mode_does_not_override_initialization_group() -> None:
+    mode_text = (REPO_ROOT / "examples" / "rl_games" / "config" / "mode" / "cross_task.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "initialization_mode:" not in mode_text
+    assert "action_carrier:" not in mode_text
+
+
 def test_launcher_defaults_workspace_to_repo_root_when_env_is_unset(monkeypatch) -> None:
     original_exists = Path.exists
 

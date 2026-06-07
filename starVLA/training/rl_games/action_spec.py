@@ -2,6 +2,14 @@ from __future__ import annotations
 
 BRIDGE_ACTION_DIM = 7
 BRIDGE_INIT_MODES = {"pre-trained", "pretrained", "bridge"}
+DEADLY_LOSS_TYPE_ALIASES = {
+    "l1": "l1",
+    "mae": "l1",
+    "multibinary_ce": "multibinary_bce",
+    "multibinary_bce": "multibinary_bce",
+    "bce": "multibinary_bce",
+    "binary_cross_entropy": "multibinary_bce",
+}
 
 
 def _deadly_action_dim(cfg) -> int:
@@ -28,6 +36,27 @@ def _env_action_dim(cfg):
     if task == "cross_task":
         return None
     return None
+
+
+def _normalize_deadly_loss_type(value) -> str:
+    normalized = str(value).strip().lower()
+    if normalized not in DEADLY_LOSS_TYPE_ALIASES:
+        supported = "|".join(sorted(DEADLY_LOSS_TYPE_ALIASES))
+        raise ValueError(f"Unsupported Deadly Corridor loss type: {value!r}. Expected one of: {supported}")
+    return DEADLY_LOSS_TYPE_ALIASES[normalized]
+
+
+def _apply_deadly_loss_spec(cfg, action_cfg) -> None:
+    rl_games = getattr(cfg, "rl_games", None)
+    if rl_games is None:
+        return
+    if str(getattr(rl_games, "task", "flappy")) != "deadly_corridor":
+        return
+
+    loss_type = getattr(rl_games, "deadly_corridor_loss_type", None)
+    if loss_type in (None, ""):
+        return
+    action_cfg.loss_type = _normalize_deadly_loss_type(loss_type)
 
 
 def _initialization_mode(cfg) -> str:
@@ -80,6 +109,7 @@ def apply_action_spec(cfg) -> None:
         # Loss and rollout decode use only the first action_env_dim task dims.
         action_cfg.action_dim = int(carrier_dim)
         action_cfg.action_env_dim = int(env_dim)
+        _apply_deadly_loss_spec(cfg, action_cfg)
         return
 
     if model_alias in {"pi-0", "pi-0.5", "gr00t"}:
@@ -90,8 +120,10 @@ def apply_action_spec(cfg) -> None:
                 f"for model_alias={model_alias}, task={getattr(rl_games, 'task', None)}"
             )
         action_cfg.action_env_dim = int(env_dim)
+        _apply_deadly_loss_spec(cfg, action_cfg)
         return
 
     # openvla and other dense/discrete heads should emit env action space directly.
     action_cfg.action_dim = int(env_dim)
     action_cfg.action_env_dim = int(env_dim)
+    _apply_deadly_loss_spec(cfg, action_cfg)

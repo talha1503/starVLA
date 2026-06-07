@@ -19,6 +19,7 @@ datasets:
     data_root_dir: playground/Datasets/rl_games
     data_mix: ${dataset.converted_name}
     eval_data_mix: null
+    custom_mixtures_path: null
     action_type: discrete
     sequential_step_sampling: false
     per_device_batch_size: 4
@@ -39,6 +40,7 @@ dataset:
   setup_force: false
   verify_rows: 200
   max_episodes: null
+  episodes_per_latency: null
   latency_filter: null
   debug_subset:
     enabled: false

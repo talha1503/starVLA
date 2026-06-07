@@ -6,6 +6,7 @@ defaults:
   - init: scratch
   - mode: single
   - checkpoint: default
+  - cross_task_setup: null
   - _self_
 
 hydra:

@@ -42,11 +42,13 @@ Options:
   --latencies <csv>            Comma-separated latency list (e.g. 0,1,2,3)
   --latency-prompt-map-path <path>  Prompt map JSON path override
   --env-eval-enabled <true|false>   Enable/disable rl_games env eval
+  --eval-distributed-mode <none|rank_sharded> Distributed eval mode (default: none)
   --num-episodes <int>         Eval episodes per latency (default: 5)
   --max-episode-steps <int>    Max steps per episode (default: 2000)
   --frameskip <int>            Frameskip override
   --image-size <int>           Eval image size override
   --deadly-action-layout <multibinary_7|factorized_11>  Deadly layout override
+  --deadly-loss-type <l1|multibinary_bce|multibinary_ce>  Deadly training/eval loss selector
   --hf-sync-enabled <true|false>      checkpoint.sync.enabled
   --hf-repo-id <repo>          checkpoint.sync.repo_id
   --hf-keep-last-n <int>       checkpoint.sync.keep_last_n
@@ -109,11 +111,13 @@ LATENCY_MODE_OVERRIDE=""
 LATENCIES_CSV=""
 LATENCY_PROMPT_MAP_PATH=""
 ENV_EVAL_ENABLED="true"
+EVAL_DISTRIBUTED_MODE="none"
 NUM_EPISODES="5"
 MAX_EPISODE_STEPS="2000"
 FRAMESKIP=""
 IMAGE_SIZE=""
 DEADLY_ACTION_LAYOUT="multibinary_7"
+DEADLY_LOSS_TYPE=""
 HF_SYNC_ENABLED="false"
 HF_REPO_ID=""
 HF_KEEP_LAST_N="0"
@@ -176,11 +180,13 @@ while [[ $# -gt 0 ]]; do
     --latencies) LATENCIES_CSV="$2"; shift 2 ;;
     --latency-prompt-map-path) LATENCY_PROMPT_MAP_PATH="$2"; shift 2 ;;
     --env-eval-enabled) ENV_EVAL_ENABLED="$2"; shift 2 ;;
+    --eval-distributed-mode) EVAL_DISTRIBUTED_MODE="$2"; shift 2 ;;
     --num-episodes) NUM_EPISODES="$2"; shift 2 ;;
     --max-episode-steps) MAX_EPISODE_STEPS="$2"; shift 2 ;;
     --frameskip) FRAMESKIP="$2"; shift 2 ;;
     --image-size) IMAGE_SIZE="$2"; shift 2 ;;
     --deadly-action-layout) DEADLY_ACTION_LAYOUT="$2"; shift 2 ;;
+    --deadly-loss-type) DEADLY_LOSS_TYPE="$2"; shift 2 ;;
     --hf-sync-enabled) HF_SYNC_ENABLED="$2"; shift 2 ;;
     --hf-repo-id) HF_REPO_ID="$2"; shift 2 ;;
     --hf-keep-last-n) HF_KEEP_LAST_N="$2"; shift 2 ;;
@@ -398,6 +404,7 @@ CMD=(
   "trainer.gradient_accumulation_steps=$GRADIENT_ACCUMULATION_STEPS"
   "datasets.vla_data.per_device_batch_size=$BATCH_SIZE"
   "rl_games.env_eval.enabled=$ENV_EVAL_ENABLED"
+  "rl_games.env_eval.distributed_mode=$EVAL_DISTRIBUTED_MODE"
   "rl_games.env_eval.num_episodes=$NUM_EPISODES"
   "rl_games.env_eval.max_episode_steps=$MAX_EPISODE_STEPS"
   "checkpoint.sync.enabled=$HF_SYNC_ENABLED"
@@ -435,6 +442,9 @@ if [[ -n "$IMAGE_SIZE" ]]; then
 fi
 if [[ "$ENV_NAME" == "deadly_corridor" || "${TASK_OVERRIDE:-}" == "deadly_corridor" ]]; then
   CMD+=("rl_games.env_eval.deadly.action_layout=$DEADLY_ACTION_LAYOUT")
+  if [[ -n "$DEADLY_LOSS_TYPE" ]]; then
+    CMD+=("rl_games.deadly_corridor_loss_type=$DEADLY_LOSS_TYPE")
+  fi
 fi
 if [[ -n "$HF_REPO_ID" ]]; then
   CMD+=("checkpoint.sync.repo_id=$HF_REPO_ID")

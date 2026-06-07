@@ -6,6 +6,7 @@ rl_games:
     image_size: 224
     frameskip: 1
   cross_task:
+    train_tasks: []
     eval_tasks:
       flappy:
         prompt_map_path: null

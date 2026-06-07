@@ -15,3 +15,4 @@ python examples/rl_games/scripts/launch_train.py \
   trainer.gradient_accumulation_steps=16 \
   datasets.vla_data.per_device_batch_size=16 \
   checkpoint.load=none \
+  "$@"

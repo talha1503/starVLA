@@ -6,6 +6,7 @@ defaults:
 
 rl_games:
   task: deadly_corridor
+  deadly_corridor_loss_type: null
   env_eval:
     frameskip: 4
     deadly:

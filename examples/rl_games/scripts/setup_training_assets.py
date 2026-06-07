@@ -882,6 +882,7 @@ def main() -> int:
     parser.add_argument("--setup-force", default="false")
     parser.add_argument("--verify-rows", type=int, default=200)
     parser.add_argument("--max-episodes", type=int, default=None)
+    parser.add_argument("--episodes-per-latency", type=int, default=None)
     parser.add_argument("--latency-filter", default=None)
     parser.add_argument("--base-model-dir", required=True)
     parser.add_argument("--base-model-repo-id", default=None)

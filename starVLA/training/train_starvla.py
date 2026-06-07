@@ -19,7 +19,7 @@ import re
 import shutil
 import time
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 # Third-Party Libraries
 import numpy as np
@@ -39,6 +39,7 @@ from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
 from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias, validate_rl_games_config
 from starVLA.training.rl_games.auth import login_training_services
+from starVLA.training.rl_games.eval_core import EvalResult
 from starVLA.training.train_step_events import should_run_step_interval_event
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
@@ -346,6 +347,55 @@ class VLATrainer(TrainerUtils):
             return float(np.mean(bucket_scores))
         return float(eval_result.aggregate.get("mean_reward", 0.0))
 
+    @staticmethod
+    def _eval_result_payload(eval_result) -> Dict[str, Any]:
+        return {
+            "per_latency": eval_result.per_latency,
+            "aggregate": eval_result.aggregate,
+        }
+
+    def _distributed_rl_games_eval_enabled(self) -> bool:
+        if self._rl_games_eval_runner is None:
+            return False
+        env_eval = getattr(self.config.rl_games, "env_eval", None)
+        mode = str(getattr(env_eval, "distributed_mode", "none") or "none").strip().lower()
+        return mode in {"rank_sharded", "distributed", "sharded"} and int(self.accelerator.num_processes) > 1
+
+    def _run_distributed_rl_games_eval(self, stage: str):
+        if self._rl_games_eval_runner is None:
+            return None
+
+        local_result = self._rl_games_eval_runner.run(
+            model=self.accelerator.unwrap_model(self.model),
+            step=self.completed_steps,
+            stage=stage,
+            shard_rank=int(self.accelerator.process_index),
+            shard_count=int(self.accelerator.num_processes),
+            save=False,
+        )
+        local_payload = self._eval_result_payload(local_result)
+
+        if dist.is_available() and dist.is_initialized():
+            gathered_payloads = [None for _ in range(dist.get_world_size())]
+            dist.all_gather_object(gathered_payloads, local_payload)
+        else:
+            gathered_payloads = [local_payload]
+
+        partial_results = [
+            EvalResult(per_latency=payload["per_latency"], aggregate=payload["aggregate"])
+            for payload in gathered_payloads
+            if payload is not None
+        ]
+        merged_result = self._rl_games_eval_runner.merge_results(
+            partial_results,
+            step=self.completed_steps,
+            stage=stage,
+        )
+        if self.accelerator.is_main_process:
+            self._rl_games_eval_runner.save(result=merged_result, step=self.completed_steps, stage=stage)
+        self.accelerator.wait_for_everyone()
+        return merged_result
+
     def _best_config_paths(self) -> list[str]:
         output_dir = Path(self.config.output_dir)
         return [
@@ -557,11 +607,14 @@ class VLATrainer(TrainerUtils):
                         gradients_synced=gradients_synced,
                     ):
                         if self._rl_games_eval_runner.is_enabled(stage="mid_train"):
-                            eval_result = self._rl_games_eval_runner.run(
-                                model=self.accelerator.unwrap_model(self.model),
-                                step=self.completed_steps,
-                                stage="mid_train",
-                            )
+                            if self._distributed_rl_games_eval_enabled():
+                                eval_result = self._run_distributed_rl_games_eval(stage="mid_train")
+                            else:
+                                eval_result = self._rl_games_eval_runner.run(
+                                    model=self.accelerator.unwrap_model(self.model),
+                                    step=self.completed_steps,
+                                    stage="mid_train",
+                                )
                             step_metrics = self._append_rl_games_eval_metrics(
                                 step_metrics=step_metrics,
                                 eval_result=eval_result,
@@ -722,13 +775,19 @@ class VLATrainer(TrainerUtils):
             )
         self.accelerator.wait_for_everyone()
 
-        if self.accelerator.is_main_process:
-            if self._rl_games_eval_runner is not None and self._rl_games_eval_runner.is_enabled(stage="post_train"):
+        if self._rl_games_eval_runner is not None and self._rl_games_eval_runner.is_enabled(stage="post_train"):
+            if self._distributed_rl_games_eval_enabled():
+                eval_result = self._run_distributed_rl_games_eval(stage="post_train")
+            elif self.accelerator.is_main_process:
                 eval_result = self._rl_games_eval_runner.run(
                     model=self.accelerator.unwrap_model(self.model),
                     step=self.completed_steps,
                     stage="post_train",
                 )
+            else:
+                eval_result = None
+
+            if self.accelerator.is_main_process and eval_result is not None:
                 final_metrics = self._append_rl_games_eval_metrics(
                     step_metrics={},
                     eval_result=eval_result,
