@@ -146,6 +146,29 @@ def test_rl_games_registry_includes_deadly_corridor_joint_fifty_four_mix():
     ]
 
 
+def test_rl_games_registry_includes_bridge_mixes():
+    from starVLA.dataloader.gr00t_lerobot.registry import get_dataset_named_mixture
+
+    assert get_dataset_named_mixture("flappy_train__bridge") == [
+        ("flappy_train__bridge", 1.0, "rl_games_flappy")
+    ]
+    assert get_dataset_named_mixture("flappy_mixed_latency_train__bridge") == [
+        ("flappy_mixed_latency_train__bridge", 1.0, "rl_games_flappy")
+    ]
+    assert get_dataset_named_mixture("demon_attack_train__bridge") == [
+        ("demon_attack_train__bridge", 1.0, "rl_games_demon_attack")
+    ]
+    assert get_dataset_named_mixture("demon_attack_mixed_latency_train__bridge") == [
+        ("demon_attack_mixed_latency_train__bridge", 1.0, "rl_games_demon_attack")
+    ]
+    assert get_dataset_named_mixture("deadly_corridor_train__bridge") == [
+        ("deadly_corridor_train__bridge", 1.0, "rl_games_deadly_corridor")
+    ]
+    assert get_dataset_named_mixture("deadly_corridor_mixed_latency_train__bridge") == [
+        ("deadly_corridor_mixed_latency_train__bridge", 1.0, "rl_games_deadly_corridor")
+    ]
+
+
 def test_run_experiment_no_longer_passes_conversion_controls_to_setup():
     from examples.rl_games.scripts import run_experiment
 

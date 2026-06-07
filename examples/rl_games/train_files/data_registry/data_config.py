@@ -63,18 +63,27 @@ ROBOT_TYPE_TO_EMBODIMENT_TAG = {
 
 DATASET_NAMED_MIXTURES = {
     "flappy_train": [("flappy_train", 1.0, "rl_games_flappy")],
+    "flappy_train__bridge": [("flappy_train__bridge", 1.0, "rl_games_flappy")],
     "flappy_mixed_latency_train": [("flappy_mixed_latency_train", 1.0, "rl_games_flappy")],
+    "flappy_mixed_latency_train__bridge": [
+        ("flappy_mixed_latency_train__bridge", 1.0, "rl_games_flappy")
+    ],
     "flappy_fixed_l2_fs1": [("flappy_fixed_l2_fs1", 1.0, "rl_games_flappy")],
     "flappy_fixed_l2_fs2": [("flappy_fixed_l2_fs2", 1.0, "rl_games_flappy")],
     "flappy_fixed_l2_fs4": [("flappy_fixed_l2_fs4", 1.0, "rl_games_flappy")],
     "flappy_fixed_l2_fs6": [("flappy_fixed_l2_fs6", 1.0, "rl_games_flappy")],
     "demon_attack_train": [("demon_attack_train", 1.0, "rl_games_demon_attack")],
+    "demon_attack_train__bridge": [("demon_attack_train__bridge", 1.0, "rl_games_demon_attack")],
     "demon_attack_mixed_latency_train": [("demon_attack_mixed_latency_train", 1.0, "rl_games_demon_attack")],
+    "demon_attack_mixed_latency_train__bridge": [
+        ("demon_attack_mixed_latency_train__bridge", 1.0, "rl_games_demon_attack")
+    ],
     "demon_attack_fixed_l2_fs1": [("demon_attack_fixed_l2_fs1", 1.0, "rl_games_demon_attack")],
     "demon_attack_fixed_l2_fs2": [("demon_attack_fixed_l2_fs2", 1.0, "rl_games_demon_attack")],
     "demon_attack_fixed_l2_fs4": [("demon_attack_fixed_l2_fs4", 1.0, "rl_games_demon_attack")],
     "demon_attack_fixed_l2_fs6": [("demon_attack_fixed_l2_fs6", 1.0, "rl_games_demon_attack")],
     "deadly_corridor_train": [("deadly_corridor_train", 1.0, "rl_games_deadly_corridor")],
+    "deadly_corridor_train__bridge": [("deadly_corridor_train__bridge", 1.0, "rl_games_deadly_corridor")],
     "deadly_corridor_train_factorized11": [("deadly_corridor_train_factorized11", 1.0, "rl_games_deadly_corridor")],
     "deadly_corridor_fixed_l2_fs1": [("deadly_corridor_fixed_l2_fs1", 1.0, "rl_games_deadly_corridor")],
     "deadly_corridor_fixed_l2_fs2": [("deadly_corridor_fixed_l2_fs2", 1.0, "rl_games_deadly_corridor")],
@@ -97,6 +106,9 @@ DATASET_NAMED_MIXTURES = {
     ],
     "deadly_corridor_mixed_latency_train": [
         ("deadly_corridor_mixed_latency_train", 1.0, "rl_games_deadly_corridor")
+    ],
+    "deadly_corridor_mixed_latency_train__bridge": [
+        ("deadly_corridor_mixed_latency_train__bridge", 1.0, "rl_games_deadly_corridor")
     ],
     "deadly_corridor_mixed_latency_train_factorized11": [
         ("deadly_corridor_mixed_latency_train_factorized11", 1.0, "rl_games_deadly_corridor")

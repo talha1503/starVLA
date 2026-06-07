@@ -15,8 +15,8 @@ Client-side responsibilities that REMAIN on the client:
 Exposed API:
   - ``metadata`` (dict, sent at handshake): ``action_chunk_size``,
     ``available_unnorm_keys``, ``action_keys``, ``state_keys``.
-  - ``predict_action(examples, unnorm_key=None, **kwargs)`` returns
-    ``{"actions": np.ndarray[B, T, action_dim]}``.
+  - ``predict_action(examples, unnorm_key=None, **kwargs)`` returns both
+    normalized model output and post-processed actions.
 """
 
 from __future__ import annotations
@@ -142,7 +142,7 @@ class PolicyServerWrapper:
                 (``do_sample``, ``use_ddim``, ``num_ddim_steps``, ...).
 
         Returns:
-            ``{"actions": np.ndarray[B, T, D]}`` -- un-normalized.
+            ``{"actions": np.ndarray[B, T, D], "normalized_actions": np.ndarray[B, T, D]}``.
         """
         effective_key = unnorm_key if unnorm_key is not None else self._default_unnorm_key
         if effective_key is None:
@@ -161,5 +161,6 @@ class PolicyServerWrapper:
         actions = postprocess_actions(normalized, proc, self._action_loss_type)
         return {
             "actions": actions,
+            "normalized_actions": normalized,
             "action_output_type": ACTION_OUTPUT_TYPES[self._action_loss_type],
         }
