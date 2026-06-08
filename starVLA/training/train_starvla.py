@@ -161,6 +161,32 @@ def _pin_cuda_device_from_local_rank() -> None:
     torch.cuda.set_device(device_idx)
 
 
+def _preload_model_checkpoint_before_accelerator(cfg, model):
+    """Load model-only checkpoints before ZeRO-3 can replace params with shards."""
+    trainer_cfg = getattr(cfg, "trainer", None)
+    if trainer_cfg is None:
+        return model
+
+    pretrained_checkpoint = getattr(trainer_cfg, "pretrained_checkpoint", None)
+    is_resume = bool(getattr(trainer_cfg, "is_resume", False))
+    if not pretrained_checkpoint or is_resume:
+        return model
+
+    reload_modules = getattr(trainer_cfg, "reload_modules", None)
+    model = TrainerUtils.load_pretrained_backbones(
+        model,
+        pretrained_checkpoint,
+        reload_modules=reload_modules,
+    )
+    trainer_cfg.preloaded_checkpoint = str(pretrained_checkpoint)
+    trainer_cfg.pretrained_checkpoint = None
+    logger.info(
+        "Preloaded model checkpoint before Accelerator/DeepSpeed initialization: %s",
+        pretrained_checkpoint,
+    )
+    return model
+
+
 class VLATrainer(TrainerUtils):
     def __init__(self, cfg, model, vla_train_dataloader, vla_eval_dataloader, optimizer, lr_scheduler, accelerator):
         self.config = cfg
@@ -838,13 +864,15 @@ def main(cfg) -> None:
     apply_model_alias(cfg)
     apply_action_spec(cfg)
 
-    accelerator = _build_accelerator(cfg)
-
     cfg = wrap_config(cfg)
     logger.info("✅ Configuration wrapped for access tracking")
 
     output_dir = setup_directories(cfg=cfg)
     vla = build_framework(cfg)
+    vla = _preload_model_checkpoint_before_accelerator(cfg=cfg, model=vla)
+
+    accelerator = _build_accelerator(cfg)
+
     vla_train_dataloader, vla_eval_dataloader = prepare_data(cfg=cfg, accelerator=accelerator, output_dir=output_dir)
     optimizer, lr_scheduler = setup_optimizer_and_scheduler(model=vla, cfg=cfg)
 
