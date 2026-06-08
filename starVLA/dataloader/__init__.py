@@ -56,6 +56,8 @@ def build_dataloader(
             batch_size=cfg.datasets.vla_data.per_device_batch_size,
             collate_fn=collate_fn,
             num_workers=4,
+            multiprocessing_context="spawn",
+            persistent_workers=True,
             # shuffle=True
         )        
         if save_statistics_filename and (not dist.is_initialized() or dist.get_rank() == 0): 

@@ -25,7 +25,7 @@ python examples/rl_games/scripts/launch_train.py \
     trainer.eval_interval=300 \
     trainer.logging_frequency=1 \
     trainer.gradient_accumulation_steps=32 \
-    datasets.vla_data.per_device_batch_size=16 \
+    datasets.vla_data.per_device_batch_size=32 \
     dataset.latency_filter=[0,1,2] \
     dataset.episodes_per_latency=10 \
     rl_games.env_eval.mid_train.interval_steps=300 \
