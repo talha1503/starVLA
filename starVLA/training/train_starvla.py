@@ -178,7 +178,6 @@ def _preload_model_checkpoint_before_accelerator(cfg, model):
         pretrained_checkpoint,
         reload_modules=reload_modules,
     )
-    trainer_cfg.preloaded_checkpoint = str(pretrained_checkpoint)
     trainer_cfg.pretrained_checkpoint = None
     logger.info(
         "Preloaded model checkpoint before Accelerator/DeepSpeed initialization: %s",
