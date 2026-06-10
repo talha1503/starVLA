@@ -218,6 +218,9 @@ class VLATrainer(TrainerUtils):
             if enabled:
                 self._rl_games_eval_runner = RlGamesEvalRunner(cfg=self.config, output_dir=self.config.output_dir)
 
+    def _save_periodic_checkpoints_enabled(self) -> bool:
+        return not self._save_best_model_enabled
+
     def prepare_training(self):
         rank = dist.get_rank() if dist.is_initialized() else 0
         seed = self.config.seed + rank if hasattr(self.config, "seed") else rank + 3047
@@ -691,7 +694,7 @@ class VLATrainer(TrainerUtils):
             ):
                 self._log_metrics(step_metrics)
 
-            if should_run_step_interval_event(
+            if self._save_periodic_checkpoints_enabled() and should_run_step_interval_event(
                 completed_steps=self.completed_steps,
                 interval=self.config.trainer.save_interval,
                 gradients_synced=gradients_synced,
@@ -787,7 +790,8 @@ class VLATrainer(TrainerUtils):
         """Training end processing."""
         save_interval = int(getattr(self.config.trainer, "save_interval", 0) or 0)
         if (
-            self.completed_steps > 0
+            self._save_periodic_checkpoints_enabled()
+            and self.completed_steps > 0
             and (save_interval <= 0 or self.completed_steps % save_interval != 0)
         ):
             self._save_checkpoint()
