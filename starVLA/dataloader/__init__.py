@@ -11,6 +11,17 @@ from starVLA.dataloader.vlm_datasets import make_vlm_dataloader
 
 logger = get_logger(__name__)
 
+
+def _cfg_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"false", "0", "no", "off"}
+    return bool(value)
+
+
 def save_dataset_statistics(dataset_statistics, run_dir):
     """Saves a `dataset_statistics.json` file."""
     out_path = run_dir / "dataset_statistics.json"
@@ -50,14 +61,16 @@ def build_dataloader(
             vla_dataset_cfg.data_mix = data_mix
 
         vla_dataset = get_vla_dataset(data_cfg=vla_dataset_cfg, mode=mode)
+        num_workers = 4
+        persistent_workers = not _cfg_bool(vla_dataset_cfg.get("sequential_step_sampling", False), default=False)
         
         vla_train_dataloader = DataLoader(
             vla_dataset,
             batch_size=cfg.datasets.vla_data.per_device_batch_size,
             collate_fn=collate_fn,
-            num_workers=4,
+            num_workers=num_workers,
             multiprocessing_context="spawn",
-            persistent_workers=True,
+            persistent_workers=persistent_workers,
             # shuffle=True
         )        
         if save_statistics_filename and (not dist.is_initialized() or dist.get_rank() == 0): 

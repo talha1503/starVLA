@@ -67,6 +67,17 @@ LE_ROBOT_STEPS_FILENAME = "meta/steps.pkl"
 LE_ROBOT_STATS_FORMAT_VERSION = 2
 EPSILON = 5e-4
 
+
+def _as_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"false", "0", "no", "off"}
+    return bool(value)
+
+
 #  LeRobot v3.0 dataset file names 
 LE_ROBOT3_TASKS_FILENAME = "meta/tasks.parquet"
 LE_ROBOT3_EPISODE_FILENAME = "meta/episodes/*/*.parquet"
@@ -1476,6 +1487,68 @@ class LeRobotSingleDataset(Dataset):
             episode_data = file_data.loc[file_data["episode_index"] == trajectory_id].copy()
             return episode_data
 
+    def get_trajectory_columns(self, trajectory_id: int, columns: Sequence[str]) -> pd.DataFrame:
+        """Read selected columns for one trajectory without loading image/action payloads."""
+        requested_columns = list(dict.fromkeys(str(column) for column in columns))
+        if self._lerobot_version == "v2.0":
+            chunk_index = self.get_episode_chunk(trajectory_id)
+            parquet_path = self.dataset_path / self.data_path_pattern.format(
+                episode_chunk=chunk_index, episode_index=trajectory_id
+            )
+            assert parquet_path.exists(), f"Parquet file not found at {parquet_path}"
+            return pd.read_parquet(parquet_path, columns=requested_columns)
+
+        if self._lerobot_version == "v3.0":
+            episode_meta = self.trajectory_ids_to_metadata[trajectory_id]
+            chunk_index = episode_meta["data/chunk_index"]
+            file_index = self.get_episode_file_index(trajectory_id)
+            parquet_path = self.dataset_path / self.data_path_pattern.format(
+                chunk_index=chunk_index, file_index=file_index
+            )
+            assert parquet_path.exists(), f"Parquet file not found at {parquet_path}"
+            columns_with_episode = list(dict.fromkeys([*requested_columns, "episode_index"]))
+            file_data = pd.read_parquet(parquet_path, columns=columns_with_episode)
+            return file_data.loc[file_data["episode_index"] == trajectory_id, requested_columns].copy()
+
+        raise ValueError(f"Unsupported LeRobot version: {self._lerobot_version}")
+
+    def get_action_ids_for_all_steps(self, action_key: str = "action_id") -> list[int]:
+        """Return action IDs aligned one-to-one with ``self.all_steps``."""
+        cache_attr = f"_cached_step_action_ids_{action_key}"
+        cached = getattr(self, cache_attr, None)
+        if cached is not None:
+            return cached
+
+        action_ids_by_trajectory: dict[int, np.ndarray] = {}
+        for trajectory_id, _ in self.all_steps:
+            if trajectory_id in action_ids_by_trajectory:
+                continue
+            try:
+                action_data = self.get_trajectory_columns(trajectory_id, [action_key])
+            except Exception as exc:
+                raise ValueError(
+                    f"Unable to read action balance key `{action_key}` from dataset "
+                    f"`{self.dataset_name}` trajectory {trajectory_id}."
+                ) from exc
+            if action_key not in action_data.columns:
+                raise ValueError(
+                    f"Action balance key `{action_key}` not found in dataset `{self.dataset_name}`."
+                )
+            action_ids_by_trajectory[trajectory_id] = action_data[action_key].to_numpy()
+
+        action_ids: list[int] = []
+        for trajectory_id, base_index in self.all_steps:
+            trajectory_actions = action_ids_by_trajectory[trajectory_id]
+            if base_index >= len(trajectory_actions):
+                raise IndexError(
+                    f"Step index {base_index} is out of range for action key `{action_key}` "
+                    f"in dataset `{self.dataset_name}` trajectory {trajectory_id}."
+                )
+            action_ids.append(int(trajectory_actions[base_index]))
+
+        setattr(self, cache_attr, action_ids)
+        return action_ids
+
 
     def get_trajectory_index(self, trajectory_id: int) -> int:
         """Get the index of the trajectory in the dataset by the trajectory ID.
@@ -2233,23 +2306,33 @@ class LeRobotMixtureDataset(Dataset):
             self._primary_dataset_indices = np.zeros(len(self.datasets), dtype=bool)
             self._primary_dataset_indices[0] = True
 
-        # Set the epoch and sample the first epoch
-        self.set_epoch(0)
-
         self._sequential_step_sampling = True
+        self._shuffle_steps = True
+        self._action_balance_cfg = {}
+        self._action_balance_enabled = False
         if self.data_cfg is not None:
             seq_cfg = self.data_cfg.get("sequential_step_sampling", True)
-            self._sequential_step_sampling = seq_cfg not in ["False", False]
+            self._sequential_step_sampling = _as_bool(seq_cfg, default=True)
+            self._shuffle_steps = _as_bool(self.data_cfg.get("shuffle", True), default=True)
+            self._action_balance_cfg = self.data_cfg.get("action_balance", {}) or {}
+            self._action_balance_enabled = _as_bool(self._action_balance_cfg.get("enabled", False), default=False)
 
-        self._step_order: list[np.ndarray] = []
-        self._step_pos: list[int] = []
-        if self._sequential_step_sampling:
-            for dataset in self.datasets:
-                self._step_order.append(np.arange(len(dataset.all_steps)))
-                if self.mode == "train":
-                    rng = np.random.default_rng(self.seed)
-                    rng.shuffle(self._step_order[-1])
-                self._step_pos.append(0)
+        if self._action_balance_enabled and not self._sequential_step_sampling:
+            raise ValueError("action_balance.enabled=true requires sequential_step_sampling=true.")
+        if self._action_balance_enabled:
+            strategy = str(self._action_balance_cfg.get("strategy", "balanced_epoch"))
+            if strategy != "balanced_epoch":
+                raise ValueError(f"Unsupported action_balance.strategy={strategy!r}; expected 'balanced_epoch'.")
+
+        self._step_order: np.ndarray = np.array([], dtype=np.int64)
+        self._flat_steps: list[tuple[int, int]] = []
+        self._flat_action_ids: np.ndarray = np.array([], dtype=np.int64)
+        self._noop_step_order: np.ndarray = np.array([], dtype=np.int64)
+        self._flap_step_order: np.ndarray = np.array([], dtype=np.int64)
+        self._other_step_order: np.ndarray = np.array([], dtype=np.int64)
+
+        # Set the epoch after initializing sequential sampling state.
+        self.set_epoch(0)
 
         self.update_metadata(metadata_config)
 
@@ -2290,11 +2373,109 @@ class LeRobotMixtureDataset(Dataset):
             epoch (int): The epoch to set.
         """
         self.epoch = epoch
-        # self.sampled_steps = self.sample_epoch()
+        self._rebuild_step_order(epoch)
+
+    def _rebuild_step_order(self, epoch: int) -> None:
+        """Build deterministic step order for sequential sampling."""
+        if not getattr(self, "_sequential_step_sampling", False):
+            return
+
+        flat_steps: list[tuple[int, int]] = []
+        for dataset_index, dataset in enumerate(self.datasets):
+            flat_steps.extend(
+                (dataset_index, step_index)
+                for step_index in range(len(dataset.all_steps))
+            )
+
+        self._flat_steps = flat_steps
+        if self._action_balance_enabled:
+            self._ensure_action_balance_indices()
+            self._step_order = self._build_action_balanced_step_order(epoch)
+        else:
+            self._step_order = np.arange(len(flat_steps), dtype=np.int64)
+        if self.mode == "train" and self._shuffle_steps and len(self._step_order) > 0:
+            seed = safe_hash((epoch, self.seed, "sequential_step_sampling", self._action_balance_enabled)) & 0xFFFFFFFF
+            rng = np.random.default_rng(seed)
+            rng.shuffle(self._step_order)
+
+    def _ensure_action_balance_indices(self) -> None:
+        """Build cached action-class indices aligned to ``self._flat_steps``."""
+        if len(self._flat_action_ids) == len(self._flat_steps):
+            return
+
+        action_key = str(self._action_balance_cfg.get("action_key", "action_id"))
+        action_ids_by_dataset = [
+            np.asarray(dataset.get_action_ids_for_all_steps(action_key), dtype=np.int64)
+            for dataset in self.datasets
+        ]
+
+        flat_action_ids = []
+        for dataset_index, step_index in self._flat_steps:
+            flat_action_ids.append(int(action_ids_by_dataset[dataset_index][step_index]))
+
+        self._flat_action_ids = np.asarray(flat_action_ids, dtype=np.int64)
+        noop_id = int(self._action_balance_cfg.get("noop_id", 0))
+        flap_id = int(self._action_balance_cfg.get("flap_id", 1))
+        all_indices = np.arange(len(self._flat_action_ids), dtype=np.int64)
+        self._noop_step_order = all_indices[self._flat_action_ids == noop_id]
+        self._flap_step_order = all_indices[self._flat_action_ids == flap_id]
+        self._other_step_order = all_indices[
+            (self._flat_action_ids != noop_id) & (self._flat_action_ids != flap_id)
+        ]
+
+        if len(self._noop_step_order) == 0 or len(self._flap_step_order) == 0:
+            raise ValueError(
+                "action_balance requires at least one noop and one flap sample, "
+                f"but got noop={len(self._noop_step_order)}, flap={len(self._flap_step_order)}."
+            )
+
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            target = float(self._action_balance_cfg.get("target_flap_fraction", 0.30))
+            desired_noop_count = int(np.ceil(len(self._flap_step_order) * (1.0 - target) / target))
+            selected_noop_count = min(len(self._noop_step_order), max(1, desired_noop_count))
+            selected_epoch_size = len(self._flap_step_order) + selected_noop_count + len(self._other_step_order)
+            print(
+                "Action-balanced epoch sampling enabled: "
+                f"noop={len(self._noop_step_order)}, flap={len(self._flap_step_order)}, "
+                f"other={len(self._other_step_order)}, target_flap_fraction={target:.3f}, "
+                f"selected_noop_per_epoch={selected_noop_count}, epoch_size={selected_epoch_size}"
+            )
+
+    def _build_action_balanced_step_order(self, epoch: int) -> np.ndarray:
+        """Build one balanced training epoch: all flaps plus a rotating noop slice."""
+        target_flap_fraction = float(self._action_balance_cfg.get("target_flap_fraction", 0.30))
+        if not 0.0 < target_flap_fraction < 1.0:
+            raise ValueError(
+                "action_balance.target_flap_fraction must be in (0, 1), "
+                f"got {target_flap_fraction}."
+            )
+
+        flap_indices = self._flap_step_order
+        noop_indices = self._noop_step_order
+        desired_noop_count = int(np.ceil(len(flap_indices) * (1.0 - target_flap_fraction) / target_flap_fraction))
+        noop_count = min(len(noop_indices), max(1, desired_noop_count))
+
+        noop_start = (int(epoch) * noop_count) % len(noop_indices)
+        if noop_start + noop_count <= len(noop_indices):
+            selected_noops = noop_indices[noop_start : noop_start + noop_count]
+        else:
+            wrap_count = (noop_start + noop_count) - len(noop_indices)
+            selected_noops = np.concatenate((noop_indices[noop_start:], noop_indices[:wrap_count]))
+
+        return np.concatenate((flap_indices, selected_noops, self._other_step_order)).astype(np.int64, copy=False)
 
     def sample_step(self, index: int) -> tuple[LeRobotSingleDataset, int, int]:
         """Sample a single step from the dataset."""
         # return self.sampled_steps[index]
+
+        if self._sequential_step_sampling:
+            if len(self._step_order) == 0:
+                raise ValueError("Cannot sample from an empty sequential step order.")
+            ordered_index = int(self._step_order[index % len(self._step_order)])
+            dataset_index, step_index = self._flat_steps[ordered_index]
+            dataset = self.datasets[dataset_index]
+            trajectory_id, base_index = dataset.all_steps[step_index]
+            return dataset, int(trajectory_id), int(base_index)
 
         # Set seed
         seed = index if self.mode != "train" else safe_hash((self.epoch, index, self.seed))
@@ -2385,6 +2566,9 @@ class LeRobotMixtureDataset(Dataset):
         Returns:
             int: The length of a single epoch in the mixture.
         """
+        if self._sequential_step_sampling:
+            return len(self._step_order)
+
         # Check for potential issues
         if len(self.datasets) == 0:
             return 0

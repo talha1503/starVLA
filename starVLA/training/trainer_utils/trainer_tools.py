@@ -333,6 +333,10 @@ class TrainerUtils:
         # 1. update epoch counter
         epoch_counter += 1
 
+        dataset = getattr(dataloader, "dataset", None)
+        if dataset is not None and callable(getattr(dataset, "set_epoch", None)):
+            dataset.set_epoch(epoch_counter)
+
         # 2. set new epoch (distributed core)
         if hasattr(dataloader, "sampler") and callable(getattr(dataloader.sampler, "set_epoch", None)):
             dataloader.sampler.set_epoch(epoch_counter)
