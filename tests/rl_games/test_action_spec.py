@@ -69,6 +69,22 @@ def test_bridge_rejects_deadly_factorized_11_layout():
         apply_action_spec(cfg)
 
 
+def test_backbone_bridge_factorized11_stays_native_11d():
+    cfg = _cfg(
+        "deadly_corridor",
+        model_alias="pi-0.5",
+        init_mode="backbone_bridge_factorized11",
+        action_carrier="native",
+        action_dim=32,
+    )
+    cfg.rl_games.env_eval.deadly.action_layout = "factorized_11"
+
+    apply_action_spec(cfg)
+
+    assert cfg.framework.action_model.action_dim == 32
+    assert cfg.framework.action_model.action_env_dim == 11
+
+
 def test_qwen_pi_legacy_dit_qwen_action_head_preset_is_available():
     source = (REPO_ROOT / "starVLA/model/modules/action_model/GR00T_ActionHeader.py").read_text(
         encoding="utf-8"

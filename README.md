@@ -273,6 +273,26 @@ python examples/rl_games/scripts/launch_train.py \
   mode=single
 ```
 
+Single-latency Deadly Corridor with the pi-0.5 VLA backbone initialized from
+Bridge/RT-1, but a fresh native factorized 11D action head:
+
+```bash
+python examples/rl_games/scripts/launch_train.py \
+  model=pi05 \
+  env=deadly_corridor \
+  init=backbone_bridge_factorized11 \
+  mode=single \
+  run_id=pi05_deadly_corridor_factorized11 \
+  checkpoint.load=none
+```
+
+This mode resolves the Bridge/RT-1 checkpoint but only loads
+`qwen_vl_interface`; `project_layers` and `action_model` are trained from the
+new model initialization. The Deadly Corridor source dataset must provide
+either `action_tuple=[turn, move, strafe, attack]` or an 11D one-hot
+`action`/`actions` vector in `turn[3] + move[3] + strafe[3] + attack[2]`
+order. See `examples/rl_games/README.md` for the full factorized 11D guide.
+
 Single-GPU direct backend with a custom run name:
 
 ```bash

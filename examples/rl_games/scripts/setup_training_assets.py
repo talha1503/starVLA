@@ -19,6 +19,7 @@ if str(REPO_ROOT) not in sys.path:
 STEP_FILE_RE = re.compile(r"steps_(\d+)_(?:pytorch_model\.pt|model\.safetensors)$")
 STEP_STATE_RE = re.compile(r"steps_(\d+)_state$")
 DEBUG_DATASET_RE = re.compile(r"^(?P<base>.+)(?P<debug>__debug(?:_[A-Za-z0-9_-]+)?_\d+ep)$")
+INITIALIZATION_SOURCE_MODES = {"bridge", "pre-trained", "pretrained", "backbone_bridge_factorized11"}
 
 
 def _str2bool(value: str | bool) -> bool:
@@ -417,6 +418,7 @@ def _carrier_dataset_name(data_mix: str, action_carrier: str) -> str:
 def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -> dict[str, Any]:
     data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
     action_carrier = _action_carrier(args)
+    action_layout = str(getattr(args, "deadly_action_layout", "") or "")
     data_mix = _carrier_dataset_name(args.converted_dataset_name, action_carrier)
     dataset_dir = data_root_dir / data_mix
     eval_data_mix = f"{data_mix}__val"
@@ -434,6 +436,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
         except Exception:
             return False
         if str(manifest.get("action_carrier", "native")) != action_carrier:
+            return False
+        if action_layout and ("action_layout" not in manifest or str(manifest["action_layout"]) != action_layout):
             return False
         expected_latency_filter = getattr(args, "latency_filter", None)
         if expected_latency_filter is not None:
@@ -467,13 +471,15 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
             raise ValueError(
                 f"{dataset_dir} is not ready; pass --source-dataset-hf so setup can verify and convert it"
             )
-        verify_dataset(
-            args.source_dataset_hf,
-            rows=args.verify_rows,
-            cache_dir=args.dataset_cache_dir,
-            strict=True,
-            allow_mixed_latency_prompts=mixed_latency,
-        )
+        verify_kwargs = {
+            "rows": args.verify_rows,
+            "cache_dir": args.dataset_cache_dir,
+            "strict": True,
+            "allow_mixed_latency_prompts": mixed_latency,
+        }
+        if action_layout and "action_layout" in inspect.signature(verify_dataset).parameters:
+            verify_kwargs["action_layout"] = action_layout
+        verify_dataset(args.source_dataset_hf, **verify_kwargs)
         convert_kwargs = {
             "cache_dir": args.dataset_cache_dir,
             "max_episodes": args.max_episodes,
@@ -486,6 +492,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
             convert_kwargs["episodes_per_latency"] = getattr(args, "episodes_per_latency", None)
         if "action_carrier" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["action_carrier"] = action_carrier
+        if action_layout and "action_layout" in inspect.signature(convert_dataset).parameters:
+            convert_kwargs["action_layout"] = action_layout
         convert_dataset(args.source_dataset_hf, dataset_dir, **convert_kwargs)
         converted = True
         if mixed_latency and not _mixed_prompt_map_ready():
@@ -839,7 +847,7 @@ def setup_assets(args) -> dict[str, Any]:
     initialization_local_dir = str(getattr(args, "initialization_local_dir", "") or "")
     initialization_checkpoint_filename = str(getattr(args, "initialization_checkpoint_filename", "") or "")
     has_initialization_source = bool(initialization_local_dir or initialization_hf_repo_id)
-    if has_initialization_source and _initialization_mode(args) in {"bridge", "pre-trained", "pretrained"}:
+    if has_initialization_source and _initialization_mode(args) in INITIALIZATION_SOURCE_MODES:
         local_init_ckpt, local_init_step = _resolve_local_initialization_checkpoint(
             initialization_local_dir,
             initialization_checkpoint_filename,
@@ -922,6 +930,7 @@ def main() -> int:
     parser.add_argument("--mode", required=True)
     parser.add_argument("--initialization-mode", default="")
     parser.add_argument("--action-carrier", choices=["", "native", "bridge"], default="")
+    parser.add_argument("--deadly-action-layout", default="")
     parser.add_argument("--latency-mode", default="")
     parser.add_argument("--source-dataset-hf", default="")
     parser.add_argument("--dataset-local-dir", required=True)

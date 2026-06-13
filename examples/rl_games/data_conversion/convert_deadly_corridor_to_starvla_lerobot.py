@@ -33,6 +33,22 @@ ACTION_LABELS = [
     "ATTACK",
 ]
 ACTION_DIM = len(ACTION_LABELS)
+FACTORIZED_11_ACTION_LABELS = [
+    "TURN_NONE",
+    "TURN_LEFT",
+    "TURN_RIGHT",
+    "MOVE_NONE",
+    "MOVE_FORWARD",
+    "MOVE_BACKWARD",
+    "STRAFE_NONE",
+    "STRAFE_LEFT",
+    "STRAFE_RIGHT",
+    "ATTACK_OFF",
+    "ATTACK_ON",
+]
+FACTORIZED_11_ACTION_DIM = len(FACTORIZED_11_ACTION_LABELS)
+ACTION_LAYOUT_MULTIBINARY_7 = "multibinary_7"
+ACTION_LAYOUT_FACTORIZED_11 = "factorized_11"
 BRIDGE_ACTION_DIM = 7
 STATE_DIM = 1
 BRIDGE_STATE_DIM = 7
@@ -150,14 +166,29 @@ def _normalize_action_carrier(action_carrier: str) -> str:
     raise ValueError(f"Unsupported action_carrier={action_carrier!r}; expected native or bridge")
 
 
-def _action_dim(action_carrier: str) -> int:
-    return BRIDGE_ACTION_DIM if _normalize_action_carrier(action_carrier) == "bridge" else ACTION_DIM
+def _normalize_action_layout(action_layout: str) -> str:
+    layout = str(action_layout or ACTION_LAYOUT_MULTIBINARY_7).lower()
+    if layout in {ACTION_LAYOUT_MULTIBINARY_7, ACTION_LAYOUT_FACTORIZED_11}:
+        return layout
+    raise ValueError(f"Unsupported action_layout={action_layout!r}; expected multibinary_7 or factorized_11")
 
 
-def _action_labels(action_carrier: str) -> list[str]:
+def _active_action_dim(action_layout: str) -> int:
+    return FACTORIZED_11_ACTION_DIM if _normalize_action_layout(action_layout) == ACTION_LAYOUT_FACTORIZED_11 else ACTION_DIM
+
+
+def _action_dim(action_carrier: str, action_layout: str = ACTION_LAYOUT_MULTIBINARY_7) -> int:
+    if _normalize_action_carrier(action_carrier) == "bridge":
+        return BRIDGE_ACTION_DIM
+    return _active_action_dim(action_layout)
+
+
+def _action_labels(action_carrier: str, action_layout: str = ACTION_LAYOUT_MULTIBINARY_7) -> list[str]:
     # Deadly Corridor already uses the 7D semantic bridge carrier natively.
-    if _normalize_action_carrier(action_carrier) == "native":
+    if _normalize_action_carrier(action_carrier) == "bridge":
         return list(ACTION_LABELS)
+    if _normalize_action_layout(action_layout) == ACTION_LAYOUT_FACTORIZED_11:
+        return list(FACTORIZED_11_ACTION_LABELS)
     return list(ACTION_LABELS)
 
 
@@ -176,7 +207,30 @@ def _action_from_text(text: str) -> list[float]:
     return [1.0 if label in normalized else 0.0 for label in ACTION_LABELS]
 
 
-def _action_vector(row: dict[str, Any]) -> list[float]:
+def _factorized_one_hot(action_tuple: Any) -> list[float]:
+    turn, move, strafe, attack = [int(value) for value in action_tuple]
+    values = [0.0] * FACTORIZED_11_ACTION_DIM
+    values[turn] = 1.0
+    values[3 + move] = 1.0
+    values[6 + strafe] = 1.0
+    values[9 + attack] = 1.0
+    return values
+
+
+def _action_vector(row: dict[str, Any], action_layout: str = ACTION_LAYOUT_MULTIBINARY_7) -> list[float]:
+    if _normalize_action_layout(action_layout) == ACTION_LAYOUT_FACTORIZED_11:
+        if "action_tuple" in row and row["action_tuple"] is not None:
+            return _factorized_one_hot(row["action_tuple"])
+        raw_action = _row_get(row, ("action", "actions"))
+        if raw_action is not None:
+            values = np.asarray(raw_action, dtype=np.float32).reshape(-1).tolist()
+            if len(values) != FACTORIZED_11_ACTION_DIM:
+                raise ValueError(
+                    f"Deadly Corridor factorized action must have {FACTORIZED_11_ACTION_DIM} values, got {len(values)}"
+                )
+            return [float(value) for value in values]
+        raise ValueError("Deadly Corridor factorized rows must contain `action_tuple` or 11D `action`")
+
     raw_action = _row_get(row, ("action", "actions"))
     if raw_action is not None:
         values = np.asarray(raw_action, dtype=np.float32).reshape(-1).tolist()
@@ -346,10 +400,13 @@ def convert_dataset(
     require_latency_prompt_map: bool = False,
     latency_filter: list[int] | None = None,
     action_carrier: str = "native",
+    action_layout: str = ACTION_LAYOUT_MULTIBINARY_7,
 ) -> dict[str, Any]:
     action_carrier = _normalize_action_carrier(action_carrier)
-    action_dim = _action_dim(action_carrier)
-    action_labels = _action_labels(action_carrier)
+    action_layout = _normalize_action_layout(action_layout)
+    action_dim = _action_dim(action_carrier, action_layout)
+    action_labels = _action_labels(action_carrier, action_layout)
+    active_action_dim = _active_action_dim(action_layout)
     state_dim = _state_dim(action_carrier)
     state_labels = _state_labels(action_carrier)
     val_output_dir = output_dir.with_name(f"{output_dir.name}__val")
@@ -420,7 +477,7 @@ def convert_dataset(
                 out_rows.append(
                     {
                         "image_bytes": _png_bytes(_row_get(row, ("image", "observation.image", "obs"))),
-                        "action": _action_vector(row),
+                        "action": _action_vector(row, action_layout),
                         "timestamp": float(frame_idx) / FPS,
                         "episode_index": new_episode_idx,
                         "frame_index": frame_idx,
@@ -468,8 +525,9 @@ def convert_dataset(
             "format": "starvla_lerobot_v2_image_parquet",
             "action_labels": action_labels,
             "action_dim": action_dim,
-            "active_action_dim": ACTION_DIM,
+            "active_action_dim": active_action_dim,
             "action_carrier": action_carrier,
+            "action_layout": action_layout,
             "bridge_action_dim": BRIDGE_ACTION_DIM if action_carrier == "bridge" else None,
             "state_dim": state_dim,
             "active_state_dim": STATE_DIM,
@@ -501,6 +559,12 @@ def main() -> int:
     parser.add_argument("--require-latency-prompt-map", "--require_latency_prompt_map", action="store_true")
     parser.add_argument("--latency-filter", "--latency_filter", default=None)
     parser.add_argument("--action-carrier", "--action_carrier", choices=["native", "bridge"], default="native")
+    parser.add_argument(
+        "--action-layout",
+        "--action_layout",
+        choices=[ACTION_LAYOUT_MULTIBINARY_7, ACTION_LAYOUT_FACTORIZED_11],
+        default=ACTION_LAYOUT_MULTIBINARY_7,
+    )
     args = parser.parse_args()
 
     latency_filter = None
@@ -516,6 +580,7 @@ def main() -> int:
         require_latency_prompt_map=args.require_latency_prompt_map,
         latency_filter=latency_filter,
         action_carrier=args.action_carrier,
+        action_layout=args.action_layout,
     )
     print(json.dumps(manifest, indent=2))
     return 0

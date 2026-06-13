@@ -23,6 +23,21 @@ EXPECTED_ACTIONS = [
     "TURN_RIGHT",
     "ATTACK",
 ]
+FACTORIZED_11_ACTIONS = [
+    "TURN_NONE",
+    "TURN_LEFT",
+    "TURN_RIGHT",
+    "MOVE_NONE",
+    "MOVE_FORWARD",
+    "MOVE_BACKWARD",
+    "STRAFE_NONE",
+    "STRAFE_LEFT",
+    "STRAFE_RIGHT",
+    "ATTACK_OFF",
+    "ATTACK_ON",
+]
+ACTION_LAYOUT_MULTIBINARY_7 = "multibinary_7"
+ACTION_LAYOUT_FACTORIZED_11 = "factorized_11"
 REQUIRED_PROMPT_PARTS = ["Deadly Corridor", *EXPECTED_ACTIONS]
 
 
@@ -43,7 +58,39 @@ def _load_first_available(
     raise RuntimeError("no column options provided")
 
 
-def _action_vector(row: dict[str, Any]) -> list[float]:
+def _normalize_action_layout(action_layout: str) -> str:
+    layout = str(action_layout or ACTION_LAYOUT_MULTIBINARY_7).lower()
+    if layout in {ACTION_LAYOUT_MULTIBINARY_7, ACTION_LAYOUT_FACTORIZED_11}:
+        return layout
+    raise ValueError(f"Unsupported action_layout={action_layout!r}; expected multibinary_7 or factorized_11")
+
+
+def _factorized_one_hot(action_tuple: Any) -> list[float]:
+    turn, move, strafe, attack = [int(value) for value in action_tuple]
+    values = [0.0] * len(FACTORIZED_11_ACTIONS)
+    values[turn] = 1.0
+    values[3 + move] = 1.0
+    values[6 + strafe] = 1.0
+    values[9 + attack] = 1.0
+    return values
+
+
+def _action_vector(row: dict[str, Any], action_layout: str = ACTION_LAYOUT_MULTIBINARY_7) -> list[float]:
+    if _normalize_action_layout(action_layout) == ACTION_LAYOUT_FACTORIZED_11:
+        if "action_tuple" in row and row["action_tuple"] is not None:
+            return _factorized_one_hot(row["action_tuple"])
+        raw_action = row.get("action", row.get("actions"))
+        if raw_action is not None:
+            values = np.asarray(raw_action, dtype=np.float32).reshape(-1).tolist()
+            if len(values) != len(FACTORIZED_11_ACTIONS):
+                raise ValueError(
+                    f"Deadly Corridor factorized action must have {len(FACTORIZED_11_ACTIONS)} values, got {len(values)}"
+                )
+            if any(value not in (0.0, 1.0) for value in values):
+                raise ValueError(f"Deadly Corridor factorized action values must be binary, got {values}")
+            return values
+        raise ValueError("Deadly Corridor factorized rows must include either `action_tuple` or 11D `action`")
+
     raw_action = row.get("action", row.get("actions"))
     if raw_action is not None:
         values = np.asarray(raw_action, dtype=np.float32).reshape(-1).tolist()
@@ -67,20 +114,34 @@ def verify_dataset(
     cache_dir: str | None = None,
     strict: bool = False,
     allow_mixed_latency_prompts: bool = False,
+    action_layout: str = ACTION_LAYOUT_MULTIBINARY_7,
 ) -> bool:
+    action_layout = _normalize_action_layout(action_layout)
+    if action_layout == ACTION_LAYOUT_FACTORIZED_11:
+        column_options = (
+            ["prompt", "action_tuple", "latency", "latency_ms"],
+            ["prompt", "action", "latency", "latency_ms"],
+            ["prompt", "actions", "latency", "latency_ms"],
+            ["prompt", "action_tuple"],
+            ["prompt", "action"],
+            ["prompt", "actions"],
+            None,
+        )
+    else:
+        column_options = (
+            ["prompt", "action_text", "latency", "latency_ms"],
+            ["prompt", "action", "latency", "latency_ms"],
+            ["prompt", "actions", "latency", "latency_ms"],
+            ["prompt", "action_text"],
+            ["prompt", "action"],
+            ["prompt", "actions"],
+            None,
+        )
     try:
         ds = _load_first_available(
             dataset_name,
             cache_dir,
-            (
-                ["prompt", "action_text", "latency", "latency_ms"],
-                ["prompt", "action", "latency", "latency_ms"],
-                ["prompt", "actions", "latency", "latency_ms"],
-                ["prompt", "action_text"],
-                ["prompt", "action"],
-                ["prompt", "actions"],
-                None,
-            ),
+            column_options,
         )
     except Exception as exc:
         print(f"ERROR: could not load dataset {dataset_name}: {exc}")
@@ -131,7 +192,7 @@ def verify_dataset(
     seen_active = set()
     for i in range(sample_n):
         try:
-            action = _action_vector(ds[i])
+            action = _action_vector(ds[i], action_layout)
         except Exception as exc:
             print(f"ERROR: invalid action at row {i}: {exc}")
             ok = False
@@ -155,6 +216,12 @@ def main() -> int:
     parser.add_argument("--cache-dir", "--cache_dir", default=None)
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--allow-mixed-latency-prompts", "--allow_mixed_latency_prompts", action="store_true")
+    parser.add_argument(
+        "--action-layout",
+        "--action_layout",
+        choices=[ACTION_LAYOUT_MULTIBINARY_7, ACTION_LAYOUT_FACTORIZED_11],
+        default=ACTION_LAYOUT_MULTIBINARY_7,
+    )
     args = parser.parse_args()
 
     try:
@@ -164,6 +231,7 @@ def main() -> int:
             cache_dir=args.cache_dir,
             strict=args.strict,
             allow_mixed_latency_prompts=args.allow_mixed_latency_prompts,
+            action_layout=args.action_layout,
         )
     except Exception:
         if args.strict:

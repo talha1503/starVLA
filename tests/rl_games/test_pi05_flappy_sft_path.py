@@ -348,6 +348,29 @@ def test_pi05_bridge_composed_config_uses_qwenpi_v3(
     assert cfg.framework.action_model.action_env_dim == action_env_dim
 
 
+def test_pi05_backbone_bridge_factorized11_composed_config_uses_native_11d_deadly_head() -> None:
+    cfg = _compose_train_cfg(
+        model="pi05",
+        env="deadly_corridor",
+        init="backbone_bridge_factorized11",
+        mode="single",
+    )
+
+    assert cfg.framework.name == "QwenPI_v3"
+    assert cfg.rl_games.model_alias == "pi-0.5"
+    assert cfg.rl_games.initialization_mode == "backbone_bridge_factorized11"
+    assert cfg.rl_games.action_carrier == "native"
+    assert cfg.rl_games.env_eval.deadly.action_layout == "factorized_11"
+    assert cfg.initialization.checkpoint_hf_repo_id == "StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"
+    assert cfg.initialization.checkpoint_filename == "checkpoints/steps_50000_pytorch_model.pt"
+    assert cfg.framework.action_model.action_dim == 11
+    assert cfg.framework.action_model.action_env_dim == 11
+    assert cfg.framework.action_model.action_horizon == 1
+    assert cfg.framework.action_model.future_action_window_size == 0
+    assert cfg.framework.action_model.past_action_window_size == 0
+    assert cfg.trainer.reload_modules == "qwen_vl_interface"
+
+
 @pytest.mark.parametrize(
     ("env", "mode", "action_env_dim"),
     [
@@ -388,6 +411,34 @@ def test_pi05_bridge_composed_config_forwards_qwenpi_v3_command_overrides(
         assert "rl_games.env_eval.deadly.action_layout=multibinary_7" in cmd
 
 
+def test_pi05_backbone_bridge_factorized11_command_forwards_partial_reload_and_11d_deadly(tmp_path: Path) -> None:
+    cfg = _compose_train_cfg(
+        model="pi05",
+        env="deadly_corridor",
+        init="backbone_bridge_factorized11",
+        mode="single",
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "base_model"),
+        "resume_found": False,
+        "pretrained_checkpoint": str(tmp_path / "bridge.pt"),
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert "init=backbone_bridge_factorized11" in cmd
+    assert "trainer.reload_modules=qwen_vl_interface" in cmd
+    assert "trainer.pretrained_checkpoint=" in cmd
+    assert "rl_games.action_carrier=native" in cmd
+    assert "rl_games.env_eval.deadly.action_layout=factorized_11" in cmd
+    assert "framework.action_model.action_dim=11" in cmd
+    assert "framework.action_model.action_env_dim=11" in cmd
+    assert "framework.action_model.action_horizon=1" in cmd
+    assert "framework.action_model.future_action_window_size=0" in cmd
+    assert "framework.action_model.past_action_window_size=0" in cmd
+
+
 def test_launch_train_setup_namespace_uses_composed_hydra_config(tmp_path: Path) -> None:
     cfg = _compose_train_cfg(model="pi05", env="flappy", init="bridge", mode="single")
 
@@ -401,6 +452,19 @@ def test_launch_train_setup_namespace_uses_composed_hydra_config(tmp_path: Path)
     assert setup_args.dataset_local_dir == str(tmp_path / "playground" / "Datasets" / "rl_games")
     assert setup_args.converted_dataset_name == "flappy_train"
     assert setup_args.initialization_checkpoint_filename == "checkpoints/steps_50000_pytorch_model.pt"
+
+
+def test_launch_train_setup_namespace_forwards_deadly_factorized_layout(tmp_path: Path) -> None:
+    cfg = _compose_train_cfg(
+        model="pi05",
+        env="deadly_corridor",
+        init="backbone_bridge_factorized11",
+        mode="single",
+    )
+
+    setup_args = launch_train.setup_namespace_from_cfg(cfg, tmp_path, "results/Checkpoints")
+
+    assert setup_args.deadly_action_layout == "factorized_11"
 
 
 def test_launch_train_setup_namespace_forwards_explicit_dataset_source_hf(tmp_path: Path) -> None:
@@ -461,6 +525,48 @@ def test_pi05_setup_assets_prefers_local_bridge_initialization_checkpoint(
     assert setup["initialization_source"] == "local"
     assert setup["initialization_local_dir"] == str(local_repo.resolve())
     assert setup["initialization_step"] == 50000
+
+
+def test_pi05_setup_assets_backbone_bridge_factorized11_loads_initialization_without_bridge_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    local_repo = tmp_path / "Qwen3VL-PI_v3-Bridge-RT_1"
+    checkpoint_file = local_repo / "checkpoints" / "steps_50000_pytorch_model.pt"
+    checkpoint_file.parent.mkdir(parents=True)
+    checkpoint_file.write_bytes(b"checkpoint")
+    args = _setup_args(tmp_path, "pi05", "deadly_corridor")
+    args.initialization_mode = "backbone_bridge_factorized11"
+    args.action_carrier = "native"
+    args.initialization_local_dir = str(local_repo)
+    args.initialization_hf_repo_id = "StarVLA/Qwen3VL-PI_v3-Bridge-RT_1"
+    args.initialization_checkpoint_filename = "checkpoints/steps_50000_pytorch_model.pt"
+
+    def fake_deadly_dataset(args: SimpleNamespace) -> dict[str, Any]:
+        assert args.action_carrier == "native"
+        return {
+            "dataset_ready": True,
+            "dataset_local_dir": args.dataset_local_dir,
+            "data_mix": "deadly_corridor_train",
+            "eval_data_mix": "deadly_corridor_train__val",
+            "latency_prompt_map_path": None,
+        }
+
+    def fake_base_model(model: str, base_model_dir: Path, base_model_repo_id: str | None) -> dict[str, Any]:
+        return {
+            "base_model_dir": str(base_model_dir),
+            "base_model_repo_id": base_model_repo_id,
+            "base_model_downloaded": False,
+        }
+
+    monkeypatch.setattr(setup_training_assets, "_ensure_deadly_corridor_dataset", fake_deadly_dataset)
+    monkeypatch.setattr(setup_training_assets, "_ensure_base_model", fake_base_model)
+
+    setup = setup_training_assets.setup_assets(args)
+
+    assert setup["data_mix"] == "deadly_corridor_train"
+    assert setup["pretrained_checkpoint"] == str(checkpoint_file.resolve())
+    assert setup["initialization_source"] == "local"
 
 
 def test_pi05_setup_assets_falls_back_to_hf_when_local_initialization_is_missing(

@@ -58,3 +58,35 @@ def test_deadly_corridor_bridge_uses_native_7d_semantic_carrier():
     assert deadly._action_labels("bridge") == expected
     assert deadly._state_dim("bridge") == 7
     assert deadly._state_labels("bridge") == [f"BRIDGE_STATE_{idx}" for idx in range(7)]
+
+
+def test_deadly_corridor_factorized_11_native_layout():
+    expected = [
+        "TURN_NONE",
+        "TURN_LEFT",
+        "TURN_RIGHT",
+        "MOVE_NONE",
+        "MOVE_FORWARD",
+        "MOVE_BACKWARD",
+        "STRAFE_NONE",
+        "STRAFE_LEFT",
+        "STRAFE_RIGHT",
+        "ATTACK_OFF",
+        "ATTACK_ON",
+    ]
+
+    assert deadly._action_dim("native", action_layout="factorized_11") == 11
+    assert deadly._action_labels("native", action_layout="factorized_11") == expected
+    assert deadly._action_vector({"action_tuple": [2, 1, 0, 1]}, action_layout="factorized_11") == [
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+    ]

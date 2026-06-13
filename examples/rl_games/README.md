@@ -95,6 +95,86 @@ python examples/rl_games/scripts/launch_train.py \
   mode=single
 ```
 
+Single-latency Deadly Corridor with the pi-0.5 VLA backbone initialized from
+Bridge/RT-1, but with a fresh native factorized 11D action head:
+
+```bash
+python examples/rl_games/scripts/launch_train.py \
+  model=pi05 \
+  env=deadly_corridor \
+  init=backbone_bridge_factorized11 \
+  mode=single \
+  run_id=pi05_deadly_corridor_factorized11 \
+  checkpoint.load=none
+```
+
+Use this mode when you want the trained VLA backbone weights from
+`StarVLA/Qwen3VL-PI_v3-Bridge-RT_1`, but do not want to reuse the Bridge action
+head or projector. The init config sets:
+
+```text
+rl_games.action_carrier=native
+rl_games.env_eval.deadly.action_layout=factorized_11
+framework.action_model.action_dim=11
+framework.action_model.action_env_dim=11
+framework.action_model.action_horizon=1
+trainer.reload_modules=qwen_vl_interface
+```
+
+`trainer.reload_modules=qwen_vl_interface` is the important checkpoint-loading
+boundary: setup still resolves the Bridge/RT-1 checkpoint, but training only
+loads the `qwen_vl_interface` module from it. `project_layers` and
+`action_model` are left as the newly constructed model modules.
+
+The factorized 11D Deadly Corridor layout is:
+
+```text
+turn[3] + move[3] + strafe[3] + attack[2]
+
+TURN_NONE, TURN_LEFT, TURN_RIGHT,
+MOVE_NONE, MOVE_FORWARD, MOVE_BACKWARD,
+STRAFE_NONE, STRAFE_LEFT, STRAFE_RIGHT,
+ATTACK_OFF, ATTACK_ON
+```
+
+The raw Deadly Corridor source dataset for this mode must provide either:
+
+- `action_tuple`: `[turn, move, strafe, attack]`, where the group sizes are
+  `[3, 3, 3, 2]`
+- or `action` / `actions`: an already one-hot 11D vector in the order above
+
+If the converted StarVLA/LeRobot dataset already exists under
+`paths.dataset_local_dir`, setup reuses it when its manifest matches
+`action_layout=factorized_11`. If it does not exist yet, pass the raw source
+dataset so setup can verify and convert it:
+
+```bash
+python examples/rl_games/scripts/launch_train.py \
+  model=pi05 \
+  env=deadly_corridor \
+  init=backbone_bridge_factorized11 \
+  mode=single \
+  run_id=pi05_deadly_corridor_factorized11 \
+  checkpoint.load=none \
+  dataset.source_hf=<deadly_corridor_factorized11_source_dataset>
+```
+
+Before launching a long run, dry-run the composition and setup:
+
+```bash
+python examples/rl_games/scripts/launch_train.py \
+  --dry-run \
+  model=pi05 \
+  env=deadly_corridor \
+  init=backbone_bridge_factorized11 \
+  mode=single \
+  run_id=pi05_deadly_corridor_factorized11 \
+  checkpoint.load=none
+```
+
+Do not use `init=bridge` for this experiment. `init=bridge` intentionally uses
+the 7D Bridge carrier and is the wrong action surface for factorized 11D.
+
 Override config values from the command line:
 
 ```bash
