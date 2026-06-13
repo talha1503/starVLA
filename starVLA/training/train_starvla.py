@@ -40,6 +40,7 @@ from starVLA.model.framework.share_tools import apply_config_compat
 from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias, validate_rl_games_config
 from starVLA.training.rl_games.auth import login_training_services
 from starVLA.training.rl_games.eval_core import EvalResult
+from starVLA.training.rl_games import action_cc_f1
 from starVLA.training.train_step_events import should_run_step_interval_event
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
@@ -648,6 +649,7 @@ class VLATrainer(TrainerUtils):
                     gradients_synced=gradients_synced,
                 ):
                     step_metrics = self.eval_action_loss(step_metrics)
+                    step_metrics = self.eval_action_cc_f1(step_metrics)
                 if self._rl_games_eval_runner is not None:
                     eval_every = self._rl_games_eval_runner.interval_steps()
                     if eval_every > 0 and should_run_step_interval_event(
@@ -739,6 +741,133 @@ class VLATrainer(TrainerUtils):
     def eval_action_model(self, step_metrics: dict = None) -> dict:
         """Backward-compatible alias for the held-out action loss evaluator."""
         return self.eval_action_loss(step_metrics)
+
+    def eval_action_cc_f1(self, step_metrics: dict = None) -> dict:
+        """Component-based Control-Critical F1 over the held-out teacher set.
+
+        Unlike ``eval_action_loss`` (which samples frames randomly via the
+        shuffled eval dataloader), CC-F1 needs *contiguous, fully-covered*
+        episodes so the ``±K`` temporal-tolerance matching is meaningful. So this
+        runs a dedicated sequential pass: it walks each underlying LeRobot
+        dataset's ``all_steps`` in order (bypassing the random mixture sampler),
+        shards whole episodes across ranks, runs ``predict_action`` (the same
+        decode path as rollout), decodes per-frame action *components* and matches
+        teacher vs model events per episode. Counts are all-reduced and reduced to
+        CC-F1 on the main process. See ``action_cc_f1`` for the metric definition.
+        """
+        step_metrics = step_metrics or {}
+        if self.vla_eval_dataloader is None:
+            return step_metrics
+        task = str(getattr(getattr(self.config, "rl_games", None), "task", "") or "").lower()
+        if task not in action_cc_f1.SUPPORTED_TASKS:
+            return step_metrics
+        if not bool(getattr(self.config.trainer, "eval_action_classification", True)):
+            return step_metrics
+
+        # Resolve spec (deadly_corridor depends on its action layout) and tolerance.
+        # Read the layout exactly like action_spec._deadly_action_dim (same default)
+        # so the decode matches the action dim the model was actually trained with.
+        deadly_layout = action_cc_f1.DEADLY_MULTIBINARY_7
+        if task == "deadly_corridor":
+            deadly_cfg = getattr(getattr(getattr(self.config, "rl_games", None), "env_eval", None), "deadly", None)
+            deadly_layout = str(getattr(deadly_cfg, "action_layout", action_cc_f1.DEADLY_MULTIBINARY_7))
+        spec = action_cc_f1.get_spec(task, deadly_layout)
+        k = spec.default_k
+        if task != "flappy":  # flappy stays per-frame (K=0) to match the shipped flap-F1
+            override = getattr(self.config.trainer, "cc_f1_tolerance", None)
+            if override is not None:
+                k = int(override)
+
+        dataset = getattr(self.vla_eval_dataloader, "dataset", None)
+        if dataset is None:
+            return step_metrics
+        single_datasets = list(getattr(dataset, "datasets", None) or [dataset])
+
+        # Enumerate episodes as contiguous same-trajectory runs of all_steps.
+        # episodes: list of (single_ds, episode_key, [(flat_idx, base_index), ...]).
+        episodes = []
+        for ds in single_datasets:
+            all_steps = getattr(ds, "all_steps", None)
+            if not all_steps:
+                continue
+            tag = getattr(ds, "tag", "ds")
+            cur_traj = None
+            cur = []
+            for flat_idx, step in enumerate(all_steps):
+                traj_id, base_idx = step
+                if cur and traj_id != cur_traj:
+                    episodes.append((ds, f"{tag}:{cur_traj}", cur))
+                    cur = []
+                cur_traj = traj_id
+                cur.append((int(flat_idx), int(base_idx)))
+            if cur:
+                episodes.append((ds, f"{tag}:{cur_traj}", cur))
+        if not episodes:
+            return step_metrics
+
+        # Shard whole episodes across ranks, bounded by a per-rank frame budget.
+        num_procs = int(self.accelerator.num_processes)
+        rank = int(self.accelerator.process_index)
+        bs = int(self.config.datasets.vla_data.per_device_batch_size)
+        frame_budget = max(1, int(getattr(self.config.trainer, "eval_num_batches", 20)) * bs)
+        assigned = []
+        frame_count = 0
+        for ep_idx, ep in enumerate(episodes):
+            if ep_idx % num_procs != rank:
+                continue
+            assigned.append(ep)
+            frame_count += len(ep[2])
+            if frame_count >= frame_budget:
+                break
+
+        was_training = self.model.training
+        self.model.eval()
+        unwrapped = self.accelerator.unwrap_model(self.model)
+        counts = action_cc_f1.new_counts(spec)
+
+        # Materialize assigned frames (tagged with their episode), batch for inference.
+        tagged = []  # (episode_key, base_index, packed_sample)
+        for ds, episode_key, frames in assigned:
+            for flat_idx, base_idx in frames:
+                tagged.append((episode_key, base_idx, ds[flat_idx]))
+
+        per_ep = {}  # episode_key -> list of (base_index, teacher_components, model_components)
+        with torch.no_grad():
+            for start in range(0, len(tagged), bs):
+                chunk = tagged[start : start + bs]
+                normalized = unwrapped.predict_action(examples=[c[2] for c in chunk])["normalized_actions"]
+                for i, (episode_key, base_idx, sample) in enumerate(chunk):
+                    teacher_vec = np.asarray(sample["action"])[0, :]
+                    model_vec = normalized[i, 0, :]
+                    per_ep.setdefault(episode_key, []).append(
+                        (base_idx, spec.comp_fn(teacher_vec), spec.comp_fn(model_vec))
+                    )
+
+        if was_training:
+            self.model.train()
+
+        for items in per_ep.values():
+            items.sort(key=lambda r: r[0])
+            action_cc_f1.accumulate_episode(
+                spec,
+                frames=[r[0] for r in items],
+                teacher_comps=[r[1] for r in items],
+                model_comps=[r[2] for r in items],
+                k=k,
+                counts=counts,
+            )
+
+        # Counts are small integers (well within float32's exact range); float32
+        # keeps NCCL all_reduce broadly compatible across torch builds.
+        counts_t = torch.tensor(counts, device=self.accelerator.device, dtype=torch.float32)
+        if dist.is_initialized():
+            dist.all_reduce(counts_t, op=dist.ReduceOp.SUM)
+        if self.accelerator.is_main_process:
+            step_metrics.update(action_cc_f1.reduce_metrics(spec, counts_t.detach().cpu().numpy()))
+
+        if dist.is_initialized():
+            dist.barrier()
+        return step_metrics
 
     def _log_training_config(self):
         """Record training config."""

@@ -69,6 +69,9 @@ trainer:
   save_interval: 100
   eval_interval: 100
   eval_num_batches: 20
+  # Flappy-only: log flap precision/recall/F1 + flap rate on the held-out val set
+  # (uses predict_action, so flappy gets an extra forward pass per eval batch).
+  eval_action_classification: true
   learning_rate:
     base: 2.0e-05
     qwen_vl_interface: 1.0e-05
