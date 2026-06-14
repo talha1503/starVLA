@@ -5,6 +5,7 @@ import argparse
 import gc
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -96,6 +97,152 @@ def _ensure_run_config(repo_id: str, run_dir: Path, config_path: Path | None) ->
     raise FileNotFoundError(
         f"Config not found at {path}, and no config.full.yaml/config.yaml could be downloaded from {repo_id}"
     )
+
+
+def _maybe_ensure_run_config(repo_id: str, run_dir: Path, config_path: Path | None) -> Path | None:
+    try:
+        return _ensure_run_config(repo_id=repo_id, run_dir=run_dir, config_path=config_path)
+    except FileNotFoundError:
+        return None
+
+
+def _extract_launch_train_argv(script_path: Path) -> list[str]:
+    if not script_path.exists():
+        raise FileNotFoundError(f"Launch script not found: {script_path}")
+
+    command_parts: list[str] = []
+    collecting = False
+    for raw_line in script_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if not collecting and "launch_train.py" not in line:
+            continue
+        collecting = True
+        has_continuation = line.endswith("\\")
+        command_parts.append(line[:-1].strip() if has_continuation else line)
+        if not has_continuation:
+            break
+
+    if not command_parts:
+        raise ValueError(f"No launch_train.py command found in {script_path}")
+
+    tokens = shlex.split(" ".join(command_parts))
+    for index, token in enumerate(tokens):
+        if token.endswith("launch_train.py") or token == "launch_train.py":
+            return tokens[index + 1 :]
+    raise ValueError(f"Could not locate launch_train.py token in {script_path}")
+
+
+def _compose_launch_cfg_from_script(args: argparse.Namespace, script_path: Path):
+    from examples.rl_games.scripts import launch_train as launch_train_lib
+
+    launch_args = launch_train_lib._parse_args(_extract_launch_train_argv(script_path))
+    hydra_overrides = list(launch_args.overrides)
+    if launch_args.workspace_dir not in (None, ""):
+        hydra_overrides.append(f"workspace_dir={launch_args.workspace_dir}")
+    if args.workspace_dir not in (None, ""):
+        hydra_overrides.append(f"workspace_dir={args.workspace_dir}")
+    if launch_args.run_root_dir not in (None, ""):
+        hydra_overrides.append(f"paths.run_root_dir={launch_args.run_root_dir}")
+        hydra_overrides.append(f"run_root_dir={launch_args.run_root_dir}")
+    if launch_args.deadly_loss_type not in (None, ""):
+        hydra_overrides.append(f"rl_games.deadly_corridor_loss_type={launch_args.deadly_loss_type}")
+    if launch_args.eval_distributed_mode not in (None, ""):
+        hydra_overrides.append(f"rl_games.env_eval.distributed_mode={launch_args.eval_distributed_mode}")
+    launch_train_lib._append_cross_task_train_task_cli_overrides(hydra_overrides, launch_args)
+    if args.hf_repo_id:
+        hydra_overrides.append(f"checkpoint.hf_repo_id={args.hf_repo_id}")
+        hydra_overrides.append(f"checkpoint.sync.repo_id={args.hf_repo_id}")
+    if args.override:
+        hydra_overrides.extend(args.override)
+
+    cfg = launch_train_lib.compose_training_config(
+        config_name=str(launch_args.config_name),
+        model=str(launch_args.model),
+        env=str(launch_args.env),
+        init=str(launch_args.init),
+        mode=str(launch_args.mode),
+        overrides=hydra_overrides,
+    )
+    return cfg, launch_train_lib
+
+
+def _minimal_setup_from_launch_cfg(cfg: Any, launch_train_lib: Any) -> dict[str, Any]:
+    workspace_dir = launch_train_lib._workspace_dir(cfg)
+    converted_name, _ = launch_train_lib._dataset_setup_values(cfg)
+    action_carrier = str(launch_train_lib._cfg_get(cfg, "rl_games.action_carrier") or "")
+    init_mode = str(launch_train_lib._cfg_get(cfg, "rl_games.initialization_mode") or "")
+    if action_carrier not in {"native", "bridge"}:
+        action_carrier = "bridge" if init_mode in {"bridge", "pre-trained", "pretrained"} else "native"
+    data_mix = converted_name
+    if action_carrier == "bridge" and "__bridge" not in data_mix:
+        data_mix = f"{data_mix}__bridge"
+    data_root = launch_train_lib._resolve_path(
+        launch_train_lib._cfg_get(cfg, "paths.dataset_local_dir"),
+        workspace_dir,
+    )
+    prompt_map_path = Path(data_root) / data_mix / "latency_prompt_map.json"
+    base_model_dir = launch_train_lib._resolve_path(
+        launch_train_lib._cfg_get(cfg, "paths.base_model_dir"),
+        workspace_dir,
+    )
+    return {
+        "dataset_local_dir": data_root,
+        "data_mix": data_mix,
+        "eval_data_mix": f"{data_mix}__val",
+        "latency_prompt_map_path": str(prompt_map_path) if prompt_map_path.exists() else None,
+        "base_model_dir": base_model_dir,
+        "resume_found": False,
+        "pretrained_checkpoint": None,
+    }
+
+
+def _trainer_overrides_from_command(command: list[str]) -> tuple[str, list[str]]:
+    config_name = "train"
+    overrides: list[str] = []
+    index = 1
+    while index < len(command):
+        token = command[index]
+        if token == "--config-name":
+            config_name = command[index + 1]
+            index += 2
+            continue
+        if token.startswith("--config-name="):
+            config_name = token.split("=", 1)[1]
+            index += 1
+            continue
+        if token.startswith("--"):
+            raise ValueError(f"Unsupported train_starvla_hydra.py option in reconstructed command: {token}")
+        overrides.append(token)
+        index += 1
+    return config_name, overrides
+
+
+def _compose_trainer_cfg_from_launch_script(args: argparse.Namespace, run_dir: Path):
+    from hydra import compose, initialize_config_dir
+
+    launch_cfg, launch_train_lib = _compose_launch_cfg_from_script(
+        args=args,
+        script_path=Path(args.launch_script).expanduser().resolve(),
+    )
+    workspace_dir = launch_train_lib._workspace_dir(launch_cfg)
+    run_root_dir = launch_train_lib._resolve_path(
+        launch_train_lib._cfg_get(launch_cfg, "paths.run_root_dir")
+        or launch_train_lib.DEFAULT_RUN_ROOT_DIR,
+        workspace_dir,
+    )
+    setup = _minimal_setup_from_launch_cfg(launch_cfg, launch_train_lib)
+    trainer_command = launch_train_lib.build_trainer_command(
+        launch_cfg,
+        setup,
+        workspace_dir,
+        run_root_dir,
+    )
+    config_name, trainer_overrides = _trainer_overrides_from_command(trainer_command)
+    with initialize_config_dir(version_base="1.1", config_dir=str(launch_train_lib.CONFIG_DIR)):
+        cfg = compose(config_name=config_name, overrides=trainer_overrides)
+    return cfg
 
 
 def _ensure_eval_result(repo_id: str, run_dir: Path, stage: str, step: int) -> Path | None:
@@ -218,18 +365,18 @@ def _set_stage_latencies(cfg: Any, stage: str, latencies: list[int]) -> None:
     OmegaConf.update(cfg, "rl_games.env_eval.latency.values", latencies, merge=True)
 
 
-def _load_eval_config(args: argparse.Namespace, run_dir: Path, config_path: Path):
+def _apply_replay_eval_overrides(args: argparse.Namespace, run_dir: Path, cfg: Any):
     from omegaconf import OmegaConf
     from starVLA.model.framework.share_tools import apply_config_compat
     from starVLA.training.rl_games import apply_action_spec, apply_model_alias
 
     eval_checkpoint_lib.OmegaConf = OmegaConf
-    cfg = OmegaConf.load(str(config_path))
     if args.override:
         cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(args.override))
 
     stage = _normalize_stage(args.stage)
-    _set_stage_latencies(cfg, stage, _parse_int_list(args.latencies))
+    if args.latencies:
+        _set_stage_latencies(cfg, stage, _parse_int_list(args.latencies))
 
     if args.num_episodes is not None:
         if eval_checkpoint_lib._has_cross_task_eval(cfg):
@@ -273,6 +420,14 @@ def _load_eval_config(args: argparse.Namespace, run_dir: Path, config_path: Path
     return cfg
 
 
+def _load_eval_config(args: argparse.Namespace, run_dir: Path, config_path: Path):
+    from omegaconf import OmegaConf
+
+    eval_checkpoint_lib.OmegaConf = OmegaConf
+    cfg = OmegaConf.load(str(config_path))
+    return _apply_replay_eval_overrides(args=args, run_dir=run_dir, cfg=cfg)
+
+
 def _maybe_log_wandb(args: argparse.Namespace, cfg: Any, result: Any, run_dir: Path, step: int, stage: str) -> None:
     if not _str2bool(args.wandb_enabled):
         return
@@ -300,6 +455,7 @@ def main() -> None:
     parser.add_argument("--latencies", required=True, type=str, help="Latency list/range, e.g. 0,2,4 or 0-7")
     parser.add_argument("--stage", default="mid_train_eval", type=str)
     parser.add_argument("--config", default=None, type=str)
+    parser.add_argument("--launch-script", default=None, type=str)
     parser.add_argument("--checkpoint-dir", default=None, type=str)
     parser.add_argument("--video-output-dir", default=None, type=str)
     parser.add_argument("--video-fps", default=30, type=int)
@@ -323,17 +479,27 @@ def main() -> None:
     run_dir = Path(args.run_dir).expanduser().resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_dir = Path(args.checkpoint_dir).expanduser().resolve() if args.checkpoint_dir else run_dir / "checkpoints"
-    config_path = _ensure_run_config(
+    config_path = _maybe_ensure_run_config(
         repo_id=args.hf_repo_id,
         run_dir=run_dir,
         config_path=Path(args.config) if args.config else None,
     )
+    if config_path is None and not args.launch_script:
+        config_path = _ensure_run_config(
+            repo_id=args.hf_repo_id,
+            run_dir=run_dir,
+            config_path=Path(args.config) if args.config else None,
+        )
     stage = _normalize_stage(args.stage)
     steps = _parse_int_list(args.steps)
     if not steps:
         raise ValueError("--steps resolved to an empty list")
 
-    cfg = _load_eval_config(args=args, run_dir=run_dir, config_path=config_path)
+    if config_path is not None:
+        cfg = _load_eval_config(args=args, run_dir=run_dir, config_path=config_path)
+    else:
+        cfg = _compose_trainer_cfg_from_launch_script(args=args, run_dir=run_dir)
+        cfg = _apply_replay_eval_overrides(args=args, run_dir=run_dir, cfg=cfg)
     eval_checkpoint_lib._print_eval_plan(cfg, stage)
     if args.print_plan_only:
         return
