@@ -41,7 +41,7 @@ from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, 
 from starVLA.training.rl_games.auth import login_training_services
 from starVLA.training.rl_games.eval_core import EvalResult
 from starVLA.training.rl_games import action_cc_f1
-from starVLA.training.train_step_events import should_run_step_interval_event
+from starVLA.training.train_step_events import calculate_epoch_progress, should_run_step_interval_event
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
 
@@ -553,7 +553,15 @@ class VLATrainer(TrainerUtils):
             for i, group in enumerate(self.optimizer.param_groups):
                 group_name = group.get("name", str(i))
                 metrics[f"learning_rate/{group_name}"] = last_lrs[i] if i < len(last_lrs) else last_lrs[-1]
-            metrics["epoch"] = round(self.completed_steps / len(self.vla_train_dataloader), 2)
+            dataset_size = len(self.vla_train_dataloader.dataset)
+            metrics["epoch"] = round(
+                calculate_epoch_progress(
+                    completed_steps=self.completed_steps,
+                    total_batch_size=self.total_batch_size,
+                    dataset_size=dataset_size,
+                ),
+                2,
+            )
             wandb.log(metrics, step=self.completed_steps)
             logger.info(f"Step {self.completed_steps}, Loss: {metrics})")
 
