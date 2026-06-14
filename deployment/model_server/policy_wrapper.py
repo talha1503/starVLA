@@ -16,7 +16,9 @@ Exposed API:
   - ``metadata`` (dict, sent at handshake): ``action_chunk_size``,
     ``available_unnorm_keys``, ``action_keys``, ``state_keys``.
   - ``predict_action(examples, unnorm_key=None, **kwargs)`` returns
-    ``{"actions": np.ndarray[B, T, action_dim]}``.
+    ``{"actions": np.ndarray[B, T, action_dim]}`` in deployment mode.
+  - ``action_output_mode="rl_games"`` returns decoded game actions plus
+    ``raw_action_scores`` for diagnostics.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from starVLA.model.framework.base_framework import baseframework
 from starVLA.model.framework.share_tools import read_mode_config
 
 from deployment.model_server.policy_norm_processor import PolicyNormProcessor
+from deployment.model_server.rl_games_action_decode import decode_rl_games_actions
 
 
 class PolicyServerWrapper:
@@ -42,8 +45,12 @@ class PolicyServerWrapper:
         device: str = "cuda",
         use_bf16: bool = False,
         unnorm_key: Optional[str] = None,
+        action_output_mode: str = "deployment",
+        rl_games_env_name: Optional[str] = None,
     ) -> None:
         self._ckpt_path = str(ckpt_path)
+        self._action_output_mode = action_output_mode
+        self._rl_games_env_name = rl_games_env_name
 
         logging.info("PolicyServerWrapper: loading framework from %s", self._ckpt_path)
         framework = baseframework.from_pretrained(self._ckpt_path)
@@ -115,7 +122,10 @@ class PolicyServerWrapper:
             "action_chunk_size": self._action_chunk_size,
             "available_unnorm_keys": self._available_unnorm_keys,
             "default_unnorm_key": self._default_unnorm_key,
+            "action_output_mode": self._action_output_mode,
         }
+        if self._rl_games_env_name is not None:
+            base["rl_games_env_name"] = self._rl_games_env_name
         # Enrich with per-embodiment keys when a default processor already exists.
         if self._default_unnorm_key is not None:
             proc = self._get_processor(self._default_unnorm_key)
@@ -139,7 +149,8 @@ class PolicyServerWrapper:
                 (``do_sample``, ``use_ddim``, ``num_ddim_steps``, ...).
 
         Returns:
-            ``{"actions": np.ndarray[B, T, D]}`` -- un-normalized.
+            Deployment mode returns un-normalized ``actions``. RL-games mode
+            returns decoded game ``actions`` and raw model scores.
         """
         effective_key = unnorm_key if unnorm_key is not None else self._default_unnorm_key
         if effective_key is None:
@@ -154,6 +165,12 @@ class PolicyServerWrapper:
 
         out = self._framework.predict_action(examples=examples, **kwargs)
         normalized = np.asarray(out["normalized_actions"])  # (B, T, D)
+
+        if self._action_output_mode == "rl_games":
+            return decode_rl_games_actions(
+                normalized_actions=normalized,
+                env_name=self._rl_games_env_name,
+            )
 
         unnorm = np.stack(
             [proc.unapply_actions(normalized[b]) for b in range(normalized.shape[0])],
