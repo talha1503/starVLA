@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import numpy as np
@@ -15,6 +17,8 @@ TASK_SEED_INDEX = {
     "demon_attack": 1,
     "deadly_corridor": 2,
 }
+
+DEFAULT_VIDEO_FPS = 30
 
 
 class ActionLatencyQueue:
@@ -257,6 +261,53 @@ def _stable_task_seed_index(task: str) -> int:
     return 100 + sum((idx + 1) * ord(char) for idx, char in enumerate(task)) % 10000
 
 
+def _slug(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_") or "item"
+
+
+def _rgb_frame(frame: Any) -> np.ndarray | None:
+    if frame is None:
+        return None
+    arr = np.asarray(frame)
+    if arr.ndim == 2:
+        arr = np.stack([arr] * 3, axis=-1)
+    elif arr.ndim == 3 and arr.shape[2] == 1:
+        arr = np.repeat(arr, 3, axis=2)
+    elif arr.ndim == 3 and arr.shape[2] > 3:
+        arr = arr[:, :, :3]
+    if arr.ndim != 3 or arr.shape[2] != 3:
+        return None
+    if arr.dtype != np.uint8:
+        arr = np.clip(arr, 0, 255).astype(np.uint8)
+    return np.ascontiguousarray(arr)
+
+
+def _render_frame(env, fallback_obs: Any = None) -> np.ndarray | None:
+    frame = None
+    try:
+        frame = env.render()
+    except Exception:
+        frame = None
+    if frame is None:
+        frame = fallback_obs
+    try:
+        return _rgb_frame(_extract_image_observation(frame))
+    except Exception:
+        return _rgb_frame(frame)
+
+
+def _write_video(path: Path, frames: List[np.ndarray], fps: int) -> None:
+    if not frames:
+        return
+    try:
+        import imageio.v2 as imageio
+    except Exception as exc:
+        raise RuntimeError("imageio is required to record RL-games eval videos") from exc
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    imageio.mimsave(str(path), frames, fps=int(fps))
+
+
 class _TaskEvaluator:
     def __init__(self, task: str, cfg, task_eval_cfg=None):
         self.task = task
@@ -391,6 +442,17 @@ class _TaskEvaluator:
         latency_offset = int(latency) * self.latency_seed_stride
         return int(self.eval_seed + task_offset + latency_offset + int(episode))
 
+    def _episode_seed_for_run(
+        self,
+        latency: int,
+        episode: int,
+        seed_overrides: Dict[int, int | None] | None = None,
+    ) -> int | None:
+        if seed_overrides is not None and int(episode) in seed_overrides:
+            seed = seed_overrides[int(episode)]
+            return None if seed is None else int(seed)
+        return self._episode_seed(latency=latency, episode=episode)
+
     def _reset_env(self, env, seed: int | None):
         if seed is None:
             return env.reset()
@@ -501,6 +563,7 @@ class _TaskEvaluator:
         progress_position: int,
         batch_size: int,
         on_episode_complete: Callable[[Dict[str, Any]], None] | None = None,
+        seed_overrides: Dict[int, int | None] | None = None,
     ) -> Dict[str, Any]:
         pending = list(episode_indices)
         if not pending:
@@ -513,7 +576,11 @@ class _TaskEvaluator:
         slots: List[Dict[str, Any]] = []
 
         def _start_episode(slot: Dict[str, Any], episode: int) -> None:
-            episode_seed = self._episode_seed(latency=latency, episode=episode)
+            episode_seed = self._episode_seed_for_run(
+                latency=latency,
+                episode=episode,
+                seed_overrides=seed_overrides,
+            )
             obs, _ = self._reset_env(slot["env"], episode_seed)
             slot.update({
                 "active": True,
@@ -635,13 +702,16 @@ class _TaskEvaluator:
         progress_desc: str | None = None,
         progress_position: int = 0,
         on_episode_complete: Callable[[Dict[str, Any]], None] | None = None,
+        video_dir: str | Path | None = None,
+        video_fps: int = DEFAULT_VIDEO_FPS,
+        seed_overrides: Dict[int, int | None] | None = None,
     ) -> Dict[str, Any]:
         episode_indices = list(range(num_episodes)) if episode_indices is None else list(episode_indices)
         if not episode_indices:
             return self._empty_latency_metrics(latency)
 
         vectorized_batch_size = self._vectorized_batch_size()
-        if vectorized_batch_size > 1:
+        if vectorized_batch_size > 1 and video_dir is None:
             return self._run_latency_vectorized(
                 model=model,
                 latency=latency,
@@ -653,6 +723,7 @@ class _TaskEvaluator:
                 progress_position=progress_position,
                 batch_size=vectorized_batch_size,
                 on_episode_complete=on_episode_complete,
+                seed_overrides=seed_overrides,
             )
 
         env = self._make_env()
@@ -673,7 +744,11 @@ class _TaskEvaluator:
             dynamic_ncols=True,
         )
         for episode in episode_iter:
-            episode_seed = self._episode_seed(latency=latency, episode=episode)
+            episode_seed = self._episode_seed_for_run(
+                latency=latency,
+                episode=episode,
+                seed_overrides=seed_overrides,
+            )
             episode_seeds.append(episode_seed)
             obs, _ = self._reset_env(env, episode_seed)
             model_obs = self._model_observation(env, obs)
@@ -681,6 +756,11 @@ class _TaskEvaluator:
             done = False
             total_reward = 0.0
             steps = 0
+            frames: List[np.ndarray] = []
+            if video_dir is not None:
+                frame = _render_frame(env, fallback_obs=model_obs)
+                if frame is not None:
+                    frames.append(frame)
 
             while not done and steps < max_steps:
                 example = self._make_model_example(model_obs, prompt)
@@ -695,10 +775,22 @@ class _TaskEvaluator:
 
                 obs, step_reward, terminated, truncated = self._step_env_once(env, effective_action)
                 model_obs = self._model_observation(env, obs)
+                if video_dir is not None:
+                    frame = _render_frame(env, fallback_obs=model_obs)
+                    if frame is not None:
+                        frames.append(frame)
 
                 total_reward += step_reward
                 steps += 1
                 done = terminated or truncated
+
+            if video_dir is not None:
+                seed_part = "none" if episode_seed is None else str(int(episode_seed))
+                output_path = (
+                    Path(video_dir)
+                    / f"episode_{int(episode):03d}_seed_{_slug(seed_part)}.mp4"
+                )
+                _write_video(output_path, frames, fps=video_fps)
 
             rewards.append(total_reward)
             lengths.append(steps)
@@ -732,9 +824,17 @@ class _TaskEvaluator:
 
 
 class RlGamesEvalRunner:
-    def __init__(self, cfg, output_dir: str):
+    def __init__(
+        self,
+        cfg,
+        output_dir: str,
+        video_output_dir: str | None = None,
+        video_fps: int = DEFAULT_VIDEO_FPS,
+    ):
         self.cfg = cfg
         self.output_dir = output_dir
+        self.video_output_dir = video_output_dir
+        self.video_fps = int(video_fps)
 
     def _stage_cfg(self, stage: str):
         env_eval = self.cfg.rl_games.env_eval
@@ -989,6 +1089,7 @@ class RlGamesEvalRunner:
         shard_rank: int = 0,
         shard_count: int = 1,
         save: bool = True,
+        episode_seed_overrides: Dict[str, Dict[int, int | None]] | None = None,
     ) -> EvalResult:
         tasks = self._get_tasks()
         per_latency: Dict[str, Dict] = {}
@@ -1019,12 +1120,22 @@ class RlGamesEvalRunner:
             task_eval = _TaskEvaluator(task=task_name, cfg=self.cfg, task_eval_cfg=task_eval_cfg)
             prompt = self._resolve_prompt(latency=latency, mapping=prompt_maps.get(task_name, {}), task=task_name)
             num_episodes = self._num_episodes(stage=stage, task=task_name)
+            key = f"{task_name}/latency_{latency}"
+            seed_overrides = (
+                episode_seed_overrides.get(key)
+                if episode_seed_overrides is not None
+                else None
+            )
+            all_episode_indices = (
+                sorted(int(episode) for episode in seed_overrides)
+                if seed_overrides is not None
+                else list(range(num_episodes))
+            )
             episode_indices = [
                 episode
-                for episode in range(num_episodes)
+                for episode in all_episode_indices
                 if int(episode) % max(1, int(shard_count)) == int(shard_rank)
             ]
-            key = f"{task_name}/latency_{latency}"
 
             def save_episode_progress(metrics: Dict[str, Any]) -> None:
                 per_latency[key] = metrics
@@ -1043,11 +1154,22 @@ class RlGamesEvalRunner:
                 latency=latency,
                 prompt=prompt,
                 max_steps=self._max_steps_per_episode(stage=stage, task=task_name),
-                num_episodes=num_episodes,
+                num_episodes=len(all_episode_indices) if seed_overrides is not None else num_episodes,
                 episode_indices=episode_indices,
                 progress_desc=f"{stage} {task_name} latency={latency}",
                 progress_position=1,
                 on_episode_complete=save_episode_progress if save else None,
+                video_dir=(
+                    Path(self.video_output_dir)
+                    / stage
+                    / f"step_{int(step)}"
+                    / _slug(task_name)
+                    / f"latency_{int(latency)}"
+                    if self.video_output_dir is not None
+                    else None
+                ),
+                video_fps=self.video_fps,
+                seed_overrides=seed_overrides,
             )
             per_latency[key] = metrics
 

@@ -147,6 +147,31 @@ def test_task_evaluator_respects_explicit_task_seed_stride():
     assert [evaluator._episode_seed(latency=0, episode=episode) for episode in range(3)] == [100042, 100043, 100044]
 
 
+def test_task_evaluator_saved_seed_overrides_take_precedence():
+    cfg = OmegaConf.create(
+        {
+            "seed": 42,
+            "rl_games": {
+                "env_eval": {
+                    "fixed_episode_seeds": True,
+                    "latency_seed_stride": 1000,
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+    evaluator = _TaskEvaluator(task="flappy", cfg=cfg)
+
+    assert evaluator._episode_seed_for_run(latency=8, episode=1, seed_overrides={1: 123456}) == 123456
+    assert evaluator._episode_seed_for_run(latency=8, episode=2, seed_overrides={1: 123456}) == 8044
+    assert evaluator._episode_seed_for_run(latency=8, episode=3, seed_overrides={3: None}) is None
+
+
 class _FixedRng:
     def __init__(self, value: int):
         self.value = value
@@ -275,3 +300,64 @@ def test_eval_runner_saves_result_after_each_episode(monkeypatch, tmp_path):
 
     assert save_totals == [1, 2, 2]
     assert result.path == str(tmp_path / "eval" / "post_train" / "step_2500.json")
+
+
+def test_eval_runner_passes_saved_seed_overrides_by_latency(monkeypatch, tmp_path):
+    cfg = OmegaConf.create(
+        {
+            "seed": 42,
+            "rl_games": {
+                "task": "flappy",
+                "model_alias": "openvla",
+                "env_eval": {
+                    "enabled": True,
+                    "mid_train": {
+                        "enabled": True,
+                        "latencies": [0],
+                        "num_episodes": 2,
+                        "max_steps_per_episode": 1,
+                    },
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+    seen_seed_overrides = []
+    seen_episode_indices = []
+
+    def fake_run_latency(self, **kwargs):
+        seen_seed_overrides.append(kwargs["seed_overrides"])
+        seen_episode_indices.append(kwargs["episode_indices"])
+        return {
+            "latency": 0,
+            "num_episodes": 2,
+            "mean_reward": 0.0,
+            "mean_length": 1.0,
+            "std_reward": 0.0,
+            "std_length": 0.0,
+            "episode_rewards": [0.0, 0.0],
+            "episode_lengths": [1, 1],
+            "decoded_action_hist": {"0": 2},
+            "fixed_episode_seeds": True,
+            "eval_seed": 42,
+            "episode_seeds": [9001, 9002],
+            "episode_indices": [5, 7],
+        }
+
+    monkeypatch.setattr(_TaskEvaluator, "run_latency", fake_run_latency)
+
+    runner = RlGamesEvalRunner(cfg=cfg, output_dir=str(tmp_path))
+    result = runner.run(
+        model=object(),
+        step=1000,
+        stage="mid_train",
+        episode_seed_overrides={"flappy/latency_0": {5: 9001, 7: 9002}},
+    )
+
+    assert seen_seed_overrides == [{5: 9001, 7: 9002}]
+    assert seen_episode_indices == [[5, 7]]
+    assert result.per_latency["flappy/latency_0"]["episode_seeds"] == [9001, 9002]
