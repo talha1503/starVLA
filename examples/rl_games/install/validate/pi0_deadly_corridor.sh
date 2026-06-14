@@ -4,7 +4,6 @@ set -euo pipefail
 PYTHON_BIN="${PYTHON_BIN:-python}"
 "$PYTHON_BIN" - <<'PY'
 import gymnasium as gym
-import ray  # noqa: F401
 import vizdoom
 import vizdoom.gymnasium_wrapper  # noqa: F401
 
