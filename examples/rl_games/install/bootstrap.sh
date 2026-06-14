@@ -186,6 +186,11 @@ install_in_active_env() {
   fi
 }
 
+install_eval_extra_in_active_env() {
+  echo "[bootstrap] Installing latency-bench eval extra dependencies"
+  PYTHON_BIN=python "${SCRIPT_DIR}/eval_extra.sh"
+}
+
 if [[ "${SPLIT_ENVS}" == "true" ]]; then
   for model in "${MODELS_TO_INSTALL[@]}"; do
     TARGET_ENV_NAME="${CONDA_ENV_NAME}_${model}"
@@ -196,7 +201,13 @@ if [[ "${SPLIT_ENVS}" == "true" ]]; then
     MODEL_ENVS=("${ENVS_TO_INSTALL[@]}")
 
     echo "[bootstrap] Installing model=${model} in env=${TARGET_ENV_NAME} with env targets: ${MODEL_ENVS[*]}"
-    install_in_active_env "${model}" "${RUN_VALIDATE}" "${MODEL_ENVS[@]}"
+    install_in_active_env "${model}" "false" "${MODEL_ENVS[@]}"
+    install_eval_extra_in_active_env
+    if [[ "${RUN_VALIDATE}" == "true" ]]; then
+      echo "[bootstrap] Running validation"
+      run_common_validation
+      run_target_validators_for_model "${model}" "${MODEL_ENVS[@]}"
+    fi
   done
 
   echo "[bootstrap] Complete."
@@ -216,6 +227,8 @@ if [[ ${#MODELS_TO_INSTALL[@]} -gt 1 ]]; then
     PYTHON_BIN=python "${SCRIPT_DIR}/model/${MODELS_TO_INSTALL[$i]}.sh"
   done
 fi
+
+install_eval_extra_in_active_env
 
 if [[ "${RUN_VALIDATE}" == "true" ]]; then
   echo "[bootstrap] Running validation"
