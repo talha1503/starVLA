@@ -38,7 +38,27 @@ def _local_parquet_files(dataset_name: str) -> list[str] | None:
     return [str(parquet_file) for parquet_file in (train_files or parquet_files)]
 
 
-def _load_train_split(dataset_name: str, cache_dir: str | None, columns: list[str] | None = None):
+def _load_hf_dataset(
+    dataset_name: str,
+    dataset_config_name: str | None,
+    *,
+    split: str,
+    cache_dir: str | None,
+    columns: list[str] | None = None,
+):
+    from datasets import load_dataset
+
+    if dataset_config_name not in (None, ""):
+        return load_dataset(dataset_name, dataset_config_name, split=split, cache_dir=cache_dir, columns=columns)
+    return load_dataset(dataset_name, split=split, cache_dir=cache_dir, columns=columns)
+
+
+def _load_train_split(
+    dataset_name: str,
+    cache_dir: str | None,
+    columns: list[str] | None = None,
+    dataset_config_name: str | None = None,
+):
     from datasets import load_dataset
 
     def _filter_internal_split(ds):
@@ -60,13 +80,13 @@ def _load_train_split(dataset_name: str, cache_dir: str | None, columns: list[st
         return _filter_internal_split(ds)
 
     try:
-        ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=columns)
+        ds = _load_hf_dataset(dataset_name, dataset_config_name, split="train", cache_dir=cache_dir, columns=columns)
         return _filter_internal_split(ds)
     except (ValueError, KeyError):
         load_columns = list(columns or [])
         if "split" not in load_columns:
             load_columns.append("split")
-        ds_all = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=load_columns)
+        ds_all = _load_hf_dataset(dataset_name, dataset_config_name, split="train", cache_dir=cache_dir, columns=load_columns)
         return ds_all.filter(lambda row: str(row["split"]).lower() == "train")
 
 
@@ -98,6 +118,7 @@ def verify_dataset(
     *,
     rows: int = 200,
     cache_dir: str | None = None,
+    dataset_config_name: str | None = None,
     strict: bool = False,
     allow_mixed_latency_prompts: bool = False,
 ) -> bool:
@@ -109,7 +130,7 @@ def verify_dataset(
             None,
         ):
             try:
-                ds = _load_train_split(dataset_name, cache_dir, columns=columns)
+                ds = _load_train_split(dataset_name, cache_dir, columns=columns, dataset_config_name=dataset_config_name)
                 break
             except Exception:
                 if columns is None:
@@ -175,6 +196,7 @@ def verify_dataset(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-name", "--dataset_name", required=True)
+    parser.add_argument("--dataset-config-name", "--dataset_config_name", default=None)
     parser.add_argument("--rows", type=int, default=200)
     parser.add_argument("--cache-dir", "--cache_dir", default=None)
     parser.add_argument("--strict", action="store_true")
@@ -186,6 +208,7 @@ def main() -> int:
             args.dataset_name,
             rows=args.rows,
             cache_dir=args.cache_dir,
+            dataset_config_name=args.dataset_config_name,
             strict=args.strict,
             allow_mixed_latency_prompts=args.allow_mixed_latency_prompts,
         )

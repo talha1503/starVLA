@@ -291,6 +291,11 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         deadly_action_layout=str(_cfg_get(cfg, "rl_games.env_eval.deadly.action_layout") or ""),
         latency_mode=str(_cfg_get(cfg, "rl_games.env_eval.latency.mode") or ""),
         source_dataset_hf=str(_cfg_get(cfg, "dataset.source_hf") or ""),
+        source_dataset_config_name=(
+            None
+            if _cfg_get(cfg, "dataset.config_name") in (None, "")
+            else str(_cfg_get(cfg, "dataset.config_name"))
+        ),
         dataset_local_dir=_resolve_path(_cfg_get(cfg, "paths.dataset_local_dir"), workspace_dir),
         converted_dataset_name=converted_dataset_name,
         dataset_cache_dir=(

@@ -122,3 +122,33 @@ def test_convert_flappy_marks_last_frame_done_when_done_column_is_absent(
     assert convert_flappy._row_done({"done": True}, "done", frame_idx=0, episode_length=3) is True
     assert convert_flappy._row_done({}, None, frame_idx=0, episode_length=3) is False
     assert convert_flappy._row_done({}, None, frame_idx=2, episode_length=3) is True
+
+
+def test_convert_flappy_hf_loader_passes_dataset_config_name(
+    monkeypatch: pytest.MonkeyPatch,
+    flappy_modules: tuple[ModuleType, ModuleType],
+) -> None:
+    convert_flappy, _ = flappy_modules
+    calls = []
+
+    def fake_load_dataset(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "dataset"
+
+    monkeypatch.setattr(convert_flappy, "load_dataset", fake_load_dataset)
+
+    result = convert_flappy._load_hf_dataset(
+        "latency-sensitive-bench/dataset-filter-comparison",
+        "flappy_clean_v1",
+        split="train",
+        cache_dir="/tmp/cache",
+        columns=["prompt"],
+    )
+
+    assert result == "dataset"
+    assert calls == [
+        (
+            ("latency-sensitive-bench/dataset-filter-comparison", "flappy_clean_v1"),
+            {"split": "train", "cache_dir": "/tmp/cache", "columns": ["prompt"]},
+        )
+    ]

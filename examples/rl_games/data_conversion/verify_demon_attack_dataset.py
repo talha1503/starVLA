@@ -33,6 +33,7 @@ def verify_dataset(
     *,
     rows: int = 200,
     cache_dir: str | None = None,
+    dataset_config_name: str | None = None,
     strict: bool = False,
     allow_mixed_latency_prompts: bool = False,
 ) -> bool:
@@ -44,7 +45,7 @@ def verify_dataset(
             None,
         ):
             try:
-                ds = _load_train_split(dataset_name, cache_dir, columns=columns)
+                ds = _load_train_split(dataset_name, cache_dir, columns=columns, dataset_config_name=dataset_config_name)
                 break
             except Exception:
                 if columns is None:
@@ -114,6 +115,7 @@ def verify_dataset(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-name", "--dataset_name", required=True)
+    parser.add_argument("--dataset-config-name", "--dataset_config_name", default=None)
     parser.add_argument("--rows", type=int, default=200)
     parser.add_argument("--cache-dir", "--cache_dir", default=None)
     parser.add_argument("--strict", action="store_true")
@@ -125,6 +127,7 @@ def main() -> int:
             args.dataset_name,
             rows=args.rows,
             cache_dir=args.cache_dir,
+            dataset_config_name=args.dataset_config_name,
             strict=args.strict,
             allow_mixed_latency_prompts=args.allow_mixed_latency_prompts,
         )

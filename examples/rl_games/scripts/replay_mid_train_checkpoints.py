@@ -106,6 +106,14 @@ def _maybe_ensure_run_config(repo_id: str, run_dir: Path, config_path: Path | No
         return None
 
 
+def _local_run_config(run_dir: Path) -> Path | None:
+    for filename in ("config.full.yaml", "config.yaml"):
+        path = run_dir / filename
+        if path.exists():
+            return path
+    return None
+
+
 def _extract_launch_train_argv(script_path: Path) -> list[str]:
     if not script_path.exists():
         raise FileNotFoundError(f"Launch script not found: {script_path}")
@@ -479,16 +487,26 @@ def main() -> None:
     run_dir = Path(args.run_dir).expanduser().resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_dir = Path(args.checkpoint_dir).expanduser().resolve() if args.checkpoint_dir else run_dir / "checkpoints"
-    config_path = _maybe_ensure_run_config(
-        repo_id=args.hf_repo_id,
-        run_dir=run_dir,
-        config_path=Path(args.config) if args.config else None,
-    )
+    if args.config:
+        config_path = _ensure_run_config(
+            repo_id=args.hf_repo_id,
+            run_dir=run_dir,
+            config_path=Path(args.config),
+        )
+    elif args.launch_script:
+        config_path = _local_run_config(run_dir)
+    else:
+        config_path = _maybe_ensure_run_config(
+            repo_id=args.hf_repo_id,
+            run_dir=run_dir,
+            config_path=None,
+        )
+
     if config_path is None and not args.launch_script:
         config_path = _ensure_run_config(
             repo_id=args.hf_repo_id,
             run_dir=run_dir,
-            config_path=Path(args.config) if args.config else None,
+            config_path=None,
         )
     stage = _normalize_stage(args.stage)
     steps = _parse_int_list(args.steps)
@@ -496,8 +514,10 @@ def main() -> None:
         raise ValueError("--steps resolved to an empty list")
 
     if config_path is not None:
+        print(f"Using saved run config: {config_path}", flush=True)
         cfg = _load_eval_config(args=args, run_dir=run_dir, config_path=config_path)
     else:
+        print(f"No saved run config found; reconstructing from launch script: {args.launch_script}", flush=True)
         cfg = _compose_trainer_cfg_from_launch_script(args=args, run_dir=run_dir)
         cfg = _apply_replay_eval_overrides(args=args, run_dir=run_dir, cfg=cfg)
     eval_checkpoint_lib._print_eval_plan(cfg, stage)
@@ -513,6 +533,7 @@ def main() -> None:
     for step in steps:
         episode_seed_overrides = None
         if _str2bool(args.use_saved_eval_seeds):
+            print(f"Resolving saved eval result for step {int(step)}...", flush=True)
             eval_result_path = _ensure_eval_result(
                 repo_id=args.hf_repo_id,
                 run_dir=run_dir,
@@ -548,13 +569,15 @@ def main() -> None:
                         f"({override_count} episodes)"
                     )
 
+        print(f"Resolving checkpoint for step {int(step)}...", flush=True)
         checkpoint_path = _download_hf_checkpoint(
             repo_id=args.hf_repo_id,
             checkpoint_dir=checkpoint_dir,
             step=int(step),
             force=bool(args.force_download),
         )
-        print(f"Using checkpoint for step {int(step)}: {checkpoint_path}")
+        print(f"Using checkpoint for step {int(step)}: {checkpoint_path}", flush=True)
+        print(f"Loading model for step {int(step)}...", flush=True)
         model = eval_checkpoint_lib._load_model(cfg=cfg, checkpoint_path=checkpoint_path)
         runner = RlGamesEvalRunner(
             cfg=cfg,

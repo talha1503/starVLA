@@ -54,7 +54,26 @@ def _local_parquet_files(dataset_name: str, split: str) -> list[str] | None:
     return [str(parquet_file) for parquet_file in (split_files or parquet_files)]
 
 
-def _load_split(dataset_name: str, split: str, cache_dir: str | None = None, columns: list[str] | None = None):
+def _load_hf_dataset(
+    dataset_name: str,
+    dataset_config_name: str | None,
+    *,
+    split: str,
+    cache_dir: str | None = None,
+    columns: list[str] | None = None,
+):
+    if dataset_config_name not in (None, ""):
+        return load_dataset(dataset_name, dataset_config_name, split=split, cache_dir=cache_dir, columns=columns)
+    return load_dataset(dataset_name, split=split, cache_dir=cache_dir, columns=columns)
+
+
+def _load_split(
+    dataset_name: str,
+    split: str,
+    cache_dir: str | None = None,
+    columns: list[str] | None = None,
+    dataset_config_name: str | None = None,
+):
     split_values = {"train"} if split == "train" else {"validation", "val", "test"}
 
     def _filter_internal_split(ds):
@@ -77,14 +96,14 @@ def _load_split(dataset_name: str, split: str, cache_dir: str | None = None, col
 
     if split == "train":
         try:
-            ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=columns)
+            ds = _load_hf_dataset(dataset_name, dataset_config_name, split="train", cache_dir=cache_dir, columns=columns)
             return _filter_internal_split(ds)
         except (ValueError, KeyError):
             pass
     else:
         for candidate in ("validation", "val", "test"):
             try:
-                ds = load_dataset(dataset_name, split=candidate, cache_dir=cache_dir, columns=columns)
+                ds = _load_hf_dataset(dataset_name, dataset_config_name, split=candidate, cache_dir=cache_dir, columns=columns)
                 if len(ds) > 0:
                     return _filter_internal_split(ds)
             except (ValueError, KeyError):
@@ -93,7 +112,7 @@ def _load_split(dataset_name: str, split: str, cache_dir: str | None = None, col
     load_columns = list(columns or [])
     if "split" not in load_columns:
         load_columns.append("split")
-    ds_all = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=load_columns or None)
+    ds_all = _load_hf_dataset(dataset_name, dataset_config_name, split="train", cache_dir=cache_dir, columns=load_columns or None)
     return ds_all.filter(lambda row: str(row["split"]).lower() in split_values)
 
 
@@ -217,16 +236,23 @@ def _filter_latency(ds, latency_filter: list[int] | None, *, default_latency: in
     return ds.filter(lambda row: row.get("latency") is not None and int(row["latency"]) in allowed)
 
 
-def _load_index_split(dataset_name: str, split: str, cache_dir: str | None, *, want_latency: bool):
+def _load_index_split(
+    dataset_name: str,
+    split: str,
+    cache_dir: str | None,
+    *,
+    want_latency: bool,
+    dataset_config_name: str | None = None,
+):
     base_columns = ["episode_idx", "t", "action_id", "done", "reward", "prompt"]
     if want_latency:
         for columns in ([*base_columns, "latency", "latency_ms"], [*base_columns, "latency"]):
             try:
-                return _load_split(dataset_name, split, cache_dir=cache_dir, columns=columns)
+                return _load_split(dataset_name, split, cache_dir=cache_dir, columns=columns, dataset_config_name=dataset_config_name)
             except Exception:
                 pass
-        return _load_split(dataset_name, split, cache_dir=cache_dir, columns=base_columns)
-    return _load_split(dataset_name, split, cache_dir=cache_dir, columns=base_columns)
+        return _load_split(dataset_name, split, cache_dir=cache_dir, columns=base_columns, dataset_config_name=dataset_config_name)
+    return _load_split(dataset_name, split, cache_dir=cache_dir, columns=base_columns, dataset_config_name=dataset_config_name)
 
 
 def _canonical_prompt(row: dict[str, Any], *, prompt_map: dict[int, dict[str, Any]], default_latency: int | None) -> tuple[str, int | None, Any]:
@@ -364,6 +390,7 @@ def convert_dataset(
     output_dir: Path,
     *,
     cache_dir: str | None = None,
+    dataset_config_name: str | None = None,
     max_episodes: int | None = None,
     force: bool = False,
     require_latency_prompt_map: bool = False,
@@ -393,6 +420,7 @@ def convert_dataset(
             split,
             cache_dir=cache_dir,
             want_latency=want_latency,
+            dataset_config_name=dataset_config_name,
         )
         ds_meta = _filter_latency(ds_meta, latency_filter, default_latency=default_latency)
         if len(ds_meta) == 0:
@@ -424,7 +452,11 @@ def convert_dataset(
         for episode_id in original_episode_ids:
             episode_indices[episode_id].sort(key=lambda item: item[0])
 
-        ds_full = _filter_latency(_load_split(dataset_name, split, cache_dir=cache_dir), latency_filter, default_latency=default_latency)
+        ds_full = _filter_latency(
+            _load_split(dataset_name, split, cache_dir=cache_dir, dataset_config_name=dataset_config_name),
+            latency_filter,
+            default_latency=default_latency,
+        )
         episode_lengths: list[int] = []
 
         for new_episode_idx, original_episode_idx in enumerate(tqdm(original_episode_ids, desc=f"Writing Demon Attack {split} LeRobot episodes")):
@@ -495,6 +527,7 @@ def convert_dataset(
             "dataset_name": split_output_dir.name,
             "split": split,
             "source": dataset_name,
+            "source_config": dataset_config_name,
             "format": "starvla_lerobot_v2_image_parquet",
             "action_labels": action_labels,
             "action_dim": action_dim,
@@ -528,6 +561,7 @@ def convert_dataset(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-name", "--dataset_name", required=True)
+    parser.add_argument("--dataset-config-name", "--dataset_config_name", default=None)
     parser.add_argument("--output-dir", "--output_dir", required=True)
     parser.add_argument("--cache-dir", "--cache_dir", default=None)
     parser.add_argument("--max-episodes", "--max_episodes", type=int, default=None)
@@ -544,6 +578,7 @@ def main() -> int:
         args.dataset_name,
         Path(args.output_dir),
         cache_dir=args.cache_dir,
+        dataset_config_name=args.dataset_config_name,
         max_episodes=args.max_episodes,
         force=args.force,
         require_latency_prompt_map=False,

@@ -69,17 +69,27 @@ def _dataset_ready(dataset_dir: Path) -> bool:
     return all(path.exists() for path in required) and any(dataset_dir.glob("data/*/*.parquet"))
 
 
-def _load_source_latency_prompt_map(dataset_name: str, *, cache_dir: str | None = None) -> dict[str, dict[str, Any]]:
+def _load_source_latency_prompt_map(
+    dataset_name: str,
+    *,
+    cache_dir: str | None = None,
+    dataset_config_name: str | None = None,
+) -> dict[str, dict[str, Any]]:
     from datasets import load_dataset
     from examples.rl_games.data_conversion.verify_flappy_dataset import build_latency_prompt_map
 
+    def _load(columns: list[str] | None = None):
+        if dataset_config_name not in (None, ""):
+            return load_dataset(dataset_name, dataset_config_name, split="train", cache_dir=cache_dir, columns=columns)
+        return load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=columns)
+
     try:
-        ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=["prompt", "latency", "latency_ms", "split"])
+        ds = _load(columns=["prompt", "latency", "latency_ms", "split"])
     except Exception:
         try:
-            ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=["prompt", "latency", "latency_ms"])
+            ds = _load(columns=["prompt", "latency", "latency_ms"])
         except Exception:
-            ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir)
+            ds = _load()
             missing = [column for column in ("prompt", "latency") if column not in ds.column_names]
             if missing:
                 raise ValueError(f"prompt source dataset {dataset_name} is missing columns required for a latency prompt map: {missing}")
@@ -419,6 +429,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
     data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
     action_carrier = _action_carrier(args)
     action_layout = str(getattr(args, "deadly_action_layout", "") or "")
+    source_config_name = getattr(args, "source_dataset_config_name", None)
+    source_config_name = None if source_config_name in (None, "") else str(source_config_name)
     data_mix = _carrier_dataset_name(args.converted_dataset_name, action_carrier)
     dataset_dir = data_root_dir / data_mix
     eval_data_mix = f"{data_mix}__val"
@@ -436,6 +448,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
         except Exception:
             return False
         if str(manifest.get("action_carrier", "native")) != action_carrier:
+            return False
+        if (manifest.get("source_config") or None) != source_config_name:
             return False
         if action_layout and ("action_layout" not in manifest or str(manifest["action_layout"]) != action_layout):
             return False
@@ -477,6 +491,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
             "strict": True,
             "allow_mixed_latency_prompts": mixed_latency,
         }
+        if "dataset_config_name" in inspect.signature(verify_dataset).parameters:
+            verify_kwargs["dataset_config_name"] = source_config_name
         if action_layout and "action_layout" in inspect.signature(verify_dataset).parameters:
             verify_kwargs["action_layout"] = action_layout
         verify_dataset(args.source_dataset_hf, **verify_kwargs)
@@ -486,6 +502,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
             "force": rebuild,
             "require_latency_prompt_map": mixed_latency,
         }
+        if "dataset_config_name" in inspect.signature(convert_dataset).parameters:
+            convert_kwargs["dataset_config_name"] = source_config_name
         if "latency_filter" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["latency_filter"] = getattr(args, "latency_filter", None)
         if "episodes_per_latency" in inspect.signature(convert_dataset).parameters:
@@ -589,8 +607,12 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
 
         train_source_value = _get_task_value(task_cfg, "train_source_hf", "source_hf")
         prompt_source_value = _get_task_value(task_cfg, "prompt_source_hf", default=train_source_value)
+        train_config_value = _get_task_value(task_cfg, "train_config_name", "source_config_name", "config_name", default=None)
+        prompt_config_value = _get_task_value(task_cfg, "prompt_config_name", default=train_config_value)
         train_source = str(train_source_value or "")
         prompt_source = str(prompt_source_value or "")
+        train_config_name = None if train_config_value in (None, "") else str(train_config_value)
+        prompt_config_name = None if prompt_config_value in (None, "") else str(prompt_config_value)
         if not train_source:
             raise ValueError(f"cross-task train task {task_name} is missing train_source_hf/source_hf")
         if not prompt_source:
@@ -616,7 +638,11 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
         eval_data_mix = f"{data_mix}__val"
         eval_dataset_dir = data_root_dir / eval_data_mix
 
-        prompt_map = _load_source_latency_prompt_map(prompt_source, cache_dir=args.dataset_cache_dir)
+        prompt_map = _load_source_latency_prompt_map(
+            prompt_source,
+            cache_dir=args.dataset_cache_dir,
+            dataset_config_name=prompt_config_name,
+        )
         prompt_dir = data_root_dir / "_prompt_maps" / data_mix
         eval_prompt_map_path = _write_prompt_map(prompt_dir / "eval_latency_prompt_map.json", prompt_map)
         train_prompt_map_path = _write_prompt_map(
@@ -636,6 +662,8 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
             return (
                 str(manifest.get("source", "")) == train_source
                 and str(manifest.get("prompt_source", "")) == prompt_source
+                and (manifest.get("source_config") or None) == train_config_name
+                and (manifest.get("prompt_source_config") or None) == prompt_config_name
                 and str(manifest.get("action_carrier", "")) == action_carrier
                 and manifest.get("latency_filter") == latency_filter
                 and manifest.get("episodes_per_latency") == episodes_per_latency
@@ -655,6 +683,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 train_source,
                 rows=args.verify_rows,
                 cache_dir=args.dataset_cache_dir,
+                dataset_config_name=train_config_name,
                 strict=True,
                 allow_mixed_latency_prompts=allow_mixed,
             )
@@ -662,6 +691,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 train_source,
                 dataset_dir,
                 cache_dir=args.dataset_cache_dir,
+                dataset_config_name=train_config_name,
                 max_episodes=max_episodes,
                 force=rebuild,
                 require_latency_prompt_map=bool(latency_filter),
@@ -674,6 +704,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
             for manifest_path in (dataset_dir / "manifest.json", eval_dataset_dir / "manifest.json"):
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 manifest["prompt_source"] = prompt_source
+                manifest["prompt_source_config"] = prompt_config_name
                 manifest["eval_prompt_map_path"] = str(eval_prompt_map_path)
                 manifest["train_prompt_map_path"] = str(train_prompt_map_path)
                 manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -933,6 +964,7 @@ def main() -> int:
     parser.add_argument("--deadly-action-layout", default="")
     parser.add_argument("--latency-mode", default="")
     parser.add_argument("--source-dataset-hf", default="")
+    parser.add_argument("--source-dataset-config-name", default=None)
     parser.add_argument("--dataset-local-dir", required=True)
     parser.add_argument("--converted-dataset-name", default="flappy_train")
     parser.add_argument("--dataset-cache-dir", default=None)

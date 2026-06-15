@@ -100,7 +100,26 @@ def _resolve_flappy_columns(dataset_name: str, split: str, want_latency: bool) -
     )
 
 
-def _load_split(dataset_name: str, split: str, cache_dir: str | None = None, columns: list[str] | None = None):
+def _load_hf_dataset(
+    dataset_name: str,
+    dataset_config_name: str | None,
+    *,
+    split: str,
+    cache_dir: str | None = None,
+    columns: list[str] | None = None,
+):
+    if dataset_config_name not in (None, ""):
+        return load_dataset(dataset_name, dataset_config_name, split=split, cache_dir=cache_dir, columns=columns)
+    return load_dataset(dataset_name, split=split, cache_dir=cache_dir, columns=columns)
+
+
+def _load_split(
+    dataset_name: str,
+    split: str,
+    cache_dir: str | None = None,
+    columns: list[str] | None = None,
+    dataset_config_name: str | None = None,
+):
     split_values = {"train"} if split == "train" else {"validation", "val", "test"}
 
     def _filter_internal_split(ds):
@@ -123,14 +142,14 @@ def _load_split(dataset_name: str, split: str, cache_dir: str | None = None, col
 
     if split == "train":
         try:
-            ds = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=columns)
+            ds = _load_hf_dataset(dataset_name, dataset_config_name, split="train", cache_dir=cache_dir, columns=columns)
             return _filter_internal_split(ds)
         except (ValueError, KeyError):
             pass
     else:
         for candidate in ("validation", "val", "test"):
             try:
-                ds = load_dataset(dataset_name, split=candidate, cache_dir=cache_dir, columns=columns)
+                ds = _load_hf_dataset(dataset_name, dataset_config_name, split=candidate, cache_dir=cache_dir, columns=columns)
                 if len(ds) > 0:
                     return _filter_internal_split(ds)
             except (ValueError, KeyError):
@@ -139,7 +158,7 @@ def _load_split(dataset_name: str, split: str, cache_dir: str | None = None, col
     load_columns = list(columns or [])
     if "split" not in load_columns:
         load_columns.append("split")
-    ds_all = load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=load_columns or None)
+    ds_all = _load_hf_dataset(dataset_name, dataset_config_name, split="train", cache_dir=cache_dir, columns=load_columns or None)
     return ds_all.filter(lambda row: str(row["split"]).lower() in split_values)
 
 
@@ -263,7 +282,14 @@ def _filter_latency(ds, latency_filter: list[int] | None, *, latency_column: str
     return ds.filter(lambda row: row.get(latency_column) is not None and int(row[latency_column]) in allowed)
 
 
-def _load_index_split(dataset_name: str, split: str, cache_dir: str | None, *, want_latency: bool) -> tuple[Any, FlappyColumns]:
+def _load_index_split(
+    dataset_name: str,
+    split: str,
+    cache_dir: str | None,
+    *,
+    want_latency: bool,
+    dataset_config_name: str | None = None,
+) -> tuple[Any, FlappyColumns]:
     flappy_columns = _resolve_flappy_columns(dataset_name, split, want_latency=want_latency)
     columns = ["episode_idx", flappy_columns.frame, "action_id", flappy_columns.reward, "prompt"]
     if flappy_columns.done is not None:
@@ -272,7 +298,16 @@ def _load_index_split(dataset_name: str, split: str, cache_dir: str | None, *, w
         columns.append(flappy_columns.latency)
     if flappy_columns.latency_ms is not None:
         columns.append(flappy_columns.latency_ms)
-    return _load_split(dataset_name, split, cache_dir=cache_dir, columns=columns), flappy_columns
+    return (
+        _load_split(
+            dataset_name,
+            split,
+            cache_dir=cache_dir,
+            columns=columns,
+            dataset_config_name=dataset_config_name,
+        ),
+        flappy_columns,
+    )
 
 
 def _canonical_prompt(
@@ -424,6 +459,7 @@ def convert_dataset(
     output_dir: Path,
     *,
     cache_dir: str | None = None,
+    dataset_config_name: str | None = None,
     max_episodes: int | None = None,
     force: bool = False,
     require_latency_prompt_map: bool = False,
@@ -453,6 +489,7 @@ def convert_dataset(
             split,
             cache_dir=cache_dir,
             want_latency=want_latency,
+            dataset_config_name=dataset_config_name,
         )
         ds_meta = _filter_latency(
             ds_meta,
@@ -490,7 +527,7 @@ def convert_dataset(
             episode_indices[episode_id].sort(key=lambda item: item[0])
 
         ds_full = _filter_latency(
-            _load_split(dataset_name, split, cache_dir=cache_dir),
+            _load_split(dataset_name, split, cache_dir=cache_dir, dataset_config_name=dataset_config_name),
             latency_filter,
             latency_column=flappy_columns.latency,
             default_latency=default_latency,
@@ -572,6 +609,7 @@ def convert_dataset(
             "dataset_name": split_output_dir.name,
             "split": split,
             "source": dataset_name,
+            "source_config": dataset_config_name,
             "format": "starvla_lerobot_v2_image_parquet",
             "action_labels": action_labels,
             "action_dim": action_dim,
@@ -605,6 +643,7 @@ def convert_dataset(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-name", "--dataset_name", required=True)
+    parser.add_argument("--dataset-config-name", "--dataset_config_name", default=None)
     parser.add_argument("--output-dir", "--output_dir", required=True)
     parser.add_argument("--cache-dir", "--cache_dir", default=None)
     parser.add_argument("--max-episodes", "--max_episodes", type=int, default=None)
@@ -621,6 +660,7 @@ def main() -> int:
         args.dataset_name,
         Path(args.output_dir),
         cache_dir=args.cache_dir,
+        dataset_config_name=args.dataset_config_name,
         max_episodes=args.max_episodes,
         force=args.force,
         require_latency_prompt_map=False,
