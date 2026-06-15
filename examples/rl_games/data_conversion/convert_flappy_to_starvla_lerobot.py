@@ -7,7 +7,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import pyarrow as pa
@@ -31,6 +31,14 @@ BRIDGE_STATE_DIM = 7
 FPS = 30
 
 
+class FlappyColumns(NamedTuple):
+    frame: str
+    reward: str
+    done: str | None
+    latency: str | None
+    latency_ms: str | None
+
+
 def _local_parquet_files(dataset_name: str, split: str) -> list[str] | None:
     dataset_path = Path(dataset_name).expanduser()
     if not dataset_path.exists():
@@ -51,6 +59,45 @@ def _local_parquet_files(dataset_name: str, split: str) -> list[str] | None:
         if any(marker in part.lower() for marker in split_markers for part in parquet_file.relative_to(dataset_path).parts)
     ]
     return [str(parquet_file) for parquet_file in (split_files or parquet_files)]
+
+
+def _local_parquet_columns(dataset_name: str, split: str) -> set[str] | None:
+    local_files = _local_parquet_files(dataset_name, split)
+    if local_files is None:
+        return None
+    columns: set[str] = set()
+    for parquet_file in local_files:
+        columns.update(pq.read_schema(parquet_file).names)
+    return columns
+
+
+def _resolve_required_column(available: set[str] | None, names: tuple[str, ...], label: str) -> str:
+    if available is None:
+        return names[0]
+    for name in names:
+        if name in available:
+            return name
+    raise ValueError(f"Flappy dataset is missing required {label} column. Expected one of {names}; available={sorted(available)}")
+
+
+def _resolve_optional_column(available: set[str] | None, names: tuple[str, ...]) -> str | None:
+    if available is None:
+        return names[0]
+    for name in names:
+        if name in available:
+            return name
+    return None
+
+
+def _resolve_flappy_columns(dataset_name: str, split: str, want_latency: bool) -> FlappyColumns:
+    available = _local_parquet_columns(dataset_name, split)
+    return FlappyColumns(
+        frame=_resolve_required_column(available, ("t", "decision_step"), "frame index"),
+        reward=_resolve_required_column(available, ("reward", "raw_reward"), "reward"),
+        done=_resolve_optional_column(available, ("done",)),
+        latency=_resolve_optional_column(available, ("latency", "latency_raw_frames")) if want_latency else None,
+        latency_ms=_resolve_optional_column(available, ("latency_ms",)) if want_latency else None,
+    )
 
 
 def _load_split(dataset_name: str, split: str, cache_dir: str | None = None, columns: list[str] | None = None):
@@ -199,41 +246,55 @@ def _normalize_prompt_map(prompt_map: dict[str, Any] | dict[int, Any] | None) ->
     return normalized
 
 
-def _row_latency(row: dict[str, Any], *, default_latency: int | None = None) -> int | None:
-    if "latency" in row and row.get("latency") is not None:
-        return int(row["latency"])
+def _row_latency(row: dict[str, Any], *, latency_column: str | None, default_latency: int | None = None) -> int | None:
+    if latency_column is not None and latency_column in row and row.get(latency_column) is not None:
+        return int(row[latency_column])
     return default_latency
 
 
-def _filter_latency(ds, latency_filter: list[int] | None, *, default_latency: int | None):
+def _filter_latency(ds, latency_filter: list[int] | None, *, latency_column: str | None, default_latency: int | None):
     if not latency_filter:
         return ds
     allowed = {int(value) for value in latency_filter}
-    if "latency" not in ds.column_names:
+    if latency_column is None or latency_column not in ds.column_names:
         if default_latency is not None and int(default_latency) in allowed:
             return ds
-        raise ValueError("latency_filter was requested, but the dataset has no `latency` column")
-    return ds.filter(lambda row: row.get("latency") is not None and int(row["latency"]) in allowed)
+        raise ValueError("latency_filter was requested, but the dataset has no latency column")
+    return ds.filter(lambda row: row.get(latency_column) is not None and int(row[latency_column]) in allowed)
 
 
-def _load_index_split(dataset_name: str, split: str, cache_dir: str | None, *, want_latency: bool):
-    base_columns = ["episode_idx", "t", "action_id", "done", "reward", "prompt"]
-    if want_latency:
-        for columns in ([*base_columns, "latency", "latency_ms"], [*base_columns, "latency"]):
-            try:
-                return _load_split(dataset_name, split, cache_dir=cache_dir, columns=columns)
-            except Exception:
-                pass
-        return _load_split(dataset_name, split, cache_dir=cache_dir, columns=base_columns)
-    return _load_split(dataset_name, split, cache_dir=cache_dir, columns=base_columns)
+def _load_index_split(dataset_name: str, split: str, cache_dir: str | None, *, want_latency: bool) -> tuple[Any, FlappyColumns]:
+    flappy_columns = _resolve_flappy_columns(dataset_name, split, want_latency=want_latency)
+    columns = ["episode_idx", flappy_columns.frame, "action_id", flappy_columns.reward, "prompt"]
+    if flappy_columns.done is not None:
+        columns.append(flappy_columns.done)
+    if flappy_columns.latency is not None:
+        columns.append(flappy_columns.latency)
+    if flappy_columns.latency_ms is not None:
+        columns.append(flappy_columns.latency_ms)
+    return _load_split(dataset_name, split, cache_dir=cache_dir, columns=columns), flappy_columns
 
 
-def _canonical_prompt(row: dict[str, Any], *, prompt_map: dict[int, dict[str, Any]], default_latency: int | None) -> tuple[str, int | None, Any]:
-    latency = _row_latency(row, default_latency=default_latency)
+def _canonical_prompt(
+    row: dict[str, Any],
+    *,
+    prompt_map: dict[int, dict[str, Any]],
+    latency_column: str | None,
+    latency_ms_column: str | None,
+    default_latency: int | None,
+) -> tuple[str, int | None, Any]:
+    latency = _row_latency(row, latency_column=latency_column, default_latency=default_latency)
     if latency is not None and latency in prompt_map:
         entry = prompt_map[latency]
         return str(entry["prompt"]), latency, entry.get("latency_ms")
-    return str(row["prompt"]), latency, row.get("latency_ms")
+    latency_ms = row.get(latency_ms_column) if latency_ms_column is not None else None
+    return str(row["prompt"]), latency, latency_ms
+
+
+def _row_done(row: dict[str, Any], done_column: str | None, *, frame_idx: int, episode_length: int) -> bool:
+    if done_column is not None and done_column in row:
+        return bool(row[done_column])
+    return frame_idx == episode_length - 1
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -387,13 +448,18 @@ def convert_dataset(
     def _convert_split(split: str, split_output_dir: Path) -> dict[str, Any]:
         split_output_dir.mkdir(parents=True, exist_ok=True)
         want_latency = bool(require_latency_prompt_map or latency_filter or prompt_map_override or episodes_per_latency is not None)
-        ds_meta = _load_index_split(
+        ds_meta, flappy_columns = _load_index_split(
             dataset_name,
             split,
             cache_dir=cache_dir,
             want_latency=want_latency,
         )
-        ds_meta = _filter_latency(ds_meta, latency_filter, default_latency=default_latency)
+        ds_meta = _filter_latency(
+            ds_meta,
+            latency_filter,
+            latency_column=flappy_columns.latency,
+            default_latency=default_latency,
+        )
         if len(ds_meta) == 0:
             raise ValueError(f"{dataset_name} has no {split} rows")
 
@@ -405,8 +471,8 @@ def convert_dataset(
 
         for row_idx, row in enumerate(tqdm(ds_meta, desc=f"Indexing Flappy {split} rows")):
             episode_idx = int(row["episode_idx"])
-            episode_indices.setdefault(episode_idx, []).append((int(row["t"]), row_idx))
-            latency = _row_latency(row, default_latency=default_latency)
+            episode_indices.setdefault(episode_idx, []).append((int(row[flappy_columns.frame]), row_idx))
+            latency = _row_latency(row, latency_column=flappy_columns.latency, default_latency=default_latency)
             if latency is not None:
                 existing = episode_latencies.setdefault(episode_idx, int(latency))
                 if existing != int(latency):
@@ -423,7 +489,12 @@ def convert_dataset(
         for episode_id in original_episode_ids:
             episode_indices[episode_id].sort(key=lambda item: item[0])
 
-        ds_full = _filter_latency(_load_split(dataset_name, split, cache_dir=cache_dir), latency_filter, default_latency=default_latency)
+        ds_full = _filter_latency(
+            _load_split(dataset_name, split, cache_dir=cache_dir),
+            latency_filter,
+            latency_column=flappy_columns.latency,
+            default_latency=default_latency,
+        )
         episode_lengths: list[int] = []
 
         for new_episode_idx, original_episode_idx in enumerate(tqdm(original_episode_ids, desc=f"Writing Flappy {split} LeRobot episodes")):
@@ -434,6 +505,8 @@ def convert_dataset(
                 prompt, latency, latency_ms = _canonical_prompt(
                     row,
                     prompt_map=prompt_map_override,
+                    latency_column=flappy_columns.latency,
+                    latency_ms_column=flappy_columns.latency_ms,
                     default_latency=default_latency,
                 )
                 if prompt not in prompt_to_task_index:
@@ -452,8 +525,13 @@ def convert_dataset(
                     "episode_index": new_episode_idx,
                     "frame_index": frame_idx,
                     "task_index": prompt_to_task_index[prompt],
-                    "done": bool(row["done"]),
-                    "reward": float(row["reward"]),
+                    "done": _row_done(
+                        row,
+                        flappy_columns.done,
+                        frame_idx=frame_idx,
+                        episode_length=len(episode),
+                    ),
+                    "reward": float(row[flappy_columns.reward]),
                     "action_id": int(row["action_id"]),
                 })
             episode_lengths.append(len(out_rows))
