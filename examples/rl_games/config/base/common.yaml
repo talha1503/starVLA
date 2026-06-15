@@ -90,7 +90,7 @@ trainer:
     vlm: 0.1
   max_grad_norm: 1.0
   weight_decay: 0.0
-  logging_frequency: 10
+  logging_frequency: 1
   gradient_clipping: 1.0
   gradient_accumulation_steps: 1
   distributed_backend: deepspeed
