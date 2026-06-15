@@ -96,7 +96,7 @@ trainer:
   num_warmup_steps: 0
   save_interval: 1000
   eval_interval: 500
-  eval_num_batches: 20
+  eval_num_batches: 100
   logging_frequency: 1
   gradient_accumulation_steps: 16
   batch_size: 16

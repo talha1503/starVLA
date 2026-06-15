@@ -81,7 +81,7 @@ trainer:
   num_warmup_steps: 100
   save_interval: 100
   eval_interval: 100
-  eval_num_batches: 20
+  eval_num_batches: 100
   logging_frequency: 10
   gradient_accumulation_steps: 1
   batch_size: 4

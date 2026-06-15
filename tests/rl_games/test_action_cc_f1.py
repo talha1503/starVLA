@@ -24,7 +24,14 @@ def _fact(turn, move, strafe, attack):
     return v
 
 
-NOOP, FIRE, LEFT = _demon(0), _demon(1), _demon(3)
+NOOP, FIRE, RIGHT, LEFT, RIGHTFIRE, LEFTFIRE = (
+    _demon(0),
+    _demon(1),
+    _demon(2),
+    _demon(3),
+    _demon(4),
+    _demon(5),
+)
 
 
 def _episode(frames, teacher_frames, model_frames, hit, miss):
@@ -71,6 +78,21 @@ def test_harmonic_mean_zeroes_on_collapsed_group():
     assert metrics["eval/demon_cc_f1"] == 0.0
 
 
+def test_demon_composite_actions_feed_fire_and_movement_metrics():
+    frames = list(range(4))
+    teacher = [RIGHTFIRE, LEFTFIRE, FIRE, NOOP]
+    model = [RIGHTFIRE, LEFTFIRE, FIRE, NOOP]
+    metrics, _ = cc.compute_from_episodes(
+        "demon_attack", [{"frames": frames, "teacher": teacher, "model": model}], k=0
+    )
+
+    assert metrics["eval/demon_fire_f1"] == 1.0
+    assert metrics["eval/demon_left_f1"] == 1.0
+    assert metrics["eval/demon_right_f1"] == 1.0
+    assert metrics["eval/demon_move_f1"] == 1.0
+    assert metrics["eval/demon_cc_f1"] == 1.0
+
+
 def test_flappy_single_component_frame_level():
     frames = list(range(100))
     teacher = [_flap(1) if f % 5 == 0 else _flap(0) for f in frames]
@@ -88,7 +110,9 @@ def test_flappy_single_component_frame_level():
 def test_deadly_factorized_components():
     frames = list(range(10))
     teacher = [
-        _fact(0, 0, 0, 1) if f < 3 else (_fact(1, 0, 0, 0) if f < 5 else (_fact(0, 1, 0, 0) if f < 7 else _fact(0, 0, 0, 0)))
+        _fact(0, 0, 0, 1)
+        if f < 3
+        else (_fact(1, 0, 0, 0) if f < 5 else (_fact(0, 1, 0, 0) if f < 7 else _fact(0, 0, 0, 0)))
         for f in frames
     ]
     model = [
@@ -102,6 +126,42 @@ def test_deadly_factorized_components():
     assert 0.0 <= metrics["eval/deadly_cc_f1"] <= 1.0
     assert metrics["eval/deadly_attack_f1"] > 0.9
     assert metrics["eval/deadly_turn_f1"] < 0.5
+
+
+def test_deadly_multibinary_components_and_main_metric_names():
+    frames = list(range(5))
+    noop = [0, 0, 0, 0, 0, 0, 0]
+    attack = [0, 0, 0, 0, 0, 0, 1]
+    turn_left = [0, 0, 0, 0, 1, 0, 0]
+    move_forward = [1, 0, 0, 0, 0, 0, 0]
+    strafe_left = [0, 0, 1, 0, 0, 0, 0]
+    teacher = [attack, turn_left, move_forward, strafe_left, noop]
+    model = [attack, turn_left, move_forward, noop, noop]
+
+    metrics, _ = cc.compute_from_episodes(
+        "deadly_corridor", [{"frames": frames, "teacher": teacher, "model": model}],
+        deadly_layout=cc.DEADLY_MULTIBINARY_7, k=0,
+    )
+
+    assert metrics["eval/deadly_attack_f1"] == 1.0
+    assert metrics["eval/deadly_turn_f1"] == 1.0
+    assert metrics["eval/deadly_move_f1"] == 1.0
+    assert metrics["eval/deadly_strafe_left_recall"] == 0.0
+    assert "eval/deadly_cc_f1" in metrics
+
+
+def test_group_macro_ignores_components_absent_from_teacher_and_model():
+    frames = list(range(3))
+    teacher = [LEFT, LEFT, NOOP]
+    model = [LEFT, LEFT, NOOP]
+
+    metrics, _ = cc.compute_from_episodes(
+        "demon_attack", [{"frames": frames, "teacher": teacher, "model": model}], k=0
+    )
+
+    assert metrics["eval/demon_left_f1"] == 1.0
+    assert metrics["eval/demon_right_f1"] == 0.0
+    assert metrics["eval/demon_move_f1"] == 1.0
 
 
 def test_empty_input_is_safe():

@@ -69,10 +69,14 @@ trainer:
   num_warmup_steps: 100
   save_interval: 100
   eval_interval: 100
-  eval_num_batches: 20
-  # Flappy-only: log flap precision/recall/F1 + flap rate on the held-out val set
-  # (uses predict_action, so flappy gets an extra forward pass per eval batch).
+  eval_num_batches: 100
+  # Log task-specific control-critical precision/recall/F1 on the held-out val set.
+  # Supported tasks: flappy, demon_attack, deadly_corridor.
+  # Uses predict_action, so enabled tasks get an extra forward pass per eval batch.
   eval_action_classification: true
+  # Temporal tolerance, in decision steps, for non-Flappy CC-F1 event matching.
+  # Flappy always uses 0 so flap_f1 remains exact per-frame flap F1.
+  cc_f1_tolerance: 1
   learning_rate:
     base: 2.0e-05
     qwen_vl_interface: 1.0e-05

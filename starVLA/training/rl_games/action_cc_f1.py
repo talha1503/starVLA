@@ -295,6 +295,7 @@ def reduce_metrics(spec: CCF1Spec, counts: np.ndarray) -> Dict[str, float]:
     """Turn an accumulated (and possibly all-reduced) counts vector into metrics."""
     total_frames = float(counts[-1])
     comp_f1: Dict[str, float] = {}
+    comp_active: Dict[str, bool] = {}
     metrics: Dict[str, float] = {}
 
     for idx, name in enumerate(spec.component_order):
@@ -302,6 +303,7 @@ def reduce_metrics(spec: CCF1Spec, counts: np.ndarray) -> Dict[str, float]:
         tp, fp, fn, tev, mev = (float(counts[base + j]) for j in range(_PER_COMPONENT))
         precision, recall, f1 = _f1(tp, fp, fn)
         comp_f1[name] = f1
+        comp_active[name] = (tp + fp + fn) > 0
         label = spec.labels[name]
         metrics[f"eval/{label}_precision"] = precision
         metrics[f"eval/{label}_recall"] = recall
@@ -311,7 +313,8 @@ def reduce_metrics(spec: CCF1Spec, counts: np.ndarray) -> Dict[str, float]:
 
     group_f1: Dict[str, float] = {}
     for gname, members in spec.groups.items():
-        macro = float(np.mean([comp_f1[m] for m in members])) if members else 0.0
+        active_members = [m for m in members if comp_active[m]]
+        macro = float(np.mean([comp_f1[m] for m in active_members])) if active_members else 0.0
         group_f1[gname] = macro
         metrics[f"eval/{spec.group_labels[gname]}_f1"] = macro
 
