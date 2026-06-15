@@ -18,7 +18,6 @@ python examples/rl_games/scripts/launch_train.py \
   trainer.save_interval=100 \
   rl_games.env_eval.mid_train.enabled=false \
   rl_games.env_eval.post_train.enabled=false \
-  rl_games.env_eval.post_train.latencies=[0,1,2,3,4] \
   checkpoint.save_pt_file=false \
   checkpoint.save_best_model=false \
   checkpoint.local.keep_last_n=1 \
