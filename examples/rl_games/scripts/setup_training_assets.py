@@ -74,14 +74,18 @@ def _load_source_latency_prompt_map(
     *,
     cache_dir: str | None = None,
     dataset_config_name: str | None = None,
+    dataset_source_subdir: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     from datasets import load_dataset
     from examples.rl_games.data_conversion.verify_flappy_dataset import build_latency_prompt_map
 
     def _load(columns: list[str] | None = None):
+        load_kwargs = {"split": "train", "cache_dir": cache_dir, "columns": columns}
+        if dataset_source_subdir not in (None, ""):
+            load_kwargs["data_dir"] = dataset_source_subdir
         if dataset_config_name not in (None, ""):
-            return load_dataset(dataset_name, dataset_config_name, split="train", cache_dir=cache_dir, columns=columns)
-        return load_dataset(dataset_name, split="train", cache_dir=cache_dir, columns=columns)
+            return load_dataset(dataset_name, dataset_config_name, **load_kwargs)
+        return load_dataset(dataset_name, **load_kwargs)
 
     try:
         ds = _load(columns=["prompt", "latency", "latency_ms", "split"])
@@ -431,6 +435,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
     action_layout = str(getattr(args, "deadly_action_layout", "") or "")
     source_config_name = getattr(args, "source_dataset_config_name", None)
     source_config_name = None if source_config_name in (None, "") else str(source_config_name)
+    source_subdir = getattr(args, "source_dataset_subdir", None)
+    source_subdir = None if source_subdir in (None, "") else str(source_subdir)
     data_mix = _carrier_dataset_name(args.converted_dataset_name, action_carrier)
     dataset_dir = data_root_dir / data_mix
     eval_data_mix = f"{data_mix}__val"
@@ -450,6 +456,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
         if str(manifest.get("action_carrier", "native")) != action_carrier:
             return False
         if (manifest.get("source_config") or None) != source_config_name:
+            return False
+        if (manifest.get("source_subdir") or None) != source_subdir:
             return False
         if action_layout and ("action_layout" not in manifest or str(manifest["action_layout"]) != action_layout):
             return False
@@ -493,6 +501,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
         }
         if "dataset_config_name" in inspect.signature(verify_dataset).parameters:
             verify_kwargs["dataset_config_name"] = source_config_name
+        if "dataset_source_subdir" in inspect.signature(verify_dataset).parameters:
+            verify_kwargs["dataset_source_subdir"] = source_subdir
         if action_layout and "action_layout" in inspect.signature(verify_dataset).parameters:
             verify_kwargs["action_layout"] = action_layout
         verify_dataset(args.source_dataset_hf, **verify_kwargs)
@@ -504,6 +514,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
         }
         if "dataset_config_name" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["dataset_config_name"] = source_config_name
+        if "dataset_source_subdir" in inspect.signature(convert_dataset).parameters:
+            convert_kwargs["dataset_source_subdir"] = source_subdir
         if "latency_filter" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["latency_filter"] = getattr(args, "latency_filter", None)
         if "episodes_per_latency" in inspect.signature(convert_dataset).parameters:
@@ -609,10 +621,14 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
         prompt_source_value = _get_task_value(task_cfg, "prompt_source_hf", default=train_source_value)
         train_config_value = _get_task_value(task_cfg, "train_config_name", "source_config_name", "config_name", default=None)
         prompt_config_value = _get_task_value(task_cfg, "prompt_config_name", default=train_config_value)
+        train_subdir_value = _get_task_value(task_cfg, "train_source_subdir", "source_subdir", default=None)
+        prompt_subdir_value = _get_task_value(task_cfg, "prompt_source_subdir", default=train_subdir_value)
         train_source = str(train_source_value or "")
         prompt_source = str(prompt_source_value or "")
         train_config_name = None if train_config_value in (None, "") else str(train_config_value)
         prompt_config_name = None if prompt_config_value in (None, "") else str(prompt_config_value)
+        train_subdir = None if train_subdir_value in (None, "") else str(train_subdir_value)
+        prompt_subdir = None if prompt_subdir_value in (None, "") else str(prompt_subdir_value)
         if not train_source:
             raise ValueError(f"cross-task train task {task_name} is missing train_source_hf/source_hf")
         if not prompt_source:
@@ -642,6 +658,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
             prompt_source,
             cache_dir=args.dataset_cache_dir,
             dataset_config_name=prompt_config_name,
+            dataset_source_subdir=prompt_subdir,
         )
         prompt_dir = data_root_dir / "_prompt_maps" / data_mix
         eval_prompt_map_path = _write_prompt_map(prompt_dir / "eval_latency_prompt_map.json", prompt_map)
@@ -664,6 +681,8 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 and str(manifest.get("prompt_source", "")) == prompt_source
                 and (manifest.get("source_config") or None) == train_config_name
                 and (manifest.get("prompt_source_config") or None) == prompt_config_name
+                and (manifest.get("source_subdir") or None) == train_subdir
+                and (manifest.get("prompt_source_subdir") or None) == prompt_subdir
                 and str(manifest.get("action_carrier", "")) == action_carrier
                 and manifest.get("latency_filter") == latency_filter
                 and manifest.get("episodes_per_latency") == episodes_per_latency
@@ -684,6 +703,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 rows=args.verify_rows,
                 cache_dir=args.dataset_cache_dir,
                 dataset_config_name=train_config_name,
+                dataset_source_subdir=train_subdir,
                 strict=True,
                 allow_mixed_latency_prompts=allow_mixed,
             )
@@ -692,6 +712,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 dataset_dir,
                 cache_dir=args.dataset_cache_dir,
                 dataset_config_name=train_config_name,
+                dataset_source_subdir=train_subdir,
                 max_episodes=max_episodes,
                 force=rebuild,
                 require_latency_prompt_map=bool(latency_filter),
@@ -705,6 +726,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 manifest["prompt_source"] = prompt_source
                 manifest["prompt_source_config"] = prompt_config_name
+                manifest["prompt_source_subdir"] = prompt_subdir
                 manifest["eval_prompt_map_path"] = str(eval_prompt_map_path)
                 manifest["train_prompt_map_path"] = str(train_prompt_map_path)
                 manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")

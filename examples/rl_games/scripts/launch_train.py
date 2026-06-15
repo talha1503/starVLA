@@ -296,6 +296,11 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
             if _cfg_get(cfg, "dataset.config_name") in (None, "")
             else str(_cfg_get(cfg, "dataset.config_name"))
         ),
+        source_dataset_subdir=(
+            None
+            if _cfg_get(cfg, "dataset.source_subdir") in (None, "")
+            else str(_cfg_get(cfg, "dataset.source_subdir"))
+        ),
         dataset_local_dir=_resolve_path(_cfg_get(cfg, "paths.dataset_local_dir"), workspace_dir),
         converted_dataset_name=converted_dataset_name,
         dataset_cache_dir=(

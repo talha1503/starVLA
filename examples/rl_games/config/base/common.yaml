@@ -38,6 +38,7 @@ datasets:
 dataset:
   source_hf: ""
   config_name: null
+  source_subdir: null
   converted_name: flappy_train
   single_source_hf: ""
   mixed_source_hf: ""

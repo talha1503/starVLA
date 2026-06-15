@@ -17,10 +17,16 @@ EXPECTED_PROMPT = (
 )
 
 
-def _local_parquet_files(dataset_name: str) -> list[str] | None:
+def _local_parquet_files(dataset_name: str, dataset_source_subdir: str | None = None) -> list[str] | None:
     dataset_path = Path(dataset_name).expanduser()
     if not dataset_path.exists():
         return None
+    if dataset_source_subdir not in (None, ""):
+        dataset_path = dataset_path / str(dataset_source_subdir)
+        if not dataset_path.exists():
+            raise FileNotFoundError(
+                f"dataset_source_subdir={dataset_source_subdir!r} does not exist under {dataset_name!r}"
+            )
     if dataset_path.is_file():
         if dataset_path.suffix != ".parquet":
             raise ValueError(f"dataset_name={dataset_name!r} exists but is not a parquet file")
@@ -41,6 +47,7 @@ def _local_parquet_files(dataset_name: str) -> list[str] | None:
 def _load_hf_dataset(
     dataset_name: str,
     dataset_config_name: str | None,
+    dataset_source_subdir: str | None,
     *,
     split: str,
     cache_dir: str | None,
@@ -48,9 +55,12 @@ def _load_hf_dataset(
 ):
     from datasets import load_dataset
 
+    load_kwargs = {"split": split, "cache_dir": cache_dir, "columns": columns}
+    if dataset_source_subdir not in (None, ""):
+        load_kwargs["data_dir"] = str(dataset_source_subdir)
     if dataset_config_name not in (None, ""):
-        return load_dataset(dataset_name, dataset_config_name, split=split, cache_dir=cache_dir, columns=columns)
-    return load_dataset(dataset_name, split=split, cache_dir=cache_dir, columns=columns)
+        return load_dataset(dataset_name, dataset_config_name, **load_kwargs)
+    return load_dataset(dataset_name, **load_kwargs)
 
 
 def _load_train_split(
@@ -58,6 +68,7 @@ def _load_train_split(
     cache_dir: str | None,
     columns: list[str] | None = None,
     dataset_config_name: str | None = None,
+    dataset_source_subdir: str | None = None,
 ):
     from datasets import load_dataset
 
@@ -66,7 +77,7 @@ def _load_train_split(
             return ds.filter(lambda row: str(row["split"]).lower() == "train")
         return ds
 
-    local_files = _local_parquet_files(dataset_name)
+    local_files = _local_parquet_files(dataset_name, dataset_source_subdir)
     if local_files is not None:
         load_columns = list(columns) if columns is not None else None
         if load_columns is not None and "split" not in load_columns:
@@ -80,13 +91,19 @@ def _load_train_split(
         return _filter_internal_split(ds)
 
     try:
-        ds = _load_hf_dataset(dataset_name, dataset_config_name, split="train", cache_dir=cache_dir, columns=columns)
+        ds = _load_hf_dataset(
+            dataset_name, dataset_config_name, dataset_source_subdir,
+            split="train", cache_dir=cache_dir, columns=columns,
+        )
         return _filter_internal_split(ds)
     except (ValueError, KeyError):
         load_columns = list(columns or [])
         if "split" not in load_columns:
             load_columns.append("split")
-        ds_all = _load_hf_dataset(dataset_name, dataset_config_name, split="train", cache_dir=cache_dir, columns=load_columns)
+        ds_all = _load_hf_dataset(
+            dataset_name, dataset_config_name, dataset_source_subdir,
+            split="train", cache_dir=cache_dir, columns=load_columns,
+        )
         return ds_all.filter(lambda row: str(row["split"]).lower() == "train")
 
 
@@ -119,6 +136,7 @@ def verify_dataset(
     rows: int = 200,
     cache_dir: str | None = None,
     dataset_config_name: str | None = None,
+    dataset_source_subdir: str | None = None,
     strict: bool = False,
     allow_mixed_latency_prompts: bool = False,
 ) -> bool:
@@ -130,7 +148,13 @@ def verify_dataset(
             None,
         ):
             try:
-                ds = _load_train_split(dataset_name, cache_dir, columns=columns, dataset_config_name=dataset_config_name)
+                ds = _load_train_split(
+                    dataset_name,
+                    cache_dir,
+                    columns=columns,
+                    dataset_config_name=dataset_config_name,
+                    dataset_source_subdir=dataset_source_subdir,
+                )
                 break
             except Exception:
                 if columns is None:
@@ -197,6 +221,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-name", "--dataset_name", required=True)
     parser.add_argument("--dataset-config-name", "--dataset_config_name", default=None)
+    parser.add_argument("--dataset-source-subdir", "--dataset_source_subdir", default=None)
     parser.add_argument("--rows", type=int, default=200)
     parser.add_argument("--cache-dir", "--cache_dir", default=None)
     parser.add_argument("--strict", action="store_true")
@@ -209,6 +234,7 @@ def main() -> int:
             rows=args.rows,
             cache_dir=args.cache_dir,
             dataset_config_name=args.dataset_config_name,
+            dataset_source_subdir=args.dataset_source_subdir,
             strict=args.strict,
             allow_mixed_latency_prompts=args.allow_mixed_latency_prompts,
         )

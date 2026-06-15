@@ -501,6 +501,25 @@ def test_launch_train_setup_namespace_forwards_dataset_config_name(tmp_path: Pat
     assert setup_args.source_dataset_config_name == "flappy_clean_v1"
 
 
+def test_launch_train_setup_namespace_forwards_dataset_source_subdir(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="pi05",
+        env="flappy",
+        init="bridge",
+        mode="single",
+        overrides=[
+            "dataset.source_hf=latency-sensitive-bench/flappy_200ep",
+            "dataset.source_subdir=flappy_fix_latency_0_200ep",
+        ],
+    )
+
+    setup_args = launch_train.setup_namespace_from_cfg(cfg, tmp_path, "results/Checkpoints")
+
+    assert setup_args.source_dataset_hf == "latency-sensitive-bench/flappy_200ep"
+    assert setup_args.source_dataset_subdir == "flappy_fix_latency_0_200ep"
+
+
 def test_pi05_setup_assets_prefers_local_bridge_initialization_checkpoint(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

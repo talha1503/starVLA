@@ -140,6 +140,7 @@ def test_convert_flappy_hf_loader_passes_dataset_config_name(
     result = convert_flappy._load_hf_dataset(
         "latency-sensitive-bench/dataset-filter-comparison",
         "flappy_clean_v1",
+        None,
         split="train",
         cache_dir="/tmp/cache",
         columns=["prompt"],
@@ -150,5 +151,41 @@ def test_convert_flappy_hf_loader_passes_dataset_config_name(
         (
             ("latency-sensitive-bench/dataset-filter-comparison", "flappy_clean_v1"),
             {"split": "train", "cache_dir": "/tmp/cache", "columns": ["prompt"]},
+        )
+    ]
+
+
+def test_convert_flappy_hf_loader_passes_dataset_source_subdir(
+    monkeypatch: pytest.MonkeyPatch,
+    flappy_modules: tuple[ModuleType, ModuleType],
+) -> None:
+    convert_flappy, _ = flappy_modules
+    calls = []
+
+    def fake_load_dataset(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "dataset"
+
+    monkeypatch.setattr(convert_flappy, "load_dataset", fake_load_dataset)
+
+    result = convert_flappy._load_hf_dataset(
+        "latency-sensitive-bench/flappy_200ep",
+        None,
+        "flappy_fix_latency_0_200ep",
+        split="train",
+        cache_dir="/tmp/cache",
+        columns=["prompt"],
+    )
+
+    assert result == "dataset"
+    assert calls == [
+        (
+            ("latency-sensitive-bench/flappy_200ep",),
+            {
+                "split": "train",
+                "cache_dir": "/tmp/cache",
+                "columns": ["prompt"],
+                "data_dir": "flappy_fix_latency_0_200ep",
+            },
         )
     ]
