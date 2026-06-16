@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from examples.rl_games.data_conversion.verify_flappy_dataset import build_latency_prompt_map
+from examples.rl_games.data_conversion.verify_flappy_dataset import build_latency_prompt_map, latency_id_from_row
 
 
 ACTION_LABELS = ["NOOP", "FLAP"]
@@ -29,6 +29,7 @@ BRIDGE_ACTION_DIM = 7
 STATE_DIM = 1
 BRIDGE_STATE_DIM = 7
 FPS = 30
+LATENCY_FRAMESKIP = 1
 
 
 class FlappyColumns(NamedTuple):
@@ -180,10 +181,18 @@ def _load_split(
     load_columns = list(columns or [])
     if "split" not in load_columns:
         load_columns.append("split")
-    ds_all = _load_hf_dataset(
-        dataset_name, dataset_config_name, dataset_source_subdir,
-        split="train", cache_dir=cache_dir, columns=load_columns or None,
-    )
+    try:
+        ds_all = _load_hf_dataset(
+            dataset_name, dataset_config_name, dataset_source_subdir,
+            split="train", cache_dir=cache_dir, columns=load_columns or None,
+        )
+    except (ValueError, KeyError):
+        if columns is None:
+            raise
+        ds_all = _load_hf_dataset(
+            dataset_name, dataset_config_name, dataset_source_subdir,
+            split="train", cache_dir=cache_dir,
+        )
     return ds_all.filter(lambda row: str(row["split"]).lower() in split_values)
 
 
@@ -291,9 +300,12 @@ def _normalize_prompt_map(prompt_map: dict[str, Any] | dict[int, Any] | None) ->
 
 
 def _row_latency(row: dict[str, Any], *, latency_column: str | None, default_latency: int | None = None) -> int | None:
-    if latency_column is not None and latency_column in row and row.get(latency_column) is not None:
-        return int(row[latency_column])
-    return default_latency
+    return latency_id_from_row(
+        row,
+        frameskip=LATENCY_FRAMESKIP,
+        latency_column=latency_column,
+        default_latency=default_latency,
+    )
 
 
 def _filter_latency(ds, latency_filter: list[int] | None, *, latency_column: str | None, default_latency: int | None):
@@ -304,7 +316,7 @@ def _filter_latency(ds, latency_filter: list[int] | None, *, latency_column: str
         if default_latency is not None and int(default_latency) in allowed:
             return ds
         raise ValueError("latency_filter was requested, but the dataset has no latency column")
-    return ds.filter(lambda row: row.get(latency_column) is not None and int(row[latency_column]) in allowed)
+    return ds.filter(lambda row: _row_latency(row, latency_column=latency_column, default_latency=default_latency) in allowed)
 
 
 def _load_index_split(

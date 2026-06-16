@@ -75,6 +75,7 @@ def _load_source_latency_prompt_map(
     cache_dir: str | None = None,
     dataset_config_name: str | None = None,
     dataset_source_subdir: str | None = None,
+    frameskip: int = 1,
 ) -> dict[str, dict[str, Any]]:
     from datasets import load_dataset
     from examples.rl_games.data_conversion.verify_flappy_dataset import build_latency_prompt_map
@@ -91,13 +92,25 @@ def _load_source_latency_prompt_map(
         ds = _load(columns=["prompt", "latency", "latency_ms", "split"])
     except Exception:
         try:
-            ds = _load(columns=["prompt", "latency", "latency_ms"])
+            ds = _load(columns=["prompt", "latency_raw_frames", "latency_ms", "split"])
         except Exception:
-            ds = _load()
-            missing = [column for column in ("prompt", "latency") if column not in ds.column_names]
-            if missing:
-                raise ValueError(f"prompt source dataset {dataset_name} is missing columns required for a latency prompt map: {missing}")
-    return build_latency_prompt_map(ds)
+            try:
+                ds = _load(columns=["prompt", "latency", "latency_ms"])
+            except Exception:
+                try:
+                    ds = _load(columns=["prompt", "latency_raw_frames", "latency_ms"])
+                except Exception:
+                    ds = _load()
+                    if "prompt" not in ds.column_names or not ({"latency", "latency_raw_frames"} & set(ds.column_names)):
+                        raise ValueError(
+                            f"prompt source dataset {dataset_name} is missing columns required for a latency prompt map; "
+                            f"available columns: {ds.column_names}"
+                        )
+    return build_latency_prompt_map(ds, frameskip=frameskip)
+
+
+def _task_latency_frameskip(task_name: str) -> int:
+    return 1 if str(task_name) == "flappy" else 4
 
 
 def _write_prompt_map(path: Path, prompt_map: dict[str, dict[str, Any]], *, latency_filter: list[int] | None = None) -> Path:
@@ -493,19 +506,20 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
             raise ValueError(
                 f"{dataset_dir} is not ready; pass --source-dataset-hf so setup can verify and convert it"
             )
-        verify_kwargs = {
-            "rows": args.verify_rows,
-            "cache_dir": args.dataset_cache_dir,
-            "strict": True,
-            "allow_mixed_latency_prompts": mixed_latency,
-        }
-        if "dataset_config_name" in inspect.signature(verify_dataset).parameters:
-            verify_kwargs["dataset_config_name"] = source_config_name
-        if "dataset_source_subdir" in inspect.signature(verify_dataset).parameters:
-            verify_kwargs["dataset_source_subdir"] = source_subdir
-        if action_layout and "action_layout" in inspect.signature(verify_dataset).parameters:
-            verify_kwargs["action_layout"] = action_layout
-        verify_dataset(args.source_dataset_hf, **verify_kwargs)
+        if not _str2bool(getattr(args, "skip_verification", "false")):
+            verify_kwargs = {
+                "rows": args.verify_rows,
+                "cache_dir": args.dataset_cache_dir,
+                "strict": True,
+                "allow_mixed_latency_prompts": mixed_latency,
+            }
+            if "dataset_config_name" in inspect.signature(verify_dataset).parameters:
+                verify_kwargs["dataset_config_name"] = source_config_name
+            if "dataset_source_subdir" in inspect.signature(verify_dataset).parameters:
+                verify_kwargs["dataset_source_subdir"] = source_subdir
+            if action_layout and "action_layout" in inspect.signature(verify_dataset).parameters:
+                verify_kwargs["action_layout"] = action_layout
+            verify_dataset(args.source_dataset_hf, **verify_kwargs)
         convert_kwargs = {
             "cache_dir": args.dataset_cache_dir,
             "max_episodes": args.max_episodes,
@@ -659,6 +673,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
             cache_dir=args.dataset_cache_dir,
             dataset_config_name=prompt_config_name,
             dataset_source_subdir=prompt_subdir,
+            frameskip=_task_latency_frameskip(task_name),
         )
         prompt_dir = data_root_dir / "_prompt_maps" / data_mix
         eval_prompt_map_path = _write_prompt_map(prompt_dir / "eval_latency_prompt_map.json", prompt_map)
@@ -992,6 +1007,7 @@ def main() -> int:
     parser.add_argument("--dataset-cache-dir", default=None)
     parser.add_argument("--dataset-force-download", default="false")
     parser.add_argument("--setup-force", default="false")
+    parser.add_argument("--skip-verification", default="false")
     parser.add_argument("--verify-rows", type=int, default=200)
     parser.add_argument("--max-episodes", type=int, default=None)
     parser.add_argument("--episodes-per-latency", type=int, default=None)

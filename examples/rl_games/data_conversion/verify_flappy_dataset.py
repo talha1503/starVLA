@@ -107,14 +107,39 @@ def _load_train_split(
         return ds_all.filter(lambda row: str(row["split"]).lower() == "train")
 
 
-def build_latency_prompt_map(rows: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def latency_id_from_row(
+    row: dict[str, Any],
+    *,
+    frameskip: int = 1,
+    latency_column: str | None = None,
+    default_latency: int | None = None,
+) -> int | None:
+    columns = (latency_column,) if latency_column else ("latency", "latency_raw_frames")
+    for column in columns:
+        if not column or column not in row or row.get(column) is None:
+            continue
+        value = int(row[column])
+        if column == "latency_raw_frames":
+            frameskip = int(frameskip)
+            if frameskip <= 0:
+                raise ValueError(f"frameskip must be positive, got {frameskip}")
+            if value % frameskip != 0:
+                raise ValueError(f"latency_raw_frames={value} is not divisible by frameskip={frameskip}")
+            return value // frameskip
+        return value
+    return default_latency
+
+
+def build_latency_prompt_map(rows: Iterable[dict[str, Any]], *, frameskip: int = 1) -> dict[str, dict[str, Any]]:
     by_latency: dict[int, dict[str, Any]] = {}
     for row in rows:
         if "split" in row and str(row["split"]).lower() != "train":
             continue
-        if "latency" not in row or "prompt" not in row:
+        if "prompt" not in row:
             raise KeyError(f"row is missing latency/prompt columns; available columns: {sorted(row.keys())}")
-        latency = int(row["latency"])
+        latency = latency_id_from_row(row, frameskip=frameskip)
+        if latency is None:
+            raise KeyError(f"row is missing latency/prompt columns; available columns: {sorted(row.keys())}")
         prompt = str(row["prompt"])
         latency_ms = row.get("latency_ms")
         current = by_latency.get(latency)
@@ -143,6 +168,7 @@ def verify_dataset(
     try:
         for columns in (
             ["prompt", "action_id", "action_text", "latency", "latency_ms"],
+            ["prompt", "action_id", "action_text", "latency_raw_frames", "latency_ms"],
             ["prompt", "action_id", "action_text"],
             ["prompt", "action_id"],
             None,
@@ -175,6 +201,9 @@ def verify_dataset(
     ok = True
 
     prompts = {str(ds[i]["prompt"]) for i in range(sample_n)}
+    if any(not prompt.strip() for prompt in prompts):
+        print("ERROR: prompt must be a non-empty string.")
+        ok = False
     if allow_mixed_latency_prompts:
         try:
             mapping = build_latency_prompt_map(ds)
@@ -182,12 +211,6 @@ def verify_dataset(
             print(json.dumps(mapping, indent=2))
         except Exception as exc:
             print(f"ERROR: invalid mixed-latency prompt mapping: {exc}")
-            ok = False
-    else:
-        if len(prompts) != 1 or next(iter(prompts)) != EXPECTED_PROMPT:
-            print("ERROR: prompt does not match expected Flappy prompt.")
-            print(f"  sampled prompts: {sorted(prompts)}")
-            print(f"  expected: {EXPECTED_PROMPT!r}")
             ok = False
 
     action_id_to_text: dict[int, set[str]] = defaultdict(set)

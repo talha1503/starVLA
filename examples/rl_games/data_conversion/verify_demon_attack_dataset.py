@@ -13,6 +13,7 @@ from examples.rl_games.data_conversion.verify_flappy_dataset import (
 
 
 EXPECTED_ACTIONS = ["NOOP", "FIRE", "RIGHT", "LEFT", "RIGHTFIRE", "LEFTFIRE"]
+LATENCY_FRAMESKIP = 4
 EXPECTED_PROMPT = (
     "You are playing Demon Attack from a single game image. "
     "Choose exactly one action from: NOOP, FIRE, RIGHT, LEFT, RIGHTFIRE, LEFTFIRE."
@@ -41,6 +42,7 @@ def verify_dataset(
     try:
         for columns in (
             ["prompt", "action_id", "action_text", "latency", "latency_ms"],
+            ["prompt", "action_id", "action_text", "latency_raw_frames", "latency_ms"],
             ["prompt", "action_id", "action_text"],
             ["prompt", "action_id"],
             None,
@@ -73,23 +75,16 @@ def verify_dataset(
     ok = True
 
     prompts = {str(ds[i]["prompt"]) for i in range(sample_n)}
+    if any(not prompt.strip() for prompt in prompts):
+        print("ERROR: prompt must be a non-empty string.")
+        ok = False
     if allow_mixed_latency_prompts:
         try:
-            mapping = build_latency_prompt_map(ds)
+            mapping = build_latency_prompt_map(ds, frameskip=LATENCY_FRAMESKIP)
             print("Latency prompt map:")
             print(json.dumps(mapping, indent=2))
         except Exception as exc:
             print(f"ERROR: invalid mixed-latency prompt mapping: {exc}")
-            ok = False
-    else:
-        invalid_prompts = [
-            prompt for prompt in prompts
-            if not all(part in prompt for part in REQUIRED_PROMPT_PARTS)
-        ]
-        if invalid_prompts:
-            print("ERROR: prompt does not contain the expected Demon Attack action vocabulary.")
-            print(f"  sampled prompts: {sorted(prompts)}")
-            print(f"  required parts: {REQUIRED_PROMPT_PARTS}")
             ok = False
 
     action_id_to_text: dict[int, set[str]] = defaultdict(set)

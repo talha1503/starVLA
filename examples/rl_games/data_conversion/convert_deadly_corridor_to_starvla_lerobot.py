@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from examples.rl_games.data_conversion.verify_flappy_dataset import build_latency_prompt_map
+from examples.rl_games.data_conversion.verify_flappy_dataset import build_latency_prompt_map, latency_id_from_row
 
 
 ACTION_LABELS = [
@@ -53,6 +53,7 @@ BRIDGE_ACTION_DIM = 7
 STATE_DIM = 1
 BRIDGE_STATE_DIM = 7
 FPS = 35
+LATENCY_FRAMESKIP = 4
 
 
 def _local_parquet_files(dataset_name: str, split: str, dataset_source_subdir: str | None = None) -> list[str] | None:
@@ -194,10 +195,10 @@ def _row_get(row: dict[str, Any], names: tuple[str, ...], default: Any = None) -
 def _filter_latency(ds, latency_filter: list[int] | None):
     if not latency_filter:
         return ds
-    if "latency" not in ds.column_names:
-        raise ValueError("latency_filter was requested, but the dataset has no `latency` column")
     allowed = {int(value) for value in latency_filter}
-    return ds.filter(lambda row: int(row["latency"]) in allowed)
+    if "latency" not in ds.column_names and "latency_raw_frames" not in ds.column_names:
+        raise ValueError("latency_filter was requested, but the dataset has no `latency` or `latency_raw_frames` column")
+    return ds.filter(lambda row: latency_id_from_row(row, frameskip=LATENCY_FRAMESKIP) in allowed)
 
 
 def _png_bytes(image: Any) -> bytes:
@@ -490,10 +491,13 @@ def convert_dataset(
 
         for row_idx, row in enumerate(tqdm(ds_meta, desc=f"Indexing Deadly Corridor {split} rows")):
             episode_idx = int(_row_get(row, ("episode_idx", "episode_index", "episode")))
-            timestep = int(_row_get(row, ("t", "frame_index", "frame_idx", "step"), row_idx))
+            timestep = int(_row_get(row, ("t", "decision_step", "frame_index", "frame_idx", "step"), row_idx))
             episode_indices.setdefault(episode_idx, []).append((timestep, row_idx))
-            if require_latency_prompt_map and "latency" in row and row["latency"] is not None:
-                episode_latencies.setdefault(episode_idx, int(row["latency"]))
+            latency = latency_id_from_row(row, frameskip=LATENCY_FRAMESKIP)
+            if require_latency_prompt_map and latency is not None:
+                existing = episode_latencies.setdefault(episode_idx, int(latency))
+                if existing != int(latency):
+                    raise ValueError(f"episode_idx={episode_idx} has inconsistent latencies: {existing} and {latency}")
             prompt = str(row["prompt"])
             if prompt not in prompt_to_task_index:
                 prompt_to_task_index[prompt] = len(task_prompts)
@@ -529,10 +533,11 @@ def convert_dataset(
             out_rows = []
             for frame_idx, row in enumerate(episode):
                 prompt = str(row["prompt"])
-                if "latency" in ds_full.column_names and row.get("latency") is not None:
+                latency = latency_id_from_row(row, frameskip=LATENCY_FRAMESKIP)
+                if latency is not None:
                     latency_rows.append(
                         {
-                            "latency": row["latency"],
+                            "latency": latency,
                             "latency_ms": row.get("latency_ms"),
                             "prompt": prompt,
                         }
@@ -546,7 +551,7 @@ def convert_dataset(
                         "frame_index": frame_idx,
                         "task_index": prompt_to_task_index[prompt],
                         "done": bool(_row_get(row, ("done", "terminal", "terminated"), False)),
-                        "reward": float(_row_get(row, ("reward", "rewards"), 0.0)),
+                        "reward": float(_row_get(row, ("reward", "raw_reward", "rewards"), 0.0)),
                     }
                 )
             episode_lengths.append(len(out_rows))

@@ -134,6 +134,7 @@ SOURCE_DATASET_HF=""
 CONVERTED_DATASET_NAME="flappy_train"
 DATASET_CACHE_DIR=""
 SETUP_FORCE="false"
+SKIP_VERIFICATION="false"
 PREPROCESS_CMD=""
 BASE_MODEL_DIR="playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action"
 BASE_MODEL_REPO_ID="StarVLA/Qwen3-VL-4B-Instruct-Action"
@@ -205,6 +206,7 @@ while [[ $# -gt 0 ]]; do
     --converted-dataset-name) CONVERTED_DATASET_NAME="$2"; shift 2 ;;
     --dataset-cache-dir) DATASET_CACHE_DIR="$2"; shift 2 ;;
     --setup-force) SETUP_FORCE="$2"; shift 2 ;;
+    --skip-verification) SKIP_VERIFICATION="$2"; shift 2 ;;
     --preprocess-cmd) PREPROCESS_CMD="$2"; shift 2 ;;
     --base-model-dir) BASE_MODEL_DIR="$2"; BASE_MODEL_DIR_EXPLICIT="true"; shift 2 ;;
     --base-model-repo-id) BASE_MODEL_REPO_ID="$2"; BASE_MODEL_REPO_ID_EXPLICIT="true"; shift 2 ;;
@@ -477,6 +479,7 @@ SETUP_JSON="$(
     --dataset-cache-dir "${DATASET_CACHE_DIR:-}" \
     --dataset-force-download "${DATASET_FORCE_DOWNLOAD}" \
     --setup-force "${SETUP_FORCE}" \
+    --skip-verification "${SKIP_VERIFICATION}" \
     --base-model-dir "$BASE_MODEL_DIR" \
     --base-model-repo-id "${BASE_MODEL_REPO_ID:-}" \
     --checkpoint-local-dir "$CHECKPOINT_LOCAL_DIR" \

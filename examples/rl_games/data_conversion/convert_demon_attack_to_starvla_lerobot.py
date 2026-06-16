@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from examples.rl_games.data_conversion.verify_flappy_dataset import build_latency_prompt_map
+from examples.rl_games.data_conversion.verify_flappy_dataset import build_latency_prompt_map, latency_id_from_row
 
 
 ACTION_LABELS = ["NOOP", "FIRE", "RIGHT", "LEFT", "RIGHTFIRE", "LEFTFIRE"]
@@ -29,6 +29,7 @@ BRIDGE_ACTION_DIM = 7
 STATE_DIM = 1
 BRIDGE_STATE_DIM = 7
 FPS = 30
+LATENCY_FRAMESKIP = 4
 
 
 def _local_parquet_files(dataset_name: str, split: str, dataset_source_subdir: str | None = None) -> list[str] | None:
@@ -129,11 +130,26 @@ def _load_split(
     load_columns = list(columns or [])
     if "split" not in load_columns:
         load_columns.append("split")
-    ds_all = _load_hf_dataset(
-        dataset_name, dataset_config_name, dataset_source_subdir,
-        split="train", cache_dir=cache_dir, columns=load_columns or None,
-    )
+    try:
+        ds_all = _load_hf_dataset(
+            dataset_name, dataset_config_name, dataset_source_subdir,
+            split="train", cache_dir=cache_dir, columns=load_columns or None,
+        )
+    except (ValueError, KeyError):
+        if columns is None:
+            raise
+        ds_all = _load_hf_dataset(
+            dataset_name, dataset_config_name, dataset_source_subdir,
+            split="train", cache_dir=cache_dir,
+        )
     return ds_all.filter(lambda row: str(row["split"]).lower() in split_values)
+
+
+def _row_get(row: dict[str, Any], names: tuple[str, ...], default: Any = None) -> Any:
+    for name in names:
+        if name in row and row.get(name) is not None:
+            return row[name]
+    return default
 
 
 def _png_bytes(image: Any) -> bytes:
@@ -240,20 +256,18 @@ def _normalize_prompt_map(prompt_map: dict[str, Any] | dict[int, Any] | None) ->
 
 
 def _row_latency(row: dict[str, Any], *, default_latency: int | None = None) -> int | None:
-    if "latency" in row and row.get("latency") is not None:
-        return int(row["latency"])
-    return default_latency
+    return latency_id_from_row(row, frameskip=LATENCY_FRAMESKIP, default_latency=default_latency)
 
 
 def _filter_latency(ds, latency_filter: list[int] | None, *, default_latency: int | None):
     if not latency_filter:
         return ds
     allowed = {int(value) for value in latency_filter}
-    if "latency" not in ds.column_names:
+    if "latency" not in ds.column_names and "latency_raw_frames" not in ds.column_names:
         if default_latency is not None and int(default_latency) in allowed:
             return ds
-        raise ValueError("latency_filter was requested, but the dataset has no `latency` column")
-    return ds.filter(lambda row: row.get("latency") is not None and int(row["latency"]) in allowed)
+        raise ValueError("latency_filter was requested, but the dataset has no `latency` or `latency_raw_frames` column")
+    return ds.filter(lambda row: _row_latency(row, default_latency=default_latency) in allowed)
 
 
 def _load_index_split(
@@ -265,33 +279,53 @@ def _load_index_split(
     dataset_config_name: str | None = None,
     dataset_source_subdir: str | None = None,
 ):
-    base_columns = ["episode_idx", "t", "action_id", "done", "reward", "prompt"]
+    old_base_columns = ["episode_idx", "t", "action_id", "done", "reward", "prompt"]
+    canonical_base_columns = ["episode_idx", "decision_step", "action_id", "raw_reward", "prompt"]
+    base_options = (old_base_columns, canonical_base_columns)
     if want_latency:
-        for columns in ([*base_columns, "latency", "latency_ms"], [*base_columns, "latency"]):
-            try:
-                return _load_split(
-                    dataset_name,
-                    split,
-                    cache_dir=cache_dir,
-                    columns=columns,
-                    dataset_config_name=dataset_config_name,
-                    dataset_source_subdir=dataset_source_subdir,
-                )
-            except Exception:
-                pass
+        for base_columns in base_options:
+            for columns in (
+                [*base_columns, "latency", "latency_ms"],
+                [*base_columns, "latency_raw_frames", "latency_ms"],
+                [*base_columns, "latency"],
+                [*base_columns, "latency_raw_frames"],
+            ):
+                try:
+                    return _load_split(
+                        dataset_name,
+                        split,
+                        cache_dir=cache_dir,
+                        columns=columns,
+                        dataset_config_name=dataset_config_name,
+                        dataset_source_subdir=dataset_source_subdir,
+                    )
+                except Exception:
+                    pass
         return _load_split(
             dataset_name,
             split,
             cache_dir=cache_dir,
-            columns=base_columns,
+            columns=None,
             dataset_config_name=dataset_config_name,
             dataset_source_subdir=dataset_source_subdir,
         )
+    for base_columns in base_options:
+        try:
+            return _load_split(
+                dataset_name,
+                split,
+                cache_dir=cache_dir,
+                columns=base_columns,
+                dataset_config_name=dataset_config_name,
+                dataset_source_subdir=dataset_source_subdir,
+            )
+        except Exception:
+            pass
     return _load_split(
         dataset_name,
         split,
         cache_dir=cache_dir,
-        columns=base_columns,
+        columns=None,
         dataset_config_name=dataset_config_name,
         dataset_source_subdir=dataset_source_subdir,
     )
@@ -478,7 +512,8 @@ def convert_dataset(
 
         for row_idx, row in enumerate(tqdm(ds_meta, desc=f"Indexing Demon Attack {split} rows")):
             episode_idx = int(row["episode_idx"])
-            episode_indices.setdefault(episode_idx, []).append((int(row["t"]), row_idx))
+            timestep = int(_row_get(row, ("t", "decision_step", "frame_index", "frame_idx", "step"), row_idx))
+            episode_indices.setdefault(episode_idx, []).append((timestep, row_idx))
             latency = _row_latency(row, default_latency=default_latency)
             if latency is not None:
                 existing = episode_latencies.setdefault(episode_idx, int(latency))
@@ -535,8 +570,8 @@ def convert_dataset(
                     "episode_index": new_episode_idx,
                     "frame_index": frame_idx,
                     "task_index": prompt_to_task_index[prompt],
-                    "done": bool(row["done"]),
-                    "reward": float(row["reward"]),
+                    "done": bool(_row_get(row, ("done", "terminal", "terminated"), frame_idx == len(episode) - 1)),
+                    "reward": float(_row_get(row, ("reward", "raw_reward", "rewards"), 0.0)),
                     "action_id": int(row["action_id"]),
                 })
             episode_lengths.append(len(out_rows))

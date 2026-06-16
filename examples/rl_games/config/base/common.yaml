@@ -48,6 +48,7 @@ dataset:
   mixed_latency_filter: null
   force_download: false
   setup_force: false
+  skip_verification: false
   verify_rows: 200
   max_episodes: null
   episodes_per_latency: null

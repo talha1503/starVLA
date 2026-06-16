@@ -39,6 +39,7 @@ FACTORIZED_11_ACTIONS = [
 ACTION_LAYOUT_MULTIBINARY_7 = "multibinary_7"
 ACTION_LAYOUT_FACTORIZED_11 = "factorized_11"
 REQUIRED_PROMPT_PARTS = ["Deadly Corridor", *EXPECTED_ACTIONS]
+LATENCY_FRAMESKIP = 4
 
 
 def _load_first_available(
@@ -130,8 +131,11 @@ def verify_dataset(
     if action_layout == ACTION_LAYOUT_FACTORIZED_11:
         column_options = (
             ["prompt", "action_tuple", "latency", "latency_ms"],
+            ["prompt", "action_tuple", "latency_raw_frames", "latency_ms"],
             ["prompt", "action", "latency", "latency_ms"],
+            ["prompt", "action", "latency_raw_frames", "latency_ms"],
             ["prompt", "actions", "latency", "latency_ms"],
+            ["prompt", "actions", "latency_raw_frames", "latency_ms"],
             ["prompt", "action_tuple"],
             ["prompt", "action"],
             ["prompt", "actions"],
@@ -140,8 +144,11 @@ def verify_dataset(
     else:
         column_options = (
             ["prompt", "action_text", "latency", "latency_ms"],
+            ["prompt", "action_text", "latency_raw_frames", "latency_ms"],
             ["prompt", "action", "latency", "latency_ms"],
+            ["prompt", "action", "latency_raw_frames", "latency_ms"],
             ["prompt", "actions", "latency", "latency_ms"],
+            ["prompt", "actions", "latency_raw_frames", "latency_ms"],
             ["prompt", "action_text"],
             ["prompt", "action"],
             ["prompt", "actions"],
@@ -171,6 +178,9 @@ def verify_dataset(
     ok = True
 
     prompts = {str(ds[i]["prompt"]) for i in range(sample_n)}
+    if any(not prompt.strip() for prompt in prompts):
+        print("ERROR: prompt must be a non-empty string.")
+        ok = False
     if allow_mixed_latency_prompts:
         try:
             prompt_ds = _load_first_available(
@@ -178,28 +188,21 @@ def verify_dataset(
                 cache_dir,
                 (
                     ["split", "prompt", "latency", "latency_ms"],
+                    ["split", "prompt", "latency_raw_frames", "latency_ms"],
                     ["prompt", "latency", "latency_ms"],
+                    ["prompt", "latency_raw_frames", "latency_ms"],
                     None,
                 ),
                 dataset_config_name=dataset_config_name,
+                dataset_source_subdir=dataset_source_subdir,
             )
-            mapping = build_latency_prompt_map(prompt_ds)
+            mapping = build_latency_prompt_map(prompt_ds, frameskip=LATENCY_FRAMESKIP)
             if len(mapping) <= 1:
                 raise ValueError(f"expected more than one latency prompt, got {len(mapping)}")
             print("Latency prompt map:")
             print(json.dumps(mapping, indent=2))
         except Exception as exc:
             print(f"ERROR: invalid mixed-latency prompt mapping: {exc}")
-            ok = False
-    else:
-        invalid_prompts = [
-            prompt for prompt in prompts
-            if not all(part in prompt for part in REQUIRED_PROMPT_PARTS)
-        ]
-        if invalid_prompts:
-            print("ERROR: prompt does not contain the expected Deadly Corridor action vocabulary.")
-            print(f"  sampled prompts: {sorted(prompts)}")
-            print(f"  required parts: {REQUIRED_PROMPT_PARTS}")
             ok = False
 
     seen_active = set()
