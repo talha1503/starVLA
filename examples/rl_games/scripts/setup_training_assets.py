@@ -479,6 +479,14 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
             manifest_latency_filter = manifest.get("latency_filter")
             if manifest_latency_filter != [int(value) for value in expected_latency_filter]:
                 return False
+        expected_episodes_per_latency = getattr(args, "episodes_per_latency", None)
+        if expected_episodes_per_latency is not None:
+            if manifest.get("episodes_per_latency") != int(expected_episodes_per_latency):
+                return False
+        expected_max_episodes = getattr(args, "max_episodes", None)
+        if expected_max_episodes is not None:
+            if manifest.get("max_episodes") != int(expected_max_episodes):
+                return False
         return True
 
     def _mixed_prompt_map_ready() -> bool:

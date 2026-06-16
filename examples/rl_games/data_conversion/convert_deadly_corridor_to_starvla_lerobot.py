@@ -299,7 +299,17 @@ def _select_episode_ids(
     *,
     max_episodes: int | None,
     require_latency_prompt_map: bool,
+    episodes_per_latency: int | None = None,
 ) -> list[int]:
+    if episodes_per_latency is not None:
+        if not episode_latencies:
+            raise ValueError("episodes_per_latency was requested, but no episode latency metadata is available")
+        selected: list[int] = []
+        for latency in sorted(set(episode_latencies.values())):
+            latency_episode_ids = [episode_id for episode_id in episode_ids if episode_latencies.get(episode_id) == latency]
+            selected.extend(latency_episode_ids[: int(episodes_per_latency)])
+        return selected
+
     if max_episodes is None:
         return episode_ids
     if not require_latency_prompt_map:
@@ -452,6 +462,7 @@ def convert_dataset(
     force: bool = False,
     require_latency_prompt_map: bool = False,
     latency_filter: list[int] | None = None,
+    episodes_per_latency: int | None = None,
     action_carrier: str = "native",
     action_layout: str = ACTION_LAYOUT_MULTIBINARY_7,
 ) -> dict[str, Any]:
@@ -509,6 +520,7 @@ def convert_dataset(
             episode_latencies,
             max_episodes=max_episodes,
             require_latency_prompt_map=require_latency_prompt_map,
+            episodes_per_latency=episodes_per_latency,
         )
         for episode_id in original_episode_ids:
             episode_indices[episode_id].sort(key=lambda item: item[0])
@@ -603,6 +615,8 @@ def convert_dataset(
             "active_state_dim": STATE_DIM,
             "state_carrier": action_carrier,
             "latency_filter": latency_filter,
+            "episodes_per_latency": int(episodes_per_latency) if episodes_per_latency is not None else None,
+            "max_episodes": int(max_episodes) if max_episodes is not None else None,
             "episodes": len(episode_lengths),
             "frames": int(sum(episode_lengths)),
             "task_prompts": task_prompts,
@@ -630,6 +644,7 @@ def main() -> int:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--require-latency-prompt-map", "--require_latency_prompt_map", action="store_true")
     parser.add_argument("--latency-filter", "--latency_filter", default=None)
+    parser.add_argument("--episodes-per-latency", "--episodes_per_latency", type=int, default=None)
     parser.add_argument("--action-carrier", "--action_carrier", choices=["native", "bridge"], default="native")
     parser.add_argument(
         "--action-layout",
@@ -653,6 +668,7 @@ def main() -> int:
         force=args.force,
         require_latency_prompt_map=args.require_latency_prompt_map,
         latency_filter=latency_filter,
+        episodes_per_latency=args.episodes_per_latency,
         action_carrier=args.action_carrier,
         action_layout=args.action_layout,
     )
