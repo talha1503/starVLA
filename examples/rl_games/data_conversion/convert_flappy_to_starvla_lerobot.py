@@ -30,6 +30,7 @@ STATE_DIM = 1
 BRIDGE_STATE_DIM = 7
 FPS = 30
 LATENCY_FRAMESKIP = 1
+EpisodeKey = int | tuple[int, int]
 
 
 class FlappyColumns(NamedTuple):
@@ -110,6 +111,38 @@ def _resolve_flappy_columns(
         latency=_resolve_optional_column(available, ("latency", "latency_raw_frames")) if want_latency else None,
         latency_ms=_resolve_optional_column(available, ("latency_ms",)) if want_latency else None,
     )
+
+
+def _flappy_column_candidates(
+    dataset_name: str,
+    split: str,
+    want_latency: bool,
+    dataset_source_subdir: str | None = None,
+) -> list[FlappyColumns]:
+    available = _local_parquet_columns(dataset_name, split, dataset_source_subdir)
+    if available is not None:
+        return [
+            FlappyColumns(
+                frame=_resolve_required_column(available, ("t", "decision_step"), "frame index"),
+                reward=_resolve_required_column(available, ("reward", "raw_reward"), "reward"),
+                done=_resolve_optional_column(available, ("done",)),
+                latency=_resolve_optional_column(available, ("latency", "latency_raw_frames")) if want_latency else None,
+                latency_ms=_resolve_optional_column(available, ("latency_ms",)) if want_latency else None,
+            )
+        ]
+
+    base_candidates = (
+        FlappyColumns(frame="t", reward="reward", done="done", latency="latency", latency_ms="latency_ms"),
+        FlappyColumns(frame="decision_step", reward="raw_reward", done=None, latency="latency_raw_frames", latency_ms="latency_ms"),
+        FlappyColumns(frame="decision_step", reward="raw_reward", done=None, latency="latency", latency_ms="latency_ms"),
+        FlappyColumns(frame="t", reward="reward", done="done", latency="latency_raw_frames", latency_ms="latency_ms"),
+    )
+    if want_latency:
+        return list(base_candidates)
+    return [
+        FlappyColumns(frame=columns.frame, reward=columns.reward, done=columns.done, latency=None, latency_ms=None)
+        for columns in base_candidates
+    ]
 
 
 def _load_hf_dataset(
@@ -241,17 +274,17 @@ def _one_hot(action_id: int, *, action_dim: int = ACTION_DIM) -> list[float]:
 
 
 def _select_episode_ids(
-    episode_ids: list[int],
-    episode_latencies: dict[int, int],
+    episode_ids: list[EpisodeKey],
+    episode_latencies: dict[EpisodeKey, int],
     *,
     max_episodes: int | None,
     require_latency_prompt_map: bool,
     episodes_per_latency: int | None = None,
-) -> list[int]:
+) -> list[EpisodeKey]:
     if episodes_per_latency is not None:
         if not episode_latencies:
             raise ValueError("episodes_per_latency was requested, but no episode latency metadata is available")
-        selected: list[int] = []
+        selected: list[EpisodeKey] = []
         for latency in sorted(set(episode_latencies.values())):
             latency_episode_ids = [episode_id for episode_id in episode_ids if episode_latencies.get(episode_id) == latency]
             selected.extend(latency_episode_ids[: int(episodes_per_latency)])
@@ -262,7 +295,7 @@ def _select_episode_ids(
     if not require_latency_prompt_map:
         return episode_ids[:max_episodes]
 
-    selected: list[int] = []
+    selected: list[EpisodeKey] = []
     selected_set: set[int] = set()
     for latency in sorted(set(episode_latencies.values())):
         for episode_id in episode_ids:
@@ -319,6 +352,16 @@ def _filter_latency(ds, latency_filter: list[int] | None, *, latency_column: str
     return ds.filter(lambda row: _row_latency(row, latency_column=latency_column, default_latency=default_latency) in allowed)
 
 
+def _episode_key(episode_idx: int, latency: int | None) -> EpisodeKey:
+    return (episode_idx, int(latency)) if latency is not None else episode_idx
+
+
+def _episode_sort_key(episode_key: EpisodeKey) -> tuple[int, int]:
+    if isinstance(episode_key, tuple):
+        return episode_key
+    return (episode_key, -1)
+
+
 def _load_index_split(
     dataset_name: str,
     split: str,
@@ -328,29 +371,60 @@ def _load_index_split(
     dataset_config_name: str | None = None,
     dataset_source_subdir: str | None = None,
 ) -> tuple[Any, FlappyColumns]:
-    flappy_columns = _resolve_flappy_columns(
+    candidate_columns = _flappy_column_candidates(
         dataset_name,
         split,
         want_latency=want_latency,
         dataset_source_subdir=dataset_source_subdir,
     )
-    columns = ["episode_idx", flappy_columns.frame, "action_id", flappy_columns.reward, "prompt"]
-    if flappy_columns.done is not None:
-        columns.append(flappy_columns.done)
-    if flappy_columns.latency is not None:
-        columns.append(flappy_columns.latency)
-    if flappy_columns.latency_ms is not None:
-        columns.append(flappy_columns.latency_ms)
-    return (
-        _load_split(
+    last_error: Exception | None = None
+    for flappy_columns in candidate_columns:
+        columns = ["episode_idx", flappy_columns.frame, "action_id", flappy_columns.reward, "prompt"]
+        if flappy_columns.done is not None:
+            columns.append(flappy_columns.done)
+        if flappy_columns.latency is not None:
+            columns.append(flappy_columns.latency)
+        if flappy_columns.latency_ms is not None:
+            columns.append(flappy_columns.latency_ms)
+        try:
+            return (
+                _load_split(
+                    dataset_name,
+                    split,
+                    cache_dir=cache_dir,
+                    columns=columns,
+                    dataset_config_name=dataset_config_name,
+                    dataset_source_subdir=dataset_source_subdir,
+                ),
+                flappy_columns,
+            )
+        except Exception as exc:
+            last_error = exc
+            if len(candidate_columns) == 1:
+                raise
+
+    try:
+        ds = _load_split(
             dataset_name,
             split,
             cache_dir=cache_dir,
-            columns=columns,
             dataset_config_name=dataset_config_name,
             dataset_source_subdir=dataset_source_subdir,
+        )
+    except Exception:
+        if last_error is not None:
+            raise last_error
+        raise
+    available = set(ds.column_names)
+    return (
+        ds,
+        FlappyColumns(
+            frame=_resolve_required_column(available, ("t", "decision_step"), "frame index"),
+            reward=_resolve_required_column(available, ("reward", "raw_reward"), "reward"),
+            done=_resolve_optional_column(available, ("done",)),
+            latency=_resolve_optional_column(available, ("latency", "latency_raw_frames")) if want_latency else None,
+            latency_ms=_resolve_optional_column(available, ("latency_ms",)) if want_latency else None,
         ),
-        flappy_columns,
     )
 
 
@@ -548,22 +622,23 @@ def convert_dataset(
         if len(ds_meta) == 0:
             raise ValueError(f"{dataset_name} has no {split} rows")
 
-        episode_indices: dict[int, list[tuple[int, int]]] = {}
-        episode_latencies: dict[int, int] = {}
+        episode_indices: dict[EpisodeKey, list[tuple[int, int]]] = {}
+        episode_latencies: dict[EpisodeKey, int] = {}
         prompt_to_task_index: dict[str, int] = {}
         task_prompts: list[str] = []
         latency_rows: list[dict[str, Any]] = []
 
         for row_idx, row in enumerate(tqdm(ds_meta, desc=f"Indexing Flappy {split} rows")):
             episode_idx = int(row["episode_idx"])
-            episode_indices.setdefault(episode_idx, []).append((int(row[flappy_columns.frame]), row_idx))
             latency = _row_latency(row, latency_column=flappy_columns.latency, default_latency=default_latency)
+            episode_key = _episode_key(episode_idx, latency)
+            episode_indices.setdefault(episode_key, []).append((int(row[flappy_columns.frame]), row_idx))
             if latency is not None:
-                existing = episode_latencies.setdefault(episode_idx, int(latency))
+                existing = episode_latencies.setdefault(episode_key, int(latency))
                 if existing != int(latency):
-                    raise ValueError(f"episode_idx={episode_idx} has inconsistent latencies: {existing} and {latency}")
+                    raise ValueError(f"episode_key={episode_key!r} has inconsistent latencies: {existing} and {latency}")
 
-        original_episode_ids = sorted(episode_indices)
+        original_episode_ids = sorted(episode_indices, key=_episode_sort_key)
         original_episode_ids = _select_episode_ids(
             original_episode_ids,
             episode_latencies,

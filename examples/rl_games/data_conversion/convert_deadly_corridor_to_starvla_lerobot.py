@@ -54,6 +54,7 @@ STATE_DIM = 1
 BRIDGE_STATE_DIM = 7
 FPS = 35
 LATENCY_FRAMESKIP = 4
+EpisodeKey = int | tuple[int, int]
 
 
 def _local_parquet_files(dataset_name: str, split: str, dataset_source_subdir: str | None = None) -> list[str] | None:
@@ -201,6 +202,77 @@ def _filter_latency(ds, latency_filter: list[int] | None):
     return ds.filter(lambda row: latency_id_from_row(row, frameskip=LATENCY_FRAMESKIP) in allowed)
 
 
+def _episode_key(episode_idx: int, latency: int | None) -> EpisodeKey:
+    return (episode_idx, int(latency)) if latency is not None else episode_idx
+
+
+def _episode_sort_key(episode_key: EpisodeKey) -> tuple[int, int]:
+    if isinstance(episode_key, tuple):
+        return episode_key
+    return (episode_key, -1)
+
+
+def _load_index_split(
+    dataset_name: str,
+    split: str,
+    cache_dir: str | None,
+    *,
+    want_latency: bool,
+    dataset_config_name: str | None = None,
+    dataset_source_subdir: str | None = None,
+):
+    old_base_columns = ["episode_idx", "t", "prompt"]
+    canonical_base_columns = ["episode_idx", "decision_step", "prompt"]
+    base_options = (old_base_columns, canonical_base_columns)
+    if want_latency:
+        for base_columns in base_options:
+            for columns in (
+                [*base_columns, "latency", "latency_ms"],
+                [*base_columns, "latency_raw_frames", "latency_ms"],
+                [*base_columns, "latency"],
+                [*base_columns, "latency_raw_frames"],
+            ):
+                try:
+                    return _load_split(
+                        dataset_name,
+                        split,
+                        cache_dir=cache_dir,
+                        columns=columns,
+                        dataset_config_name=dataset_config_name,
+                        dataset_source_subdir=dataset_source_subdir,
+                    )
+                except Exception:
+                    pass
+        return _load_split(
+            dataset_name,
+            split,
+            cache_dir=cache_dir,
+            columns=None,
+            dataset_config_name=dataset_config_name,
+            dataset_source_subdir=dataset_source_subdir,
+        )
+    for base_columns in base_options:
+        try:
+            return _load_split(
+                dataset_name,
+                split,
+                cache_dir=cache_dir,
+                columns=base_columns,
+                dataset_config_name=dataset_config_name,
+                dataset_source_subdir=dataset_source_subdir,
+            )
+        except Exception:
+            pass
+    return _load_split(
+        dataset_name,
+        split,
+        cache_dir=cache_dir,
+        columns=None,
+        dataset_config_name=dataset_config_name,
+        dataset_source_subdir=dataset_source_subdir,
+    )
+
+
 def _png_bytes(image: Any) -> bytes:
     if not isinstance(image, Image.Image):
         image = Image.fromarray(np.asarray(image))
@@ -294,17 +366,17 @@ def _action_vector(row: dict[str, Any], action_layout: str = ACTION_LAYOUT_MULTI
 
 
 def _select_episode_ids(
-    episode_ids: list[int],
-    episode_latencies: dict[int, int],
+    episode_ids: list[EpisodeKey],
+    episode_latencies: dict[EpisodeKey, int],
     *,
     max_episodes: int | None,
     require_latency_prompt_map: bool,
     episodes_per_latency: int | None = None,
-) -> list[int]:
+) -> list[EpisodeKey]:
     if episodes_per_latency is not None:
         if not episode_latencies:
             raise ValueError("episodes_per_latency was requested, but no episode latency metadata is available")
-        selected: list[int] = []
+        selected: list[EpisodeKey] = []
         for latency in sorted(set(episode_latencies.values())):
             latency_episode_ids = [episode_id for episode_id in episode_ids if episode_latencies.get(episode_id) == latency]
             selected.extend(latency_episode_ids[: int(episodes_per_latency)])
@@ -315,7 +387,7 @@ def _select_episode_ids(
     if not require_latency_prompt_map:
         return episode_ids[:max_episodes]
 
-    selected: list[int] = []
+    selected: list[EpisodeKey] = []
     selected_set: set[int] = set()
     for latency in sorted(set(episode_latencies.values())):
         for episode_id in episode_ids:
@@ -483,21 +555,22 @@ def convert_dataset(
 
     def _convert_split(split: str, split_output_dir: Path) -> dict[str, Any]:
         split_output_dir.mkdir(parents=True, exist_ok=True)
-        ds_meta = _load_split(
+        want_latency = bool(require_latency_prompt_map or latency_filter or episodes_per_latency is not None)
+        ds_meta = _load_index_split(
             dataset_name,
             split,
             cache_dir=cache_dir,
             dataset_config_name=dataset_config_name,
             dataset_source_subdir=dataset_source_subdir,
-            columns=["episode_idx", "t", "prompt", "latency", "latency_ms"],
+            want_latency=want_latency,
         )
         ds_meta = _filter_latency(ds_meta, latency_filter)
         if len(ds_meta) == 0:
             suffix = f" after latency_filter={latency_filter}" if latency_filter else ""
             raise ValueError(f"{dataset_name} has no {split} rows{suffix}")
 
-        episode_indices: dict[int, list[tuple[int, int]]] = {}
-        episode_latencies: dict[int, int] = {}
+        episode_indices: dict[EpisodeKey, list[tuple[int, int]]] = {}
+        episode_latencies: dict[EpisodeKey, int] = {}
         prompt_to_task_index: dict[str, int] = {}
         task_prompts: list[str] = []
         latency_rows: list[dict[str, Any]] = []
@@ -505,18 +578,19 @@ def convert_dataset(
         for row_idx, row in enumerate(tqdm(ds_meta, desc=f"Indexing Deadly Corridor {split} rows")):
             episode_idx = int(_row_get(row, ("episode_idx", "episode_index", "episode")))
             timestep = int(_row_get(row, ("t", "decision_step", "frame_index", "frame_idx", "step"), row_idx))
-            episode_indices.setdefault(episode_idx, []).append((timestep, row_idx))
             latency = latency_id_from_row(row, frameskip=LATENCY_FRAMESKIP)
+            episode_key = _episode_key(episode_idx, latency)
+            episode_indices.setdefault(episode_key, []).append((timestep, row_idx))
             if require_latency_prompt_map and latency is not None:
-                existing = episode_latencies.setdefault(episode_idx, int(latency))
+                existing = episode_latencies.setdefault(episode_key, int(latency))
                 if existing != int(latency):
-                    raise ValueError(f"episode_idx={episode_idx} has inconsistent latencies: {existing} and {latency}")
+                    raise ValueError(f"episode_key={episode_key!r} has inconsistent latencies: {existing} and {latency}")
             prompt = str(row["prompt"])
             if prompt not in prompt_to_task_index:
                 prompt_to_task_index[prompt] = len(task_prompts)
                 task_prompts.append(prompt)
 
-        original_episode_ids = sorted(episode_indices)
+        original_episode_ids = sorted(episode_indices, key=_episode_sort_key)
         original_episode_ids = _select_episode_ids(
             original_episode_ids,
             episode_latencies,

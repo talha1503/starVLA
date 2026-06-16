@@ -12,12 +12,19 @@ def _optional_dependency_stubs() -> dict[str, ModuleType]:
     datasets = ModuleType("datasets")
     datasets.load_dataset = lambda *args, **kwargs: None
 
+    numpy = ModuleType("numpy")
     pyarrow = ModuleType("pyarrow")
     pyarrow_parquet = ModuleType("pyarrow.parquet")
+    pil = ModuleType("PIL")
+    pil_image = ModuleType("PIL.Image")
+    pil.Image = pil_image
     return {
         "datasets": datasets,
+        "numpy": numpy,
         "pyarrow": pyarrow,
         "pyarrow.parquet": pyarrow_parquet,
+        "PIL": pil,
+        "PIL.Image": pil_image,
     }
 
 
@@ -189,3 +196,108 @@ def test_convert_flappy_hf_loader_passes_dataset_source_subdir(
             },
         )
     ]
+
+
+def test_convert_flappy_index_split_retries_canonical_hf_columns(
+    monkeypatch: pytest.MonkeyPatch,
+    flappy_modules: tuple[ModuleType, ModuleType],
+) -> None:
+    convert_flappy, _ = flappy_modules
+    calls = []
+
+    class FakeDataset:
+        column_names = [
+            "episode_idx",
+            "decision_step",
+            "action_id",
+            "raw_reward",
+            "prompt",
+            "latency_raw_frames",
+            "latency_ms",
+        ]
+
+        def filter(self, fn):
+            return self
+
+    def fake_load_dataset(*args, **kwargs):
+        calls.append((args, kwargs))
+        if "t" in kwargs.get("columns", []):
+            raise RuntimeError("No match for FieldRef.Name(t)")
+        return FakeDataset()
+
+    monkeypatch.setattr(convert_flappy, "load_dataset", fake_load_dataset)
+
+    ds, columns = convert_flappy._load_index_split(
+        "latency-sensitive-bench/flappy_200ep",
+        "train",
+        cache_dir="/tmp/cache",
+        want_latency=True,
+    )
+
+    assert isinstance(ds, FakeDataset)
+    assert columns.frame == "decision_step"
+    assert columns.reward == "raw_reward"
+    assert columns.done is None
+    assert columns.latency == "latency_raw_frames"
+    assert calls[0][1]["columns"] == [
+        "episode_idx",
+        "t",
+        "action_id",
+        "reward",
+        "prompt",
+        "done",
+        "latency",
+        "latency_ms",
+    ]
+    assert calls[1][1]["columns"] == [
+        "episode_idx",
+        "decision_step",
+        "action_id",
+        "raw_reward",
+        "prompt",
+        "latency_raw_frames",
+        "latency_ms",
+    ]
+
+
+def test_convert_flappy_zero_latency_index_split_retries_canonical_hf_columns(
+    monkeypatch: pytest.MonkeyPatch,
+    flappy_modules: tuple[ModuleType, ModuleType],
+) -> None:
+    convert_flappy, _ = flappy_modules
+    calls = []
+
+    class FakeDataset:
+        column_names = [
+            "episode_idx",
+            "decision_step",
+            "action_id",
+            "raw_reward",
+            "prompt",
+        ]
+
+        def filter(self, fn):
+            return self
+
+    def fake_load_dataset(*args, **kwargs):
+        calls.append((args, kwargs))
+        columns = kwargs.get("columns") or []
+        missing = [column for column in columns if column not in FakeDataset.column_names]
+        if missing:
+            raise RuntimeError(f"No match for FieldRef.Name({missing[0]})")
+        return FakeDataset()
+
+    monkeypatch.setattr(convert_flappy, "load_dataset", fake_load_dataset)
+
+    ds, columns = convert_flappy._load_index_split(
+        "latency-sensitive-bench/flappy_200ep",
+        "train",
+        cache_dir="/tmp/cache",
+        want_latency=False,
+    )
+
+    assert isinstance(ds, FakeDataset)
+    assert columns.frame == "decision_step"
+    assert columns.reward == "raw_reward"
+    assert columns.latency is None
+    assert calls[-1][1]["columns"] == ["episode_idx", "decision_step", "action_id", "raw_reward", "prompt"]
