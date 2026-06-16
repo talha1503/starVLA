@@ -18,6 +18,38 @@ from accelerate.logging import get_logger
 logger = get_logger(__name__)
 
 
+_VOCAB_SIZED_WEIGHT_SUFFIXES = (
+    "embed_tokens.weight",
+    "lm_head.weight",
+)
+
+
+def _adapt_vocab_sized_weights(module, state_dict):
+    """Copy overlapping vocab rows when tokenizer-sized Qwen weights changed."""
+    target_state_dict = module.state_dict()
+    adapted = dict(state_dict)
+    adapted_keys = []
+    for key, source_tensor in state_dict.items():
+        target_tensor = target_state_dict.get(key)
+        if target_tensor is None or not hasattr(source_tensor, "shape") or not hasattr(target_tensor, "shape"):
+            continue
+        if tuple(source_tensor.shape) == tuple(target_tensor.shape):
+            continue
+        if not key.endswith(_VOCAB_SIZED_WEIGHT_SUFFIXES):
+            continue
+        if source_tensor.ndim != 2 or target_tensor.ndim != 2:
+            continue
+        if source_tensor.shape[1] != target_tensor.shape[1]:
+            continue
+
+        patched_tensor = target_tensor.detach().clone()
+        rows = min(source_tensor.shape[0], target_tensor.shape[0])
+        patched_tensor[:rows].copy_(source_tensor[:rows].to(dtype=patched_tensor.dtype, device=patched_tensor.device))
+        adapted[key] = patched_tensor
+        adapted_keys.append((key, tuple(source_tensor.shape), tuple(target_tensor.shape), rows))
+    return adapted, adapted_keys
+
+
 # === Define Tracker Interface ===
 #
 
@@ -282,6 +314,13 @@ class TrainerUtils:
                     prefix = path + "."
                     sub_state_dict = {k[len(prefix) :]: v for k, v in checkpoint.items() if k.startswith(prefix)}
                     if sub_state_dict:
+                        sub_state_dict, adapted_keys = _adapt_vocab_sized_weights(module, sub_state_dict)
+                        for key, source_shape, target_shape, rows in adapted_keys:
+                            if not dist.is_initialized() or dist.get_rank() == 0:
+                                print(
+                                    f"⚠️ adapted vocab-sized weight '{path}.{key}' from checkpoint shape "
+                                    f"{source_shape} to current shape {target_shape}; copied {rows} rows"
+                                )
                         module.load_state_dict(sub_state_dict, strict=True)
                         if not dist.is_initialized() or dist.get_rank() == 0:
                             print(f"✅ parameters loaded to module '{path}'")
@@ -292,6 +331,13 @@ class TrainerUtils:
                     print(f"❌ cannot find module path: {path}")
         else:  # full load
             try:
+                checkpoint, adapted_keys = _adapt_vocab_sized_weights(model, checkpoint)
+                for key, source_shape, target_shape, rows in adapted_keys:
+                    if not dist.is_initialized() or dist.get_rank() == 0:
+                        print(
+                            f"⚠️ adapted vocab-sized weight '{key}' from checkpoint shape "
+                            f"{source_shape} to current shape {target_shape}; copied {rows} rows"
+                        )
                 model.load_state_dict(checkpoint, strict=False)
                 if not dist.is_initialized() or dist.get_rank() == 0:
                     print("✅ loaded <full_model> model parameters")
