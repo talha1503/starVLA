@@ -60,6 +60,26 @@ def _as_bool(value, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _sample_latency(sample: dict) -> int | None:
+    if not isinstance(sample, dict):
+        return None
+    value = sample.get("latency", sample.get("latency_id", None))
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        value = value.detach().cpu().reshape(-1)[0].item()
+    if isinstance(value, np.ndarray):
+        value = value.reshape(-1)[0].item()
+    return int(value)
+
+
+def _group_examples_by_latency(examples: list[dict]) -> dict[int | None, list[dict]]:
+    grouped: dict[int | None, list[dict]] = {}
+    for example in examples:
+        grouped.setdefault(_sample_latency(example), []).append(example)
+    return grouped
+
+
 def load_fast_tokenizer():
     return AutoProcessor.from_pretrained("physical-intelligence/fast", trust_remote_code=True)
 
@@ -724,23 +744,68 @@ class VLATrainer(TrainerUtils):
 
         was_training = self.model.training
         self.model.eval()
-        losses = []
+        total_loss_sum = torch.zeros((), device=self.accelerator.device, dtype=torch.float32)
+        total_loss_count = torch.zeros((), device=self.accelerator.device, dtype=torch.float32)
+        latency_loss_sums: dict[int, torch.Tensor] = {}
+        latency_loss_counts: dict[int, torch.Tensor] = {}
         num_batches = int(getattr(self.config.trainer, "eval_num_batches", 20))
         with torch.no_grad():
             for batch_idx, batch_vla in enumerate(self.vla_eval_dataloader):
                 if batch_idx >= num_batches:
                     break
-                with torch.autocast("cuda", dtype=torch.bfloat16):
-                    output_dict = self.model.forward(batch_vla)
-                    action_loss = output_dict["action_loss"]
-                losses.append(self.accelerator.gather(action_loss.detach().reshape(1)).mean())
+                batch_examples = list(batch_vla)
+                grouped = _group_examples_by_latency(batch_examples)
+                for latency, examples in grouped.items():
+                    with torch.autocast("cuda", dtype=torch.bfloat16):
+                        output_dict = self.model.forward(examples)
+                        action_loss = output_dict["action_loss"].detach().float()
+                    weight = torch.tensor(float(len(examples)), device=self.accelerator.device, dtype=torch.float32)
+                    total_loss_sum += action_loss * weight
+                    total_loss_count += weight
+                    if latency is not None:
+                        latency_loss_sums.setdefault(
+                            int(latency),
+                            torch.zeros((), device=self.accelerator.device, dtype=torch.float32),
+                        )
+                        latency_loss_counts.setdefault(
+                            int(latency),
+                            torch.zeros((), device=self.accelerator.device, dtype=torch.float32),
+                        )
+                        latency_loss_sums[int(latency)] += action_loss * weight
+                        latency_loss_counts[int(latency)] += weight
 
         if was_training:
             self.model.train()
 
-        if losses and self.accelerator.is_main_process:
-            eval_loss = torch.stack(losses).mean().item()
-            step_metrics["eval/loss"] = eval_loss
+        if dist.is_initialized():
+            dist.all_reduce(total_loss_sum, op=dist.ReduceOp.SUM)
+            dist.all_reduce(total_loss_count, op=dist.ReduceOp.SUM)
+            latency_keys = sorted(latency_loss_sums)
+            gathered_keys = [None for _ in range(dist.get_world_size())]
+            dist.all_gather_object(gathered_keys, latency_keys)
+            all_latency_keys = sorted({int(key) for keys in gathered_keys for key in keys})
+            for latency in all_latency_keys:
+                loss_sum = latency_loss_sums.get(
+                    latency,
+                    torch.zeros((), device=self.accelerator.device, dtype=torch.float32),
+                )
+                loss_count = latency_loss_counts.get(
+                    latency,
+                    torch.zeros((), device=self.accelerator.device, dtype=torch.float32),
+                )
+                dist.all_reduce(loss_sum, op=dist.ReduceOp.SUM)
+                dist.all_reduce(loss_count, op=dist.ReduceOp.SUM)
+                latency_loss_sums[latency] = loss_sum
+                latency_loss_counts[latency] = loss_count
+
+        if self.accelerator.is_main_process and total_loss_count.item() > 0:
+            step_metrics["eval/loss"] = (total_loss_sum / total_loss_count.clamp_min(1.0)).item()
+            for latency in sorted(latency_loss_sums):
+                count = latency_loss_counts[latency]
+                if count.item() > 0:
+                    step_metrics[f"eval/latency_{latency}/loss"] = (
+                        latency_loss_sums[latency] / count.clamp_min(1.0)
+                    ).item()
 
         if dist.is_initialized():
             dist.barrier()
@@ -834,27 +899,29 @@ class VLATrainer(TrainerUtils):
         counts = action_cc_f1.new_counts(spec)
 
         # Materialize assigned frames (tagged with their episode), batch for inference.
-        tagged = []  # (episode_key, base_index, packed_sample)
+        tagged = []  # (episode_key, base_index, latency, packed_sample)
         for ds, episode_key, frames in assigned:
             for flat_idx, base_idx in frames:
-                tagged.append((episode_key, base_idx, ds[flat_idx]))
+                sample = ds[flat_idx]
+                tagged.append((episode_key, base_idx, _sample_latency(sample), sample))
 
         per_ep = {}  # episode_key -> list of (base_index, teacher_components, model_components)
         with torch.no_grad():
             for start in range(0, len(tagged), bs):
                 chunk = tagged[start : start + bs]
-                normalized = unwrapped.predict_action(examples=[c[2] for c in chunk])["normalized_actions"]
-                for i, (episode_key, base_idx, sample) in enumerate(chunk):
+                normalized = unwrapped.predict_action(examples=[c[3] for c in chunk])["normalized_actions"]
+                for i, (episode_key, base_idx, latency, sample) in enumerate(chunk):
                     teacher_vec = np.asarray(sample["action"])[0, :]
                     model_vec = normalized[i, 0, :]
-                    per_ep.setdefault(episode_key, []).append(
-                        (base_idx, spec.comp_fn(teacher_vec), spec.comp_fn(model_vec))
-                    )
+                    entry = per_ep.setdefault(episode_key, {"latency": latency, "items": []})
+                    entry["items"].append((base_idx, spec.comp_fn(teacher_vec), spec.comp_fn(model_vec)))
 
         if was_training:
             self.model.train()
 
-        for items in per_ep.values():
+        latency_counts: dict[int, np.ndarray] = {}
+        for entry in per_ep.values():
+            items = entry["items"]
             items.sort(key=lambda r: r[0])
             action_cc_f1.accumulate_episode(
                 spec,
@@ -864,6 +931,18 @@ class VLATrainer(TrainerUtils):
                 k=k,
                 counts=counts,
             )
+            latency = entry.get("latency")
+            if latency is not None:
+                latency = int(latency)
+                latency_counts.setdefault(latency, action_cc_f1.new_counts(spec))
+                action_cc_f1.accumulate_episode(
+                    spec,
+                    frames=[r[0] for r in items],
+                    teacher_comps=[r[1] for r in items],
+                    model_comps=[r[2] for r in items],
+                    k=k,
+                    counts=latency_counts[latency],
+                )
 
         # Counts are small integers (well within float32's exact range); float32
         # keeps NCCL all_reduce broadly compatible across torch builds.
@@ -872,6 +951,31 @@ class VLATrainer(TrainerUtils):
             dist.all_reduce(counts_t, op=dist.ReduceOp.SUM)
         if self.accelerator.is_main_process:
             step_metrics.update(action_cc_f1.reduce_metrics(spec, counts_t.detach().cpu().numpy()))
+
+        if dist.is_initialized():
+            latency_keys = sorted(latency_counts)
+            gathered_keys = [None for _ in range(dist.get_world_size())]
+            dist.all_gather_object(gathered_keys, latency_keys)
+            all_latency_keys = sorted({int(key) for keys in gathered_keys for key in keys})
+        else:
+            all_latency_keys = sorted(latency_counts)
+
+        for latency in all_latency_keys:
+            latency_counts_t = torch.tensor(
+                latency_counts.get(latency, action_cc_f1.new_counts(spec)),
+                device=self.accelerator.device,
+                dtype=torch.float32,
+            )
+            if dist.is_initialized():
+                dist.all_reduce(latency_counts_t, op=dist.ReduceOp.SUM)
+            if self.accelerator.is_main_process:
+                latency_metrics = action_cc_f1.reduce_metrics(spec, latency_counts_t.detach().cpu().numpy())
+                for key, value in latency_metrics.items():
+                    if key.startswith("eval/"):
+                        key = f"eval/latency_{int(latency)}/{key[len('eval/'):]}"
+                    else:
+                        key = f"eval/latency_{int(latency)}/{key}"
+                    step_metrics[key] = value
 
         if dist.is_initialized():
             dist.barrier()

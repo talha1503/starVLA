@@ -1377,7 +1377,9 @@ class LeRobotSingleDataset(Dataset):
         trajectory_id, base_index = self.all_steps[index]
         raw_data = self.get_step_data(trajectory_id, base_index)
         data = self.transforms(raw_data)
-        return self._pack_sample(data)
+        sample = self._pack_sample(data)
+        self._attach_rl_games_metadata(sample, base_index)
+        return sample
 
     def _pack_sample(self, data: dict) -> dict:
         """Pack transformed modality data into training sample format."""
@@ -1412,6 +1414,15 @@ class LeRobotSingleDataset(Dataset):
             sample["state"] = state
 
         return sample
+
+    def _attach_rl_games_metadata(self, sample: dict, base_index: int) -> None:
+        """Attach non-modality RL-games metadata columns when converted datasets provide them."""
+        if self.curr_traj_data is None:
+            return
+        if "latency" in self.curr_traj_data.columns and 0 <= int(base_index) < len(self.curr_traj_data):
+            sample["latency"] = int(self.curr_traj_data.iloc[int(base_index)]["latency"])
+        elif "latency_id" in self.curr_traj_data.columns and 0 <= int(base_index) < len(self.curr_traj_data):
+            sample["latency"] = int(self.curr_traj_data.iloc[int(base_index)]["latency_id"])
 
     def get_step_data(self, trajectory_id: int, base_index: int) -> dict:
         """Get the RAW data for a single step in a trajectory. No transforms are applied.
@@ -2541,6 +2552,7 @@ class LeRobotMixtureDataset(Dataset):
                 raw_data = dataset.get_step_data(trajectory_id, step)    
                 data = dataset.transforms(raw_data)
                 sample = dataset._pack_sample(data)
+                dataset._attach_rl_games_metadata(sample, step)
                 
                 return sample
                 

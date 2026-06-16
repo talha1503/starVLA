@@ -474,6 +474,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
             return False
         if action_layout and ("action_layout" not in manifest or str(manifest["action_layout"]) != action_layout):
             return False
+        if mixed_latency and manifest.get("latency_metadata") is not True:
+            return False
         expected_latency_filter = getattr(args, "latency_filter", None)
         if expected_latency_filter is not None:
             manifest_latency_filter = manifest.get("latency_filter")

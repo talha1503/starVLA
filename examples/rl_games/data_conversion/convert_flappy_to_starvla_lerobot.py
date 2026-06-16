@@ -455,6 +455,7 @@ def _write_metadata(
             "episode_index": {"dtype": "int64", "shape": [1]},
             "frame_index": {"dtype": "int64", "shape": [1]},
             "task_index": {"dtype": "int64", "shape": [1]},
+            "latency": {"dtype": "int64", "shape": [1]},
         },
     }
     (meta_dir / "info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
@@ -490,6 +491,7 @@ def _write_episode(path: Path, rows: list[dict[str, Any]], *, action_dim: int, s
             "episode_index": pa.array([row["episode_index"] for row in rows], type=pa.int64()),
             "frame_index": pa.array([row["frame_index"] for row in rows], type=pa.int64()),
             "task_index": pa.array([row["task_index"] for row in rows], type=pa.int64()),
+            "latency": pa.array([row["latency"] for row in rows], type=pa.int64()),
             "done": pa.array([row["done"] for row in rows], type=pa.bool_()),
             "reward": pa.array([row["reward"] for row in rows], type=pa.float32()),
             "action_id": pa.array([row["action_id"] for row in rows], type=pa.int64()),
@@ -614,6 +616,7 @@ def convert_dataset(
                     "episode_index": new_episode_idx,
                     "frame_index": frame_idx,
                     "task_index": prompt_to_task_index[prompt],
+                    "latency": int(latency) if latency is not None else int(default_latency or 0),
                     "done": _row_done(
                         row,
                         flappy_columns.done,
@@ -669,6 +672,7 @@ def convert_dataset(
             "active_action_dim": ACTION_DIM,
             "action_carrier": action_carrier,
             "bridge_action_dim": BRIDGE_ACTION_DIM if action_carrier == "bridge" else None,
+            "latency_metadata": True,
             "latency_filter": [int(value) for value in latency_filter] if latency_filter else None,
             "episodes_per_latency": int(episodes_per_latency) if episodes_per_latency is not None else None,
             "max_episodes": int(max_episodes) if max_episodes is not None else None,
