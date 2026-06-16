@@ -416,6 +416,7 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         "trainer.save_interval",
         "trainer.eval_interval",
         "trainer.eval_num_batches",
+        "trainer.per_latency_eval_num_batches",
         "trainer.logging_frequency",
         "trainer.gradient_accumulation_steps",
         "trainer.distributed_backend",

@@ -80,6 +80,47 @@ def _group_examples_by_latency(examples: list[dict]) -> dict[int | None, list[di
     return grouped
 
 
+def _optional_positive_int(value) -> int | None:
+    if value in (None, ""):
+        return None
+    value = int(value)
+    return value if value > 0 else None
+
+
+def _dataset_latency_values(dataset) -> list[int]:
+    values: set[int] = set()
+    single_datasets = list(getattr(dataset, "datasets", None) or [dataset])
+    for ds in single_datasets:
+        all_steps = getattr(ds, "all_steps", None) or []
+        seen_trajectories: set[int] = set()
+        for trajectory_id, _ in all_steps:
+            trajectory_id = int(trajectory_id)
+            if trajectory_id in seen_trajectories:
+                continue
+            seen_trajectories.add(trajectory_id)
+            try:
+                latency_data = ds.get_trajectory_columns(trajectory_id, ["latency"])
+            except Exception:
+                continue
+            if "latency" not in latency_data.columns or len(latency_data) == 0:
+                continue
+            values.update(int(value) for value in latency_data["latency"].dropna().unique().tolist())
+    return sorted(values)
+
+
+def _episode_latency(ds, trajectory_id: int) -> int | None:
+    try:
+        latency_data = ds.get_trajectory_columns(int(trajectory_id), ["latency"])
+    except Exception:
+        return None
+    if "latency" not in latency_data.columns or len(latency_data) == 0:
+        return None
+    values = latency_data["latency"].dropna().unique().tolist()
+    if not values:
+        return None
+    return int(values[0])
+
+
 def load_fast_tokenizer():
     return AutoProcessor.from_pretrained("physical-intelligence/fast", trust_remote_code=True)
 
@@ -749,13 +790,31 @@ class VLATrainer(TrainerUtils):
         latency_loss_sums: dict[int, torch.Tensor] = {}
         latency_loss_counts: dict[int, torch.Tensor] = {}
         num_batches = int(getattr(self.config.trainer, "eval_num_batches", 20))
+        per_latency_batches = _optional_positive_int(getattr(self.config.trainer, "per_latency_eval_num_batches", None))
+        batch_size = int(self.config.datasets.vla_data.per_device_batch_size)
+        per_latency_sample_budget = per_latency_batches * batch_size if per_latency_batches is not None else None
+        seen_latency_counts: dict[int, int] = {}
+        expected_latencies = (
+            _dataset_latency_values(getattr(self.vla_eval_dataloader, "dataset", None))
+            if per_latency_sample_budget is not None
+            else []
+        )
+        use_per_latency_budget = per_latency_sample_budget is not None and bool(expected_latencies)
         with torch.no_grad():
             for batch_idx, batch_vla in enumerate(self.vla_eval_dataloader):
-                if batch_idx >= num_batches:
+                if not use_per_latency_budget and batch_idx >= num_batches:
                     break
                 batch_examples = list(batch_vla)
                 grouped = _group_examples_by_latency(batch_examples)
                 for latency, examples in grouped.items():
+                    if latency is not None and use_per_latency_budget:
+                        remaining = per_latency_sample_budget - seen_latency_counts.get(int(latency), 0)
+                        if remaining <= 0:
+                            continue
+                        examples = examples[:remaining]
+                        seen_latency_counts[int(latency)] = seen_latency_counts.get(int(latency), 0) + len(examples)
+                    if not examples:
+                        continue
                     with torch.autocast("cuda", dtype=torch.bfloat16):
                         output_dict = self.model.forward(examples)
                         action_loss = output_dict["action_loss"].detach().float()
@@ -773,6 +832,12 @@ class VLATrainer(TrainerUtils):
                         )
                         latency_loss_sums[int(latency)] += action_loss * weight
                         latency_loss_counts[int(latency)] += weight
+                if (
+                    use_per_latency_budget
+                    and expected_latencies
+                    and all(seen_latency_counts.get(latency, 0) >= per_latency_sample_budget for latency in expected_latencies)
+                ):
+                    break
 
         if was_training:
             self.model.train()
@@ -857,7 +922,7 @@ class VLATrainer(TrainerUtils):
         single_datasets = list(getattr(dataset, "datasets", None) or [dataset])
 
         # Enumerate episodes as contiguous same-trajectory runs of all_steps.
-        # episodes: list of (single_ds, episode_key, [(flat_idx, base_index), ...]).
+        # episodes: list of (single_ds, episode_key, latency, [(flat_idx, base_index), ...]).
         episodes = []
         for ds in single_datasets:
             all_steps = getattr(ds, "all_steps", None)
@@ -869,12 +934,12 @@ class VLATrainer(TrainerUtils):
             for flat_idx, step in enumerate(all_steps):
                 traj_id, base_idx = step
                 if cur and traj_id != cur_traj:
-                    episodes.append((ds, f"{tag}:{cur_traj}", cur))
+                    episodes.append((ds, f"{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
                     cur = []
                 cur_traj = traj_id
                 cur.append((int(flat_idx), int(base_idx)))
             if cur:
-                episodes.append((ds, f"{tag}:{cur_traj}", cur))
+                episodes.append((ds, f"{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
         if not episodes:
             return step_metrics
 
@@ -882,15 +947,32 @@ class VLATrainer(TrainerUtils):
         num_procs = int(self.accelerator.num_processes)
         rank = int(self.accelerator.process_index)
         bs = int(self.config.datasets.vla_data.per_device_batch_size)
-        frame_budget = max(1, int(getattr(self.config.trainer, "eval_num_batches", 20)) * bs)
+        per_latency_batches = _optional_positive_int(getattr(self.config.trainer, "per_latency_eval_num_batches", None))
+        shared_frame_budget = max(1, int(getattr(self.config.trainer, "eval_num_batches", 20)) * bs)
+        per_latency_frame_budget = per_latency_batches * bs if per_latency_batches is not None else None
         assigned = []
         frame_count = 0
+        latency_frame_counts: dict[int, int] = {}
+        expected_latencies = sorted({int(ep[2]) for ep in episodes if ep[2] is not None})
+        use_per_latency_budget = per_latency_frame_budget is not None and bool(expected_latencies)
         for ep_idx, ep in enumerate(episodes):
             if ep_idx % num_procs != rank:
                 continue
+            latency = ep[2]
+            if latency is not None and use_per_latency_budget:
+                latency = int(latency)
+                if latency_frame_counts.get(latency, 0) >= per_latency_frame_budget:
+                    continue
             assigned.append(ep)
-            frame_count += len(ep[2])
-            if frame_count >= frame_budget:
+            frame_count += len(ep[3])
+            if latency is not None and use_per_latency_budget:
+                latency_frame_counts[int(latency)] = latency_frame_counts.get(int(latency), 0) + len(ep[3])
+                if all(
+                    latency_frame_counts.get(value, 0) >= per_latency_frame_budget
+                    for value in expected_latencies
+                ):
+                    break
+            elif not use_per_latency_budget and frame_count >= shared_frame_budget:
                 break
 
         was_training = self.model.training
@@ -900,7 +982,7 @@ class VLATrainer(TrainerUtils):
 
         # Materialize assigned frames (tagged with their episode), batch for inference.
         tagged = []  # (episode_key, base_index, latency, packed_sample)
-        for ds, episode_key, frames in assigned:
+        for ds, episode_key, _episode_latency_value, frames in assigned:
             for flat_idx, base_idx in frames:
                 sample = ds[flat_idx]
                 tagged.append((episode_key, base_idx, _sample_latency(sample), sample))

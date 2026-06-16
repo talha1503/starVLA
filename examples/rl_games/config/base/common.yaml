@@ -72,6 +72,9 @@ trainer:
   save_interval: 100
   eval_interval: 100
   eval_num_batches: 100
+  # Optional held-out eval budget per latency. When null, eval_num_batches is
+  # used as one shared budget across all latencies.
+  per_latency_eval_num_batches: null
   # Log task-specific control-critical precision/recall/F1 on the held-out val set.
   # Supported tasks: flappy, demon_attack, deadly_corridor.
   # Uses predict_action, so enabled tasks get an extra forward pass per eval batch.
