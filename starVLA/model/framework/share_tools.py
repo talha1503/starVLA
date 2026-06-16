@@ -486,7 +486,13 @@ def apply_config_compat(cfg, *, strict: bool = False):
             run with past=0; the field is therefore dropped from user YAMLs
             and only re-materialised here for legacy code that still reads it.
 
-      6.  `cfg.version_id` is stamped to `"0.21"`.
+      6.  `datasets.vla_data.include_state`
+          - Auto-filled from legacy `train_data.include_state` when present.
+          - Auto-filled to `False` for saved configs that omit both
+            `datasets.vla_data.include_state` and
+            `framework.action_model.state_dim`.
+
+      7.  `cfg.version_id` is stamped to `"0.21"`.
 
     Args:
         cfg: An OmegaConf DictConfig (or anything _to_omegaconf can wrap).
@@ -550,7 +556,17 @@ def apply_config_compat(cfg, *, strict: bool = False):
         if OmegaConf.select(am, "past_action_window_size", default=None) is None:
             OmegaConf.update(cfg, f"{am_path}.past_action_window_size", 0, force_add=True)
 
-    # ---- 6. stamp version ----
+    # ---- 6. vla_data include_state compatibility ----
+    vla_data_path = "datasets.vla_data"
+    vla_data = OmegaConf.select(cfg, vla_data_path, default=None)
+    if vla_data is not None and OmegaConf.select(vla_data, "include_state", default=None) is None:
+        legacy_include_state = OmegaConf.select(cfg, "train_data.include_state", default=None)
+        if legacy_include_state is not None:
+            OmegaConf.update(cfg, f"{vla_data_path}.include_state", legacy_include_state, force_add=True)
+        elif OmegaConf.select(cfg, "framework.action_model.state_dim", default=None) is None:
+            OmegaConf.update(cfg, f"{vla_data_path}.include_state", False, force_add=True)
+
+    # ---- 7. stamp version ----
     if src_version != CONFIG_VERSION:
         try:
             OmegaConf.update(cfg, "version_id", CONFIG_VERSION, force_add=True)
