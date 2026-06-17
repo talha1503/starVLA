@@ -13,7 +13,7 @@ Options:
   --config-name <name>         Hydra top-level config name (default: train)
   --model <openvla|pi0|pi05|gr00t>  Model config group (default: openvla)
   --env <flappy|demon_attack|deadly_corridor>  Env config group (default: flappy)
-  --mode <single|mixed_latency|cross_task>      Mode config group (default: single)
+  --mode <single|mixed_latency|curriculum_exclusive|curriculum_cumulative|cross_task>      Mode config group (default: single)
   --init-mode <scratch|bridge>  Action-carrier initialization mode (default: scratch)
   --run-id <id>                Run id override (default: starvla_rl_games)
   --workspace-dir <dir>        Workspace root for relative outputs/assets (default: repo root)
@@ -307,18 +307,18 @@ fi
 
 if [[ "$CONVERTED_DATASET_NAME" == "flappy_train" ]]; then
   if [[ "$ENV_NAME" == "demon_attack" ]]; then
-    if [[ "$MODE" == "mixed_latency" ]]; then
+    if [[ "$MODE" == "mixed_latency" || "$MODE" == curriculum_* ]]; then
       CONVERTED_DATASET_NAME="demon_attack_mixed_latency_train"
     else
       CONVERTED_DATASET_NAME="demon_attack_train"
     fi
   elif [[ "$ENV_NAME" == "deadly_corridor" ]]; then
-    if [[ "$MODE" == "mixed_latency" ]]; then
+    if [[ "$MODE" == "mixed_latency" || "$MODE" == curriculum_* ]]; then
       CONVERTED_DATASET_NAME="deadly_corridor_mixed_latency_train"
     else
       CONVERTED_DATASET_NAME="deadly_corridor_train"
     fi
-  elif [[ "$ENV_NAME" == "flappy" && "$MODE" == "mixed_latency" ]]; then
+  elif [[ "$ENV_NAME" == "flappy" && ( "$MODE" == "mixed_latency" || "$MODE" == curriculum_* ) ]]; then
     CONVERTED_DATASET_NAME="flappy_mixed_latency_train"
   fi
 fi

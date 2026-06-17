@@ -1560,6 +1560,48 @@ class LeRobotSingleDataset(Dataset):
         setattr(self, cache_attr, action_ids)
         return action_ids
 
+    def get_latencies_for_all_steps(self) -> list[int]:
+        """Return latency IDs aligned one-to-one with ``self.all_steps``."""
+        cached = getattr(self, "_cached_step_latencies", None)
+        if cached is not None:
+            return cached
+
+        latencies_by_trajectory: dict[int, np.ndarray] = {}
+        latency_key_by_trajectory: dict[int, str] = {}
+        for trajectory_id, _ in self.all_steps:
+            trajectory_id = int(trajectory_id)
+            if trajectory_id in latencies_by_trajectory:
+                continue
+            for latency_key in ("latency", "latency_id"):
+                try:
+                    latency_data = self.get_trajectory_columns(trajectory_id, [latency_key])
+                except Exception:
+                    continue
+                if latency_key in latency_data.columns:
+                    latencies_by_trajectory[trajectory_id] = latency_data[latency_key].to_numpy()
+                    latency_key_by_trajectory[trajectory_id] = latency_key
+                    break
+            if trajectory_id not in latencies_by_trajectory:
+                raise ValueError(
+                    f"Dataset `{self.dataset_name}` trajectory {trajectory_id} has no `latency` "
+                    "or `latency_id` column required for latency curriculum sampling."
+                )
+
+        latencies: list[int] = []
+        for trajectory_id, base_index in self.all_steps:
+            trajectory_id = int(trajectory_id)
+            trajectory_latencies = latencies_by_trajectory[trajectory_id]
+            if base_index >= len(trajectory_latencies):
+                latency_key = latency_key_by_trajectory[trajectory_id]
+                raise IndexError(
+                    f"Step index {base_index} is out of range for `{latency_key}` in dataset "
+                    f"`{self.dataset_name}` trajectory {trajectory_id}."
+                )
+            latencies.append(int(trajectory_latencies[base_index]))
+
+        setattr(self, "_cached_step_latencies", latencies)
+        return latencies
+
 
     def get_trajectory_index(self, trajectory_id: int) -> int:
         """Get the index of the trajectory in the dataset by the trajectory ID.
@@ -2321,6 +2363,7 @@ class LeRobotMixtureDataset(Dataset):
         self._shuffle_steps = True
         self._action_balance_cfg = {}
         self._action_balance_enabled = False
+        self._active_latency_filter: set[int] | None = None
         if self.data_cfg is not None:
             seq_cfg = self.data_cfg.get("sequential_step_sampling", True)
             self._sequential_step_sampling = _as_bool(seq_cfg, default=True)
@@ -2386,6 +2429,16 @@ class LeRobotMixtureDataset(Dataset):
         self.epoch = epoch
         self._rebuild_step_order(epoch)
 
+    def set_active_latency_filter(self, latencies: Sequence[int] | None) -> None:
+        """Restrict sequential step sampling to the provided latency IDs."""
+        if not self._sequential_step_sampling:
+            raise ValueError(
+                "latency curriculum requires datasets.vla_data.sequential_step_sampling=true "
+                "so the active latency subset can be changed deterministically."
+            )
+        self._active_latency_filter = None if latencies is None else {int(value) for value in latencies}
+        self._rebuild_step_order(getattr(self, "epoch", 0))
+
     def _rebuild_step_order(self, epoch: int) -> None:
         """Build deterministic step order for sequential sampling."""
         if not getattr(self, "_sequential_step_sampling", False):
@@ -2393,12 +2446,36 @@ class LeRobotMixtureDataset(Dataset):
 
         flat_steps: list[tuple[int, int]] = []
         for dataset_index, dataset in enumerate(self.datasets):
-            flat_steps.extend(
-                (dataset_index, step_index)
-                for step_index in range(len(dataset.all_steps))
-            )
+            if self._active_latency_filter is None:
+                flat_steps.extend(
+                    (dataset_index, step_index)
+                    for step_index in range(len(dataset.all_steps))
+                )
+            else:
+                step_latencies = dataset.get_latencies_for_all_steps()
+                flat_steps.extend(
+                    (dataset_index, step_index)
+                    for step_index, latency in enumerate(step_latencies)
+                    if int(latency) in self._active_latency_filter
+                )
 
         self._flat_steps = flat_steps
+        self._flat_action_ids = np.array([], dtype=np.int64)
+        self._noop_step_order = np.array([], dtype=np.int64)
+        self._flap_step_order = np.array([], dtype=np.int64)
+        self._other_step_order = np.array([], dtype=np.int64)
+        if self._active_latency_filter is not None and len(flat_steps) == 0:
+            available = sorted(
+                {
+                    int(latency)
+                    for dataset in self.datasets
+                    for latency in dataset.get_latencies_for_all_steps()
+                }
+            )
+            raise ValueError(
+                f"Latency curriculum selected latencies={sorted(self._active_latency_filter)} "
+                f"but no matching training steps were found. Available latencies={available}."
+            )
         if self._action_balance_enabled:
             self._ensure_action_balance_indices()
             self._step_order = self._build_action_balanced_step_order(epoch)

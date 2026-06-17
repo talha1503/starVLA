@@ -1,0 +1,16 @@
+# @package _global_
+
+defaults:
+  - mixed_latency
+  - _self_
+
+datasets:
+  vla_data:
+    sequential_step_sampling: true
+    latency_curriculum:
+      enabled: true
+      strategy: exclusive
+      latencies: ${rl_games.env_eval.latency.values}
+      phase_steps: null
+
+mode: curriculum_exclusive

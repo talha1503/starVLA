@@ -87,6 +87,19 @@ def _optional_positive_int(value) -> int | None:
     return value if value > 0 else None
 
 
+def _optional_int_list(value) -> list[int] | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            stripped = stripped[1:-1]
+        if not stripped:
+            return []
+        return [int(item.strip()) for item in stripped.split(",") if item.strip()]
+    return [int(item) for item in value]
+
+
 def _dataset_latency_values(dataset) -> list[int]:
     values: set[int] = set()
     single_datasets = list(getattr(dataset, "datasets", None) or [dataset])
@@ -98,27 +111,30 @@ def _dataset_latency_values(dataset) -> list[int]:
             if trajectory_id in seen_trajectories:
                 continue
             seen_trajectories.add(trajectory_id)
-            try:
-                latency_data = ds.get_trajectory_columns(trajectory_id, ["latency"])
-            except Exception:
-                continue
-            if "latency" not in latency_data.columns or len(latency_data) == 0:
-                continue
-            values.update(int(value) for value in latency_data["latency"].dropna().unique().tolist())
+            for latency_key in ("latency", "latency_id"):
+                try:
+                    latency_data = ds.get_trajectory_columns(trajectory_id, [latency_key])
+                except Exception:
+                    continue
+                if latency_key not in latency_data.columns or len(latency_data) == 0:
+                    continue
+                values.update(int(value) for value in latency_data[latency_key].dropna().unique().tolist())
+                break
     return sorted(values)
 
 
 def _episode_latency(ds, trajectory_id: int) -> int | None:
-    try:
-        latency_data = ds.get_trajectory_columns(int(trajectory_id), ["latency"])
-    except Exception:
-        return None
-    if "latency" not in latency_data.columns or len(latency_data) == 0:
-        return None
-    values = latency_data["latency"].dropna().unique().tolist()
-    if not values:
-        return None
-    return int(values[0])
+    for latency_key in ("latency", "latency_id"):
+        try:
+            latency_data = ds.get_trajectory_columns(int(trajectory_id), [latency_key])
+        except Exception:
+            continue
+        if latency_key not in latency_data.columns or len(latency_data) == 0:
+            continue
+        values = latency_data[latency_key].dropna().unique().tolist()
+        if values:
+            return int(values[0])
+    return None
 
 
 def load_fast_tokenizer():
@@ -275,6 +291,7 @@ class VLATrainer(TrainerUtils):
         self._best_step = 0
         self._best_state_path = None
         self._best_metadata_path = None
+        self._latency_curriculum_phase = None
         if hasattr(self.config, "rl_games") and hasattr(self.config.rl_games, "env_eval"):
             enabled = bool(getattr(self.config.rl_games.env_eval, "enabled", False))
             if enabled:
@@ -665,6 +682,98 @@ class VLATrainer(TrainerUtils):
         """Create data iterators."""
         self.vla_iter = iter(self.vla_train_dataloader)
 
+    def _latency_curriculum_cfg(self):
+        vla_data = getattr(getattr(self.config, "datasets", None), "vla_data", None)
+        if vla_data is None:
+            return None
+        cfg = getattr(vla_data, "latency_curriculum", None)
+        if cfg is None or not _as_bool(getattr(cfg, "enabled", False), default=False):
+            return None
+        return cfg
+
+    def _latency_curriculum_phase_steps(self, cfg, latencies: list[int]) -> list[int]:
+        explicit = _optional_int_list(getattr(cfg, "phase_steps", None))
+        if explicit:
+            if len(explicit) != len(latencies):
+                raise ValueError(
+                    "datasets.vla_data.latency_curriculum.phase_steps must have one value per latency "
+                    f"(got {len(explicit)} steps for {len(latencies)} latencies)."
+                )
+            if any(step <= 0 for step in explicit):
+                raise ValueError("latency_curriculum.phase_steps values must be positive.")
+            return explicit
+
+        total_steps = int(getattr(self.config.trainer, "max_train_steps"))
+        if total_steps < len(latencies):
+            raise ValueError(
+                "trainer.max_train_steps must be at least the number of latency curriculum phases "
+                f"when phase_steps is not set (got max_train_steps={total_steps}, latencies={latencies})."
+            )
+        base = total_steps // len(latencies)
+        remainder = total_steps % len(latencies)
+        return [base + (1 if idx < remainder else 0) for idx in range(len(latencies))]
+
+    def _latency_curriculum_phase_for_step(self, step: int) -> tuple[int, list[int]] | None:
+        cfg = self._latency_curriculum_cfg()
+        if cfg is None:
+            return None
+        latencies = _optional_int_list(getattr(cfg, "latencies", None))
+        if not latencies:
+            latencies = _dataset_latency_values(getattr(self.vla_train_dataloader, "dataset", None))
+        if not latencies:
+            raise ValueError("latency_curriculum.enabled=true but no curriculum latencies were configured or found.")
+        latencies = sorted(dict.fromkeys(int(value) for value in latencies))
+        strategy = str(getattr(cfg, "strategy", "exclusive") or "exclusive").strip().lower()
+        if strategy not in {"exclusive", "cumulative"}:
+            raise ValueError(f"Unsupported latency_curriculum.strategy={strategy!r}; expected exclusive or cumulative.")
+
+        phase_steps = self._latency_curriculum_phase_steps(cfg, latencies)
+        cursor = 0
+        phase_idx = len(latencies) - 1
+        for idx, num_steps in enumerate(phase_steps):
+            cursor += int(num_steps)
+            if int(step) < cursor:
+                phase_idx = idx
+                break
+
+        if strategy == "exclusive":
+            active = [latencies[phase_idx]]
+        else:
+            active = latencies[: phase_idx + 1]
+        return phase_idx, active
+
+    def _apply_latency_curriculum(self, *, force: bool = False) -> dict[str, float]:
+        phase = self._latency_curriculum_phase_for_step(self.completed_steps)
+        if phase is None:
+            return {}
+        phase_idx, active_latencies = phase
+        active_key = (phase_idx, tuple(active_latencies))
+        if not force and active_key == self._latency_curriculum_phase:
+            return {}
+
+        dataset = getattr(self.vla_train_dataloader, "dataset", None)
+        if dataset is None or not callable(getattr(dataset, "set_active_latency_filter", None)):
+            raise ValueError("latency curriculum requires a train dataset with set_active_latency_filter(...).")
+        dataset.set_active_latency_filter(active_latencies)
+        self._latency_curriculum_phase = active_key
+        if hasattr(self.vla_train_dataloader, "sampler") and callable(getattr(self.vla_train_dataloader.sampler, "set_epoch", None)):
+            self.vla_train_dataloader.sampler.set_epoch(phase_idx)
+        self._create_data_iterators()
+        if self.accelerator.is_main_process:
+            logger.info(
+                "Latency curriculum phase %s at step %s: active_latencies=%s, dataset_size=%s",
+                phase_idx,
+                self.completed_steps,
+                active_latencies,
+                len(dataset),
+            )
+        return {
+            "latency_curriculum/phase": float(phase_idx),
+            "latency_curriculum/active_count": float(len(active_latencies)),
+            "latency_curriculum/max_active_latency": float(max(active_latencies)),
+            "latency_curriculum/dataset_size": float(len(dataset)),
+        }
+
     def _get_next_batch(self):
         """Get next batch (automatically handle data loop)."""
         try:
@@ -683,6 +792,7 @@ class VLATrainer(TrainerUtils):
         """Execute training loop."""
         self._log_training_config()
         self._create_data_iterators()
+        self._apply_latency_curriculum(force=True)
         progress_bar = tqdm(
             total=self.config.trainer.max_train_steps,
             initial=self.completed_steps,
@@ -701,6 +811,9 @@ class VLATrainer(TrainerUtils):
             if self.accelerator.sync_gradients:
                 progress_bar.update(1)
                 self.completed_steps += 1
+                curriculum_metrics = self._apply_latency_curriculum()
+                if curriculum_metrics:
+                    step_metrics.update(curriculum_metrics)
 
             if self.accelerator.is_local_main_process:
                 progress_bar.set_postfix(
