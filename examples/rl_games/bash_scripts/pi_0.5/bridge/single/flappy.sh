@@ -1,23 +1,23 @@
 cd starVLA
 
-bash examples/rl_games/install/install_stack.sh gr00t demon_attack
+bash examples/rl_games/install/install_stack.sh pi05 flappy
 
-conda activate starvla_rl_games_gr00t
+conda activate starvla_rl_games_pi05
 
 python examples/rl_games/scripts/launch_train.py \
-    model=gr00t \
-    env=demon_attack \
+    model=pi05 \
+    env=flappy \
     init=bridge \
     mode=single \
-    run_id="gr00t_bridge_demon_attack_single_latency_clean_data_exp1" \
+    run_id="pi05_bridge_flappy_single_latency_clean_data_exp2" \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
     wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/gr00t_bridge_demon_attack_single_latency_clean_data_exp1" \
+    checkpoint.hf_repo_id="talha15032/pi05_bridge_flappy_single_latency_clean_data_exp2" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/gr00t_bridge_demon_attack_single_latency_clean_data_exp1" \
-    dataset.source_hf="latency-sensitive-bench/demon_attack_200ep" \
-    dataset.source_subdir=demon_attack_fix_latency_0_200ep \
+    checkpoint.sync.repo_id="talha15032/pi05_bridge_flappy_single_latency_clean_data_exp2" \
+    dataset.source_hf="latency-sensitive-bench/flappy_200ep" \
+    dataset.source_subdir=flappy_fix_latency_0_200ep \
     checkpoint.local.keep_last_n=1 \
     checkpoint.save_best_model=false \
     trainer.max_train_steps=5000 \
