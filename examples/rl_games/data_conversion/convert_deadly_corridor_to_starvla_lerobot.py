@@ -741,6 +741,7 @@ def convert_dataset(
                         "episode_index": new_episode_idx,
                         "frame_index": frame_idx,
                         "task_index": prompt_to_task_index[prompt],
+                        "latency": int(latency) if latency is not None else 0,
                         "done": _row_done(
                             row,
                             deadly_corridor_columns.done,
