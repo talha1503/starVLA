@@ -7,7 +7,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import pyarrow as pa
@@ -33,7 +33,15 @@ LATENCY_FRAMESKIP = 4
 EpisodeKey = int | tuple[int, int]
 
 
-def _local_parquet_files(dataset_name: str, split: str, dataset_source_subdir: str | None = None) -> list[str] | None:
+class DemonAttackColumns(NamedTuple):
+    frame: str
+    reward: str
+    done: str | None
+    latency: str | None
+    latency_ms: str | None
+
+
+def _local_parquet_files(dataset_name: str, split: str) -> list[str] | None:
     dataset_path = Path(dataset_name).expanduser()
     if not dataset_path.exists():
         return None
@@ -60,6 +68,48 @@ def _local_parquet_files(dataset_name: str, split: str, dataset_source_subdir: s
         if any(marker in part.lower() for marker in split_markers for part in parquet_file.relative_to(dataset_path).parts)
     ]
     return [str(parquet_file) for parquet_file in (split_files or parquet_files)]
+
+
+def _local_parquet_columns(dataset_name: str, split: str) -> set[str] | None:
+    local_files = _local_parquet_files(dataset_name, split)
+    if local_files is None:
+        return None
+    columns: set[str] = set()
+    for parquet_file in local_files:
+        columns.update(pq.read_schema(parquet_file).names)
+    return columns
+
+
+def _resolve_required_column(available: set[str] | None, names: tuple[str, ...], label: str) -> str:
+    if available is None:
+        return names[0]
+    for name in names:
+        if name in available:
+            return name
+    raise ValueError(
+        f"Demon Attack dataset is missing required {label} column. "
+        f"Expected one of {names}; available={sorted(available)}"
+    )
+
+
+def _resolve_optional_column(available: set[str] | None, names: tuple[str, ...]) -> str | None:
+    if available is None:
+        return names[0]
+    for name in names:
+        if name in available:
+            return name
+    return None
+
+
+def _resolve_demon_attack_columns(dataset_name: str, split: str, want_latency: bool) -> DemonAttackColumns:
+    available = _local_parquet_columns(dataset_name, split)
+    return DemonAttackColumns(
+        frame=_resolve_required_column(available, ("t", "decision_step"), "frame index"),
+        reward=_resolve_required_column(available, ("reward", "raw_reward"), "reward"),
+        done=_resolve_optional_column(available, ("done",)),
+        latency=_resolve_optional_column(available, ("latency", "latency_raw_frames")) if want_latency else None,
+        latency_ms=_resolve_optional_column(available, ("latency_ms",)) if want_latency else None,
+    )
 
 
 def _load_hf_dataset(
@@ -256,29 +306,21 @@ def _normalize_prompt_map(prompt_map: dict[str, Any] | dict[int, Any] | None) ->
     return normalized
 
 
-def _row_latency(row: dict[str, Any], *, default_latency: int | None = None) -> int | None:
-    return latency_id_from_row(row, frameskip=LATENCY_FRAMESKIP, default_latency=default_latency)
+def _row_latency(row: dict[str, Any], *, latency_column: str | None, default_latency: int | None) -> int | None:
+    if latency_column is not None and latency_column in row and row.get(latency_column) is not None:
+        return int(row[latency_column])
+    return default_latency
 
 
-def _filter_latency(ds, latency_filter: list[int] | None, *, default_latency: int | None):
+def _filter_latency(ds, latency_filter: list[int] | None, *, latency_column: str | None, default_latency: int | None):
     if not latency_filter:
         return ds
     allowed = {int(value) for value in latency_filter}
-    if "latency" not in ds.column_names and "latency_raw_frames" not in ds.column_names:
+    if latency_column is None or latency_column not in ds.column_names:
         if default_latency is not None and int(default_latency) in allowed:
             return ds
-        raise ValueError("latency_filter was requested, but the dataset has no `latency` or `latency_raw_frames` column")
-    return ds.filter(lambda row: _row_latency(row, default_latency=default_latency) in allowed)
-
-
-def _episode_key(episode_idx: int, latency: int | None) -> EpisodeKey:
-    return (episode_idx, int(latency)) if latency is not None else episode_idx
-
-
-def _episode_sort_key(episode_key: EpisodeKey) -> tuple[int, int]:
-    if isinstance(episode_key, tuple):
-        return episode_key
-    return (episode_key, -1)
+        raise ValueError("latency_filter was requested, but the dataset has no latency column")
+    return ds.filter(lambda row: row.get(latency_column) is not None and int(row[latency_column]) in allowed)
 
 
 def _load_index_split(
@@ -290,64 +332,46 @@ def _load_index_split(
     dataset_config_name: str | None = None,
     dataset_source_subdir: str | None = None,
 ):
-    old_base_columns = ["episode_idx", "t", "action_id", "done", "reward", "prompt"]
-    canonical_base_columns = ["episode_idx", "decision_step", "action_id", "raw_reward", "prompt"]
-    base_options = (old_base_columns, canonical_base_columns)
-    if want_latency:
-        for base_columns in base_options:
-            for columns in (
-                [*base_columns, "latency", "latency_ms"],
-                [*base_columns, "latency_raw_frames", "latency_ms"],
-                [*base_columns, "latency"],
-                [*base_columns, "latency_raw_frames"],
-            ):
-                try:
-                    return _load_split(
-                        dataset_name,
-                        split,
-                        cache_dir=cache_dir,
-                        columns=columns,
-                        dataset_config_name=dataset_config_name,
-                        dataset_source_subdir=dataset_source_subdir,
-                    )
-                except Exception:
-                    pass
-        return _load_split(
+    demon_attack_columns = _resolve_demon_attack_columns(dataset_name, split, want_latency=want_latency)
+    columns = ["episode_idx", demon_attack_columns.frame, "action_id", demon_attack_columns.reward, "prompt"]
+    if demon_attack_columns.done is not None:
+        columns.append(demon_attack_columns.done)
+    if demon_attack_columns.latency is not None:
+        columns.append(demon_attack_columns.latency)
+    if demon_attack_columns.latency_ms is not None:
+        columns.append(demon_attack_columns.latency_ms)
+    return (
+        _load_split(
             dataset_name,
             split,
             cache_dir=cache_dir,
-            columns=None,
+            columns=columns,
             dataset_config_name=dataset_config_name,
-            dataset_source_subdir=dataset_source_subdir,
-        )
-    for base_columns in base_options:
-        try:
-            return _load_split(
-                dataset_name,
-                split,
-                cache_dir=cache_dir,
-                columns=base_columns,
-                dataset_config_name=dataset_config_name,
-                dataset_source_subdir=dataset_source_subdir,
-            )
-        except Exception:
-            pass
-    return _load_split(
-        dataset_name,
-        split,
-        cache_dir=cache_dir,
-        columns=None,
-        dataset_config_name=dataset_config_name,
-        dataset_source_subdir=dataset_source_subdir,
+        ),
+        demon_attack_columns,
     )
 
 
-def _canonical_prompt(row: dict[str, Any], *, prompt_map: dict[int, dict[str, Any]], default_latency: int | None) -> tuple[str, int | None, Any]:
-    latency = _row_latency(row, default_latency=default_latency)
+def _canonical_prompt(
+    row: dict[str, Any],
+    *,
+    prompt_map: dict[int, dict[str, Any]],
+    latency_column: str | None,
+    latency_ms_column: str | None,
+    default_latency: int | None,
+) -> tuple[str, int | None, Any]:
+    latency = _row_latency(row, latency_column=latency_column, default_latency=default_latency)
     if latency is not None and latency in prompt_map:
         entry = prompt_map[latency]
         return str(entry["prompt"]), latency, entry.get("latency_ms")
-    return str(row["prompt"]), latency, row.get("latency_ms")
+    latency_ms = row.get(latency_ms_column) if latency_ms_column is not None else None
+    return str(row["prompt"]), latency, latency_ms
+
+
+def _row_done(row: dict[str, Any], done_column: str | None, *, frame_idx: int, episode_length: int) -> bool:
+    if done_column is not None and done_column in row:
+        return bool(row[done_column])
+    return frame_idx == episode_length - 1
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -505,7 +529,7 @@ def convert_dataset(
     def _convert_split(split: str, split_output_dir: Path) -> dict[str, Any]:
         split_output_dir.mkdir(parents=True, exist_ok=True)
         want_latency = bool(require_latency_prompt_map or latency_filter or prompt_map_override or episodes_per_latency is not None)
-        ds_meta = _load_index_split(
+        ds_meta, demon_attack_columns = _load_index_split(
             dataset_name,
             split,
             cache_dir=cache_dir,
@@ -513,7 +537,12 @@ def convert_dataset(
             dataset_config_name=dataset_config_name,
             dataset_source_subdir=dataset_source_subdir,
         )
-        ds_meta = _filter_latency(ds_meta, latency_filter, default_latency=default_latency)
+        ds_meta = _filter_latency(
+            ds_meta,
+            latency_filter,
+            latency_column=demon_attack_columns.latency,
+            default_latency=default_latency,
+        )
         if len(ds_meta) == 0:
             raise ValueError(f"{dataset_name} has no {split} rows")
 
@@ -525,10 +554,12 @@ def convert_dataset(
 
         for row_idx, row in enumerate(tqdm(ds_meta, desc=f"Indexing Demon Attack {split} rows")):
             episode_idx = int(row["episode_idx"])
-            timestep = int(_row_get(row, ("t", "decision_step", "frame_index", "frame_idx", "step"), row_idx))
-            latency = _row_latency(row, default_latency=default_latency)
-            episode_key = _episode_key(episode_idx, latency)
-            episode_indices.setdefault(episode_key, []).append((timestep, row_idx))
+            episode_indices.setdefault(episode_idx, []).append((int(row[demon_attack_columns.frame]), row_idx))
+            latency = _row_latency(
+                row,
+                latency_column=demon_attack_columns.latency,
+                default_latency=default_latency,
+            )
             if latency is not None:
                 existing = episode_latencies.setdefault(episode_key, int(latency))
                 if existing != int(latency):
@@ -554,6 +585,7 @@ def convert_dataset(
                 dataset_source_subdir=dataset_source_subdir,
             ),
             latency_filter,
+            latency_column=demon_attack_columns.latency,
             default_latency=default_latency,
         )
         episode_lengths: list[int] = []
@@ -566,6 +598,8 @@ def convert_dataset(
                 prompt, latency, latency_ms = _canonical_prompt(
                     row,
                     prompt_map=prompt_map_override,
+                    latency_column=demon_attack_columns.latency,
+                    latency_ms_column=demon_attack_columns.latency_ms,
                     default_latency=default_latency,
                 )
                 if prompt not in prompt_to_task_index:
@@ -584,9 +618,13 @@ def convert_dataset(
                     "episode_index": new_episode_idx,
                     "frame_index": frame_idx,
                     "task_index": prompt_to_task_index[prompt],
-                    "latency": int(latency) if latency is not None else int(default_latency or 0),
-                    "done": bool(_row_get(row, ("done", "terminal", "terminated"), frame_idx == len(episode) - 1)),
-                    "reward": float(_row_get(row, ("reward", "raw_reward", "rewards"), 0.0)),
+                    "done": _row_done(
+                        row,
+                        demon_attack_columns.done,
+                        frame_idx=frame_idx,
+                        episode_length=len(episode),
+                    ),
+                    "reward": float(row[demon_attack_columns.reward]),
                     "action_id": int(row["action_id"]),
                 })
             episode_lengths.append(len(out_rows))

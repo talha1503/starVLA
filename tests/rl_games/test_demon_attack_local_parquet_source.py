@@ -66,3 +66,38 @@ def test_convert_demon_attack_returns_absolute_local_parquet_paths(
     train_files = convert_demon_attack._local_parquet_files("dataset", "train")
 
     assert train_files == [str(parquet_file)]
+
+
+def test_convert_demon_attack_resolves_clean_v1_column_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+    convert_demon_attack: ModuleType,
+) -> None:
+    monkeypatch.setattr(
+        convert_demon_attack,
+        "_local_parquet_columns",
+        lambda dataset_name, split: {
+            "episode_idx",
+            "decision_step",
+            "action_id",
+            "raw_reward",
+            "prompt",
+            "latency_raw_frames",
+            "latency_ms",
+        },
+    )
+
+    columns = convert_demon_attack._resolve_demon_attack_columns("demon_attack_clean_v1", "train", want_latency=True)
+
+    assert columns.frame == "decision_step"
+    assert columns.reward == "raw_reward"
+    assert columns.done is None
+    assert columns.latency == "latency_raw_frames"
+    assert columns.latency_ms == "latency_ms"
+
+
+def test_convert_demon_attack_marks_last_frame_done_when_done_column_is_absent(
+    convert_demon_attack: ModuleType,
+) -> None:
+    assert convert_demon_attack._row_done({"done": True}, "done", frame_idx=0, episode_length=3) is True
+    assert convert_demon_attack._row_done({}, None, frame_idx=0, episode_length=3) is False
+    assert convert_demon_attack._row_done({}, None, frame_idx=2, episode_length=3) is True
