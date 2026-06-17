@@ -101,7 +101,7 @@ def test_convert_flappy_resolves_clean_v1_column_aliases(
     monkeypatch.setattr(
         convert_flappy,
         "_local_parquet_columns",
-        lambda dataset_name, split: {
+        lambda dataset_name, split, dataset_source_subdir=None: {
             "episode_idx",
             "decision_step",
             "action_id",

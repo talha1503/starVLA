@@ -72,6 +72,10 @@ fi
 CONDA_BASE="$(conda info --base)"
 source "${CONDA_BASE}/etc/profile.d/conda.sh"
 
+# Keep uv's cache on the same filesystem as the conda envs so packages are
+# hardlinked into each env (download/disk dedup) instead of silently copied.
+export UV_CACHE_DIR="${UV_CACHE_DIR:-${CONDA_BASE}/.uv_cache}"
+
 MODELS=(openvla pi0 pi05 gr00t)
 ENVS=(flappy demon_attack deadly_corridor)
 
@@ -186,23 +190,73 @@ install_in_active_env() {
   fi
 }
 
+# Build one model env from scratch in the currently active env: common stack +
+# model deps + per-task env deps (validation runs separately). uv dedups the
+# heavy stack across envs via its shared cache + hardlinks, so there is no need
+# to clone a base env (conda --clone cannot reproduce a pip-dominated env).
+build_split_env() {
+  local model="$1"
+  local target="$2"
+  conda activate "${target}"
+  validate_active_python_version "${target}"
+  install_in_active_env "${model}" "false" "${ENVS_TO_INSTALL[@]}"
+}
+
 if [[ "${SPLIT_ENVS}" == "true" ]]; then
+  # Create the (empty) per-model conda envs serially (conda metadata is not
+  # concurrency-safe), collecting their names.
+  TARGET_ENVS=()
   for model in "${MODELS_TO_INSTALL[@]}"; do
-    TARGET_ENV_NAME="${CONDA_ENV_NAME}_${model}"
-    ensure_conda_env "${TARGET_ENV_NAME}"
-    conda activate "${TARGET_ENV_NAME}"
-    validate_active_python_version "${TARGET_ENV_NAME}"
+    target="${CONDA_ENV_NAME}_${model}"
+    TARGET_ENVS+=("${target}")
+    ensure_conda_env "${target}"
+  done
 
-    MODEL_ENVS=("${ENVS_TO_INSTALL[@]}")
+  # Build the first env serially: fail-fast smoke test + warms the uv cache
+  # (torch and the common stack) so the parallel batch only hardlinks.
+  echo "[bootstrap] Building ${TARGET_ENVS[0]} (model=${MODELS_TO_INSTALL[0]}) — warms uv cache"
+  build_split_env "${MODELS_TO_INSTALL[0]}" "${TARGET_ENVS[0]}"
+  conda deactivate
 
-    echo "[bootstrap] Installing model=${model} in env=${TARGET_ENV_NAME} with env targets: ${MODEL_ENVS[*]}"
-    install_in_active_env "${model}" "false" "${MODEL_ENVS[@]}"
-    if [[ "${RUN_VALIDATE}" == "true" ]]; then
-      echo "[bootstrap] Running validation"
-      run_common_validation
-      run_target_validators_for_model "${model}" "${MODEL_ENVS[@]}"
+  # Build the remaining envs in parallel against the warm uv cache. uv's cache is
+  # concurrency-safe (per-package locks), so there is no duplicate download.
+  pids=()
+  for ((i=1; i<${#MODELS_TO_INSTALL[@]}; i++)); do
+    model="${MODELS_TO_INSTALL[$i]}"
+    target="${TARGET_ENVS[$i]}"
+    echo "[bootstrap] Building ${target} (model=${model}) in background — log: /tmp/bootstrap_${model}.log"
+    (
+      build_split_env "${model}" "${target}"
+    ) > "/tmp/bootstrap_${model}.log" 2>&1 &
+    pids+=("$!")
+  done
+
+  fail=0
+  for ((j=0; j<${#pids[@]}; j++)); do
+    model="${MODELS_TO_INSTALL[$((j+1))]}"
+    if wait "${pids[$j]}"; then
+      echo "[bootstrap] Install OK: ${model}"
+    else
+      echo "[bootstrap] Install FAILED: ${model} (see /tmp/bootstrap_${model}.log)" >&2
+      fail=1
     fi
   done
+  if [[ "${fail}" -ne 0 ]]; then
+    exit 1
+  fi
+
+  # Validation runs serially: model load + GPU work should not contend.
+  if [[ "${RUN_VALIDATE}" == "true" ]]; then
+    for i in "${!MODELS_TO_INSTALL[@]}"; do
+      model="${MODELS_TO_INSTALL[$i]}"
+      target="${TARGET_ENVS[$i]}"
+      conda activate "${target}"
+      echo "[bootstrap] Validating ${target}"
+      run_common_validation
+      run_target_validators_for_model "${model}" "${ENVS_TO_INSTALL[@]}"
+      conda deactivate
+    done
+  fi
 
   echo "[bootstrap] Complete."
   echo "[bootstrap] Split env mode used. Activate with: conda activate ${CONDA_ENV_NAME}_<model>"

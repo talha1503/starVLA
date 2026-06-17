@@ -4,6 +4,10 @@ set -euo pipefail
 PYTHON_BIN="${PYTHON_BIN:-python}"
 TORCH_PROFILE="${STARVLA_TORCH_PROFILE:-auto}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_pip.sh
+source "${SCRIPT_DIR}/_pip.sh"
+
 detect_torch_profile() {
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "cpu"
@@ -12,8 +16,12 @@ detect_torch_profile() {
 
   local compute_caps
   compute_caps="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null || true)"
+  # Consumer Blackwell (sm_120) keeps the tested CUDA 12.8 stack.
   if echo "${compute_caps}" | grep -qx "12.0"; then
     echo "cu128"
+  # Datacenter Blackwell (sm_100, compute cap 10.x, e.g. B200) needs CUDA 13.
+  elif echo "${compute_caps}" | awk -F. '$1 >= 10 {found=1} END {exit found ? 0 : 1}'; then
+    echo "cu130"
   else
     echo "cu124"
   fi
@@ -23,28 +31,33 @@ install_torch() {
   local profile="$1"
 
   case "${profile}" in
+    cu130)
+      echo "[install/torch] Installing PyTorch 2.10.0 CUDA 13.0 stack for datacenter Blackwell/sm_100"
+      pip_install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
+        --index-url https://download.pytorch.org/whl/cu130
+      ;;
     cu128)
       echo "[install/torch] Installing PyTorch 2.7.1 CUDA 12.8 stack for Blackwell/sm_120"
-      "$PYTHON_BIN" -m pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
+      pip_install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
         --index-url https://download.pytorch.org/whl/cu128
       ;;
     cu126)
       echo "[install/torch] Installing PyTorch 2.6.0 CUDA 12.6 stack"
-      "$PYTHON_BIN" -m pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
+      pip_install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
         --index-url https://download.pytorch.org/whl/cu126
       ;;
     cu124)
       echo "[install/torch] Installing PyTorch 2.6.0 CUDA 12.4 stack"
-      "$PYTHON_BIN" -m pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
+      pip_install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
         --index-url https://download.pytorch.org/whl/cu124
       ;;
     cpu)
       echo "[install/torch] Installing PyTorch 2.6.0 CPU stack"
-      "$PYTHON_BIN" -m pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
+      pip_install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
         --index-url https://download.pytorch.org/whl/cpu
       ;;
     *)
-      echo "[install/torch] Unknown STARVLA_TORCH_PROFILE='${profile}'. Expected auto|cu124|cu126|cu128|cpu." >&2
+      echo "[install/torch] Unknown STARVLA_TORCH_PROFILE='${profile}'. Expected auto|cu124|cu126|cu128|cu130|cpu." >&2
       exit 1
       ;;
   esac

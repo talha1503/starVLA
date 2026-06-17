@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib
 import sys
+from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -95,7 +97,7 @@ def test_demon_attack_index_split_retries_canonical_hf_columns(
 
     monkeypatch.setattr(demon, "load_dataset", fake_load_dataset)
 
-    ds = demon._load_index_split(
+    ds, columns = demon._load_index_split(
         "talha1503/demon_attack_mixed_latency_parquet",
         "train",
         cache_dir="/tmp/cache",
@@ -103,43 +105,19 @@ def test_demon_attack_index_split_retries_canonical_hf_columns(
     )
 
     assert isinstance(ds, FakeDataset)
+    assert columns.frame == "decision_step"
+    assert columns.reward == "raw_reward"
+    assert columns.done is None
+    assert columns.latency == "latency_raw_frames"
     assert calls[0][1]["columns"] == [
         "episode_idx",
         "t",
         "action_id",
-        "done",
         "reward",
         "prompt",
+        "done",
         "latency",
         "latency_ms",
-    ]
-    assert calls[1][1]["columns"] == [
-        "episode_idx",
-        "t",
-        "action_id",
-        "done",
-        "reward",
-        "prompt",
-        "latency_raw_frames",
-        "latency_ms",
-    ]
-    assert calls[2][1]["columns"] == [
-        "episode_idx",
-        "t",
-        "action_id",
-        "done",
-        "reward",
-        "prompt",
-        "latency",
-    ]
-    assert calls[3][1]["columns"] == [
-        "episode_idx",
-        "t",
-        "action_id",
-        "done",
-        "reward",
-        "prompt",
-        "latency_raw_frames",
     ]
     assert calls[-1][1]["columns"] == [
         "episode_idx",
@@ -175,7 +153,7 @@ def test_demon_attack_zero_latency_index_split_retries_canonical_hf_columns(
 
     monkeypatch.setattr(demon, "load_dataset", fake_load_dataset)
 
-    ds = demon._load_index_split(
+    ds, columns = demon._load_index_split(
         "talha1503/demon_attack_zero_latency_parquet",
         "train",
         cache_dir="/tmp/cache",
@@ -183,7 +161,82 @@ def test_demon_attack_zero_latency_index_split_retries_canonical_hf_columns(
     )
 
     assert isinstance(ds, FakeDataset)
+    assert columns.frame == "decision_step"
+    assert columns.reward == "raw_reward"
+    assert columns.done is None
     assert calls[-1][1]["columns"] == ["episode_idx", "decision_step", "action_id", "raw_reward", "prompt"]
+
+
+def test_demon_attack_zero_latency_conversion_writes_latency_column(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    converters: list[ModuleType],
+) -> None:
+    demon = converters[1]
+    captured_rows: list[dict[str, Any]] = []
+    rows = [
+        {
+            "episode_idx": 0,
+            "decision_step": 0,
+            "action_id": 1,
+            "raw_reward": 0.5,
+            "prompt": "play demon attack",
+            "image": object(),
+        }
+    ]
+
+    class FakeDataset:
+        column_names = ["episode_idx", "decision_step", "action_id", "raw_reward", "prompt", "image"]
+
+        def __init__(self, dataset_rows: list[dict[str, Any]]) -> None:
+            self.dataset_rows = dataset_rows
+
+        def __len__(self) -> int:
+            return len(self.dataset_rows)
+
+        def __iter__(self):
+            return iter(self.dataset_rows)
+
+        def filter(self, fn):
+            return self
+
+        def select(self, indices: list[int]):
+            return FakeDataset([self.dataset_rows[index] for index in indices])
+
+    def fake_load_dataset(*args, **kwargs):
+        columns = kwargs.get("columns")
+        if columns is None:
+            return FakeDataset(rows)
+        missing = [column for column in columns if column not in FakeDataset.column_names]
+        if missing:
+            raise RuntimeError(f"No match for FieldRef.Name({missing[0]})")
+        return FakeDataset([{column: row[column] for column in columns} for row in rows])
+
+    def fake_write_episode(path, episode_rows, *, action_dim: int, state_dim: int) -> None:
+        captured_rows.extend(episode_rows)
+
+    monkeypatch.setattr(demon, "load_dataset", fake_load_dataset)
+    monkeypatch.setattr(demon, "_png_bytes", lambda image: b"image")
+    monkeypatch.setattr(demon, "_write_episode", fake_write_episode)
+
+    demon.convert_dataset(
+        "fake/demon_attack_zero_latency",
+        tmp_path / "demon_train",
+        cache_dir="/tmp/cache",
+        dataset_config_name=None,
+        dataset_source_subdir=None,
+        max_episodes=1,
+        force=False,
+        require_latency_prompt_map=False,
+        latency_filter=None,
+        episodes_per_latency=None,
+        prompt_map_override=None,
+        default_latency=None,
+        action_carrier="native",
+    )
+
+    assert captured_rows
+    assert all(row["latency"] == 0 for row in captured_rows)
 
 
 def test_deadly_corridor_index_split_retries_canonical_hf_columns(
@@ -215,7 +268,7 @@ def test_deadly_corridor_index_split_retries_canonical_hf_columns(
 
     monkeypatch.setattr(deadly, "load_dataset", fake_load_dataset)
 
-    ds = deadly._load_index_split(
+    ds, columns = deadly._load_index_split(
         "talha1503/deadly_corridor_mixed_latency_parquet",
         "train",
         cache_dir="/tmp/cache",
@@ -223,6 +276,8 @@ def test_deadly_corridor_index_split_retries_canonical_hf_columns(
     )
 
     assert isinstance(ds, FakeDataset)
+    assert columns.frame == "decision_step"
+    assert columns.latency == "latency_raw_frames"
     assert calls[-1][1]["columns"] == [
         "episode_idx",
         "decision_step",
@@ -255,7 +310,7 @@ def test_deadly_corridor_zero_latency_index_split_retries_canonical_hf_columns(
 
     monkeypatch.setattr(deadly, "load_dataset", fake_load_dataset)
 
-    ds = deadly._load_index_split(
+    ds, columns = deadly._load_index_split(
         "talha1503/deadly_corridor_zero_latency_parquet",
         "train",
         cache_dir="/tmp/cache",
@@ -263,4 +318,76 @@ def test_deadly_corridor_zero_latency_index_split_retries_canonical_hf_columns(
     )
 
     assert isinstance(ds, FakeDataset)
+    assert columns.frame == "decision_step"
     assert calls[-1][1]["columns"] == ["episode_idx", "decision_step", "prompt"]
+
+
+def test_deadly_corridor_zero_latency_conversion_writes_latency_column(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    converters: list[ModuleType],
+) -> None:
+    deadly = converters[2]
+    captured_rows: list[dict[str, Any]] = []
+    rows = [
+        {
+            "episode_idx": 0,
+            "decision_step": 0,
+            "raw_reward": 0.5,
+            "prompt": "play deadly corridor",
+            "image": object(),
+            "action_text": "NOOP",
+        }
+    ]
+
+    class FakeDataset:
+        column_names = ["episode_idx", "decision_step", "raw_reward", "prompt", "image", "action_text"]
+
+        def __init__(self, dataset_rows: list[dict[str, Any]]) -> None:
+            self.dataset_rows = dataset_rows
+
+        def __len__(self) -> int:
+            return len(self.dataset_rows)
+
+        def __iter__(self):
+            return iter(self.dataset_rows)
+
+        def filter(self, fn):
+            return self
+
+        def select(self, indices: list[int]):
+            return FakeDataset([self.dataset_rows[index] for index in indices])
+
+    def fake_load_dataset(*args, **kwargs):
+        columns = kwargs.get("columns")
+        if columns is None:
+            return FakeDataset(rows)
+        missing = [column for column in columns if column not in FakeDataset.column_names]
+        if missing:
+            raise RuntimeError(f"No match for FieldRef.Name({missing[0]})")
+        return FakeDataset([{column: row[column] for column in columns} for row in rows])
+
+    def fake_write_episode(path, episode_rows, *, action_dim: int, state_dim: int) -> None:
+        captured_rows.extend(episode_rows)
+
+    monkeypatch.setattr(deadly, "load_dataset", fake_load_dataset)
+    monkeypatch.setattr(deadly, "_png_bytes", lambda image: b"image")
+    monkeypatch.setattr(deadly, "_write_episode", fake_write_episode)
+
+    deadly.convert_dataset(
+        "fake/deadly_corridor_zero_latency",
+        tmp_path / "deadly_train",
+        cache_dir="/tmp/cache",
+        dataset_config_name=None,
+        dataset_source_subdir=None,
+        max_episodes=1,
+        force=False,
+        require_latency_prompt_map=False,
+        latency_filter=None,
+        episodes_per_latency=None,
+        action_carrier="native",
+        action_layout=deadly.ACTION_LAYOUT_MULTIBINARY_7,
+    )
+
+    assert captured_rows
+    assert all(row["latency"] == 0 for row in captured_rows)

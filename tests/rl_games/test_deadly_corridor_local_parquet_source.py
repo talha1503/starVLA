@@ -66,3 +66,38 @@ def test_convert_deadly_corridor_returns_absolute_local_parquet_paths(
     train_files = convert_deadly_corridor._local_parquet_files("dataset", "train")
 
     assert train_files == [str(parquet_file)]
+
+
+def test_convert_deadly_corridor_resolves_clean_v1_column_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+    convert_deadly_corridor: ModuleType,
+) -> None:
+    monkeypatch.setattr(
+        convert_deadly_corridor,
+        "_local_parquet_columns",
+        lambda dataset_name, split, dataset_source_subdir=None: {
+            "episode_idx",
+            "decision_step",
+            "action",
+            "raw_reward",
+            "prompt",
+            "latency_raw_frames",
+            "latency_ms",
+        },
+    )
+
+    columns = convert_deadly_corridor._resolve_deadly_corridor_columns("deadly_corridor_clean_v1", "train", want_latency=True)
+
+    assert columns.frame == "decision_step"
+    assert columns.reward == "raw_reward"
+    assert columns.done is None
+    assert columns.latency == "latency_raw_frames"
+    assert columns.latency_ms == "latency_ms"
+
+
+def test_convert_deadly_corridor_marks_last_frame_done_when_done_column_is_absent(
+    convert_deadly_corridor: ModuleType,
+) -> None:
+    assert convert_deadly_corridor._row_done({"done": True}, "done", frame_idx=0, episode_length=3) is True
+    assert convert_deadly_corridor._row_done({}, None, frame_idx=0, episode_length=3) is False
+    assert convert_deadly_corridor._row_done({}, None, frame_idx=2, episode_length=3) is True

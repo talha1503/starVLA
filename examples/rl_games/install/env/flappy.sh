@@ -2,8 +2,14 @@
 set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
-"$PYTHON_BIN" -m pip install flappy-bird-gymnasium
-"$PYTHON_BIN" -m pip install --no-cache-dir --force-reinstall --no-deps "pygame==2.6.1" pillow flappy-bird-gymnasium
+# shellcheck source=../_pip.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_pip.sh"
+
+pip_install flappy-bird-gymnasium
+# force-reinstall + no-deps is load-bearing: it makes regular pygame's files win
+# over pygame-ce (whose libpng cannot decode the sprites; see PIL patch below).
+# Drop --no-cache-dir so the wheel comes from cache instead of re-downloading.
+pip_install --force-reinstall --no-deps "pygame==2.6.1" pillow flappy-bird-gymnasium
 
 "$PYTHON_BIN" - <<'PY'
 import os
