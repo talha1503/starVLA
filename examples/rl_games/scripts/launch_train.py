@@ -121,6 +121,10 @@ def _csv_int_list_expr(value: Any) -> str | None:
 def _hydra_value(value: Any) -> str:
     if isinstance(value, bool):
         return str(value).lower()
+    if OmegaConf.is_config(value):
+        value = OmegaConf.to_container(value, resolve=True)
+    if isinstance(value, dict):
+        return "{" + ",".join(f"{key}:{_hydra_value(item)}" for key, item in value.items()) + "}"
     if isinstance(value, list):
         return "[" + ",".join(_hydra_value(item) for item in value) + "]"
     if isinstance(value, str) and any(ch.isspace() or ch in {",", ":", "{", "}", "[", "]"} for ch in value):
@@ -152,7 +156,7 @@ def _append_cross_task_train_task_cli_overrides(hydra_overrides: list[str], cli_
 
 def _append_override(cmd: list[str], cfg: Any, cfg_path: str, hydra_path: str) -> None:
     value = _cfg_get(cfg, cfg_path)
-    if value in (None, ""):
+    if value is None or value == "":
         return
     cmd.append(f"{hydra_path}={_hydra_value(value)}")
 
@@ -489,6 +493,8 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
         ("rl_games.model_alias", "rl_games.model_alias"),
         ("rl_games.initialization_mode", "rl_games.initialization_mode"),
         ("rl_games.action_carrier", "rl_games.action_carrier"),
+        ("rl_games.cross_task.loss_by_task", "rl_games.cross_task.loss_by_task"),
+        ("rl_games.cross_task.loss_weight_by_task", "rl_games.cross_task.loss_weight_by_task"),
         ("rl_games.env_eval.distributed_mode", "rl_games.env_eval.distributed_mode"),
         ("rl_games.env_eval.latency.mode", "rl_games.env_eval.latency.mode"),
         ("rl_games.env_eval.frameskip", "rl_games.env_eval.frameskip"),

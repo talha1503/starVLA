@@ -21,7 +21,7 @@ Note: How to add special tokens to Qwen2.5:
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -134,6 +134,9 @@ class Qwenvl_OFT(baseframework):
         self.action_dim = int(self.config.framework.action_model.action_dim)
         self.action_env_dim = int(getattr(self.config.framework.action_model, "action_env_dim", self.action_dim))
         self.action_loss_type = str(getattr(self.config.framework.action_model, "loss_type", "l1")).lower()
+        cross_task_cfg = getattr(getattr(self.config, "rl_games", None), "cross_task", None)
+        self.loss_by_task = self._to_plain_dict(getattr(cross_task_cfg, "loss_by_task", None))
+        self.loss_weight_by_task = self._to_plain_dict(getattr(cross_task_cfg, "loss_weight_by_task", None))
         # self.hidden_dim = config.framework.action_model.action_hidden_dim
 
         self.action_token = "🔍"  # TODO also can add spacail token to Qwen, but too complex
@@ -142,12 +145,37 @@ class Qwenvl_OFT(baseframework):
         # L1 loss
         self.l1_loss = nn.L1Loss()
 
-    def _compute_action_loss(
+    @staticmethod
+    def _to_plain_dict(value: Any) -> dict[str, Any]:
+        if value is None or value == "":
+            return {}
+        if isinstance(value, dict):
+            return {str(key): item for key, item in value.items()}
+        if hasattr(value, "items"):
+            return {str(key): item for key, item in value.items()}
+        return {}
+
+    def _prepare_action_array(self, action: Any) -> np.ndarray:
+        values = np.asarray(action)
+        if values.ndim == 1:
+            values = values[None, :]
+        if values.shape[-1] == self.action_dim:
+            return values
+        if values.shape[-1] > self.action_dim:
+            return values[..., : self.action_dim]
+        pad_width = [(0, 0)] * values.ndim
+        pad_width[-1] = (0, self.action_dim - values.shape[-1])
+        return np.pad(values, pad_width, mode="constant")
+
+    def _compute_action_loss_for_type(
         self,
         pred_actions: torch.Tensor,
         actions_target: torch.Tensor,
+        *,
+        loss_type: str,
         action_env_dims: Optional[List[int]] = None,
     ) -> torch.Tensor:
+        loss_type = str(loss_type).lower()
         effective_dim = min(self.action_env_dim, pred_actions.shape[-1], actions_target.shape[-1])
         if effective_dim <= 0:
             raise ValueError(
@@ -155,7 +183,7 @@ class Qwenvl_OFT(baseframework):
                 f"and target shape={actions_target.shape}"
             )
 
-        if self.action_loss_type in {"discrete_ce", "ce", "cross_entropy"}:
+        if loss_type in {"discrete_ce", "ce", "cross_entropy"}:
             if action_env_dims is not None:
                 dims = torch.as_tensor(action_env_dims, device=pred_actions.device, dtype=torch.long)
                 if dims.numel() != pred_actions.shape[0]:
@@ -176,7 +204,7 @@ class Qwenvl_OFT(baseframework):
 
             if effective_dim < 2:
                 raise ValueError(
-                    f"action_model.loss_type={self.action_loss_type!r} requires at least 2 action classes, "
+                    f"action_model.loss_type={loss_type!r} requires at least 2 action classes, "
                     f"got effective_dim={effective_dim}"
                 )
             logits = pred_actions[..., :effective_dim]
@@ -186,20 +214,63 @@ class Qwenvl_OFT(baseframework):
                 target_class.reshape(-1),
             )
 
-        if self.action_loss_type in {"multibinary_bce", "multibinary_ce", "bce", "binary_cross_entropy"}:
+        if loss_type in {"multibinary_bce", "multibinary_ce", "bce", "binary_cross_entropy"}:
             logits = pred_actions[..., :effective_dim]
             targets = (actions_target[..., :effective_dim] > 0).to(dtype=logits.dtype)
             return F.binary_cross_entropy_with_logits(logits, targets)
 
-        if self.action_loss_type not in {"l1", "mae"}:
+        if loss_type not in {"l1", "mae"}:
             raise ValueError(
-                f"Unsupported action_model.loss_type={self.action_loss_type!r}; "
+                f"Unsupported action_model.loss_type={loss_type!r}; "
                 "expected one of: l1, discrete_ce, multibinary_bce"
             )
 
         return self.l1_loss(
             pred_actions[..., :effective_dim],
             actions_target[..., :effective_dim],
+        )
+
+    def _compute_action_loss(
+        self,
+        pred_actions: torch.Tensor,
+        actions_target: torch.Tensor,
+        action_env_dims: Optional[List[int]] = None,
+        rl_games_tasks: Optional[List[str]] = None,
+    ) -> torch.Tensor:
+        if self.loss_by_task and rl_games_tasks is not None:
+            if len(rl_games_tasks) != pred_actions.shape[0]:
+                raise ValueError(f"Expected {pred_actions.shape[0]} task labels, got {len(rl_games_tasks)}")
+            losses = []
+            weights = []
+            for task_name in sorted(set(str(task) for task in rl_games_tasks)):
+                mask_values = [str(task) == task_name for task in rl_games_tasks]
+                mask = torch.as_tensor(mask_values, device=pred_actions.device, dtype=torch.bool)
+                if not bool(mask.any()):
+                    continue
+                task_loss_type = str(self.loss_by_task.get(task_name, self.action_loss_type)).lower()
+                task_dims = (
+                    [int(dim) for dim, keep in zip(action_env_dims, mask_values) if keep]
+                    if action_env_dims is not None
+                    else None
+                )
+                task_loss = self._compute_action_loss_for_type(
+                    pred_actions[mask],
+                    actions_target[mask],
+                    loss_type=task_loss_type,
+                    action_env_dims=task_dims,
+                )
+                task_weight = float(self.loss_weight_by_task.get(task_name, 1.0))
+                sample_count = int(mask.sum().item())
+                losses.append(task_loss * task_weight * sample_count)
+                weights.append(task_weight * sample_count)
+            if losses:
+                return sum(losses) / max(1.0, float(sum(weights)))
+
+        return self._compute_action_loss_for_type(
+            pred_actions,
+            actions_target,
+            loss_type=self.action_loss_type,
+            action_env_dims=action_env_dims,
         )
 
     def _forward_qwen_last_hidden(self, qwen_inputs: dict) -> torch.Tensor:
@@ -250,8 +321,11 @@ class Qwenvl_OFT(baseframework):
         """
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
-        actions = [example["action"] for example in examples]  # label [B， len, 7]
-        action_env_dims = [int(example["action_env_dim"]) for example in examples] if "action_env_dim" in examples[0] else None
+        actions = [self._prepare_action_array(example["action"]) for example in examples]  # label [B， len, action_dim]
+        action_env_dims = [int(example.get("action_env_dim", self.action_env_dim)) for example in examples]
+        rl_games_tasks = [str(example.get("rl_games_task", "")) for example in examples]
+        if not any(rl_games_tasks):
+            rl_games_tasks = None
         state = (
             [example["state"] for example in examples] if "state" in examples[0] else None
         )  # List[ndarray (1, state_dim)] or None
@@ -288,7 +362,12 @@ class Qwenvl_OFT(baseframework):
             )  # [B, T_full, action_dim]
             actions_target = actions[:, -self.action_horizon :, :]  # (B, action_horizon, action_dim)
 
-            action_loss = self._compute_action_loss(pred_actions, actions_target, action_env_dims=action_env_dims)
+            action_loss = self._compute_action_loss(
+                pred_actions,
+                actions_target,
+                action_env_dims=action_env_dims,
+                rl_games_tasks=rl_games_tasks,
+            )
 
         return {"action_loss": action_loss}
 

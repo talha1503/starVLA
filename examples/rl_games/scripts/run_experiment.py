@@ -123,6 +123,8 @@ def _latencies_expr(values: Any) -> str | None:
 def _hydra_value(value: Any) -> str:
     if isinstance(value, bool):
         return str(value).lower()
+    if isinstance(value, dict):
+        return "{" + ",".join(f"{key}:{_hydra_value(item)}" for key, item in value.items()) + "}"
     if isinstance(value, list):
         return "[" + ",".join(_hydra_value(item) for item in value) + "]"
     if isinstance(value, str) and any(ch.isspace() or ch in {",", ":", "{", "}", "[", "]"} for ch in value):
@@ -138,7 +140,7 @@ def _append_override(
     default: Any = None,
 ) -> None:
     value = _get(cfg, config_path, default)
-    if value in (None, ""):
+    if value is None or value == "":
         return
     cmd.append(f"{hydra_path or config_path}={_hydra_value(value)}")
 
@@ -524,6 +526,8 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         "rl_games.model_alias": _get(cfg, "rl_games.model_alias"),
         "rl_games.initialization_mode": _get(cfg, "rl_games.initialization_mode"),
         "rl_games.action_carrier": _get(cfg, "rl_games.action_carrier"),
+        "rl_games.cross_task.loss_by_task": _get(cfg, "rl_games.cross_task.loss_by_task"),
+        "rl_games.cross_task.loss_weight_by_task": _get(cfg, "rl_games.cross_task.loss_weight_by_task"),
         "rl_games.env_eval.latency.mode": _get(cfg, "rl_games.latency_mode"),
         "rl_games.env_eval.frameskip": _get(cfg, "rl_games.frameskip"),
         "rl_games.env_eval.image_size": _get(cfg, "rl_games.image_size"),

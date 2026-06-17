@@ -7,6 +7,14 @@ rl_games:
     frameskip: 1
   cross_task:
     train_tasks: []
+    loss_by_task:
+      flappy: discrete_ce
+      demon_attack: discrete_ce
+      deadly_corridor: multibinary_bce
+    loss_weight_by_task:
+      flappy: 1.0
+      demon_attack: 1.0
+      deadly_corridor: 1.0
     eval_tasks:
       flappy:
         prompt_map_path: null
@@ -38,6 +46,21 @@ rl_games:
           latencies: null
           num_episodes: null
           max_steps_per_episode: null
+      deadly_corridor:
+        prompt_map_path: null
+        frameskip: 4
+        image_size: 224
+        task_description: null
+        mid_train:
+          enabled: true
+          latencies: null
+          num_episodes: null
+          max_steps_per_episode: null
+        post_train:
+          enabled: true
+          latencies: null
+          num_episodes: null
+          max_steps_per_episode: null
 
 datasets:
   vla_data:
@@ -45,3 +68,8 @@ datasets:
 
 dataset:
   converted_name: cross_task_train
+
+framework:
+  action_model:
+    action_dim: 7
+    action_env_dim: 7
