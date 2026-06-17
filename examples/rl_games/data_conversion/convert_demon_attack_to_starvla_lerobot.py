@@ -41,7 +41,7 @@ class DemonAttackColumns(NamedTuple):
     latency_ms: str | None
 
 
-def _local_parquet_files(dataset_name: str, split: str) -> list[str] | None:
+def _local_parquet_files(dataset_name: str, split: str, dataset_source_subdir: str | None = None) -> list[str] | None:
     dataset_path = Path(dataset_name).expanduser()
     if not dataset_path.exists():
         return None
@@ -70,8 +70,8 @@ def _local_parquet_files(dataset_name: str, split: str) -> list[str] | None:
     return [str(parquet_file) for parquet_file in (split_files or parquet_files)]
 
 
-def _local_parquet_columns(dataset_name: str, split: str) -> set[str] | None:
-    local_files = _local_parquet_files(dataset_name, split)
+def _local_parquet_columns(dataset_name: str, split: str, dataset_source_subdir: str | None = None) -> set[str] | None:
+    local_files = _local_parquet_files(dataset_name, split, dataset_source_subdir)
     if local_files is None:
         return None
     columns: set[str] = set()
@@ -101,8 +101,13 @@ def _resolve_optional_column(available: set[str] | None, names: tuple[str, ...])
     return None
 
 
-def _resolve_demon_attack_columns(dataset_name: str, split: str, want_latency: bool) -> DemonAttackColumns:
-    available = _local_parquet_columns(dataset_name, split)
+def _resolve_demon_attack_columns(
+    dataset_name: str,
+    split: str,
+    want_latency: bool,
+    dataset_source_subdir: str | None = None,
+) -> DemonAttackColumns:
+    available = _local_parquet_columns(dataset_name, split, dataset_source_subdir)
     return DemonAttackColumns(
         frame=_resolve_required_column(available, ("t", "decision_step"), "frame index"),
         reward=_resolve_required_column(available, ("reward", "raw_reward"), "reward"),
@@ -332,7 +337,12 @@ def _load_index_split(
     dataset_config_name: str | None = None,
     dataset_source_subdir: str | None = None,
 ):
-    demon_attack_columns = _resolve_demon_attack_columns(dataset_name, split, want_latency=want_latency)
+    demon_attack_columns = _resolve_demon_attack_columns(
+        dataset_name,
+        split,
+        want_latency=want_latency,
+        dataset_source_subdir=dataset_source_subdir,
+    )
     columns = ["episode_idx", demon_attack_columns.frame, "action_id", demon_attack_columns.reward, "prompt"]
     if demon_attack_columns.done is not None:
         columns.append(demon_attack_columns.done)

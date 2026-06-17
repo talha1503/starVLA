@@ -75,7 +75,7 @@ def test_convert_deadly_corridor_resolves_clean_v1_column_aliases(
     monkeypatch.setattr(
         convert_deadly_corridor,
         "_local_parquet_columns",
-        lambda dataset_name, split: {
+        lambda dataset_name, split, dataset_source_subdir=None: {
             "episode_idx",
             "decision_step",
             "action",

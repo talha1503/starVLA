@@ -75,7 +75,7 @@ def test_convert_demon_attack_resolves_clean_v1_column_aliases(
     monkeypatch.setattr(
         convert_demon_attack,
         "_local_parquet_columns",
-        lambda dataset_name, split: {
+        lambda dataset_name, split, dataset_source_subdir=None: {
             "episode_idx",
             "decision_step",
             "action_id",
