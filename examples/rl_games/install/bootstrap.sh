@@ -186,26 +186,91 @@ install_in_active_env() {
   fi
 }
 
+# Install model + per-task env deps into the *currently active* env. Assumes the
+# shared base (torch + common requirements) is already present (e.g. via clone).
+install_model_env_deps() {
+  local model="$1"
+  shift
+  local envs=("$@")
+  local env_name
+
+  echo "[bootstrap] Installing model dependencies: ${model}"
+  PYTHON_BIN=python "${SCRIPT_DIR}/model/${model}.sh"
+  for env_name in "${envs[@]}"; do
+    echo "[bootstrap] Installing environment dependencies: ${env_name}"
+    PYTHON_BIN=python "${SCRIPT_DIR}/env/${env_name}.sh"
+  done
+}
+
 if [[ "${SPLIT_ENVS}" == "true" ]]; then
+  # Build the shared base (torch + common requirements + editable repo) ONCE,
+  # then clone it per model. Avoids reinstalling the multi-GB torch stack and the
+  # full requirements set once per model env.
+  BASE_ENV_NAME="${CONDA_ENV_NAME}_base"
+  ensure_conda_env "${BASE_ENV_NAME}"
+  conda activate "${BASE_ENV_NAME}"
+  validate_active_python_version "${BASE_ENV_NAME}"
+  echo "[bootstrap] Building shared base env: ${BASE_ENV_NAME}"
+  PYTHON_BIN=python "${SCRIPT_DIR}/common.sh"
+  conda deactivate
+
+  # Clone base -> per-model env (serial: conda metadata is not concurrency-safe).
+  TARGET_ENVS=()
   for model in "${MODELS_TO_INSTALL[@]}"; do
-    TARGET_ENV_NAME="${CONDA_ENV_NAME}_${model}"
-    ensure_conda_env "${TARGET_ENV_NAME}"
-    conda activate "${TARGET_ENV_NAME}"
-    validate_active_python_version "${TARGET_ENV_NAME}"
-
-    MODEL_ENVS=("${ENVS_TO_INSTALL[@]}")
-
-    echo "[bootstrap] Installing model=${model} in env=${TARGET_ENV_NAME} with env targets: ${MODEL_ENVS[*]}"
-    install_in_active_env "${model}" "false" "${MODEL_ENVS[@]}"
-    if [[ "${RUN_VALIDATE}" == "true" ]]; then
-      echo "[bootstrap] Running validation"
-      run_common_validation
-      run_target_validators_for_model "${model}" "${MODEL_ENVS[@]}"
+    target="${CONDA_ENV_NAME}_${model}"
+    TARGET_ENVS+=("${target}")
+    if conda env list | awk '{print $1}' | grep -qx "${target}"; then
+      echo "[bootstrap] Using existing conda env: ${target} (skipping clone)"
+    else
+      echo "[bootstrap] Cloning ${BASE_ENV_NAME} -> ${target}"
+      conda create --clone "${BASE_ENV_NAME}" -n "${target}" -y
     fi
   done
 
+  # Install model + env deps per env in parallel (uv/pip caches are shared and
+  # lock-safe; each cloned env has its own independent site-packages).
+  echo "[bootstrap] Installing model/env deps in parallel; logs at /tmp/bootstrap_<model>.log"
+  pids=()
+  for i in "${!MODELS_TO_INSTALL[@]}"; do
+    model="${MODELS_TO_INSTALL[$i]}"
+    target="${TARGET_ENVS[$i]}"
+    (
+      conda activate "${target}"
+      install_model_env_deps "${model}" "${ENVS_TO_INSTALL[@]}"
+    ) > "/tmp/bootstrap_${model}.log" 2>&1 &
+    pids+=("$!")
+  done
+
+  fail=0
+  for i in "${!pids[@]}"; do
+    model="${MODELS_TO_INSTALL[$i]}"
+    if wait "${pids[$i]}"; then
+      echo "[bootstrap] Install OK: ${model}"
+    else
+      echo "[bootstrap] Install FAILED: ${model} (see /tmp/bootstrap_${model}.log)" >&2
+      fail=1
+    fi
+  done
+  if [[ "${fail}" -ne 0 ]]; then
+    exit 1
+  fi
+
+  # Validation runs serially: model load + GPU work should not contend.
+  if [[ "${RUN_VALIDATE}" == "true" ]]; then
+    for i in "${!MODELS_TO_INSTALL[@]}"; do
+      model="${MODELS_TO_INSTALL[$i]}"
+      target="${TARGET_ENVS[$i]}"
+      conda activate "${target}"
+      echo "[bootstrap] Validating ${target}"
+      run_common_validation
+      run_target_validators_for_model "${model}" "${ENVS_TO_INSTALL[@]}"
+      conda deactivate
+    done
+  fi
+
   echo "[bootstrap] Complete."
   echo "[bootstrap] Split env mode used. Activate with: conda activate ${CONDA_ENV_NAME}_<model>"
+  echo "[bootstrap] Shared base env: ${BASE_ENV_NAME}"
   echo "[bootstrap] Repo root: ${REPO_ROOT}"
   exit 0
 fi

@@ -2,9 +2,11 @@
 set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
+# shellcheck source=../_pip.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_pip.sh"
 
-"$PYTHON_BIN" -m pip install "datasets>=3.0" decord
-"$PYTHON_BIN" -m pip install "ray[default]==2.47.0"
-"$PYTHON_BIN" -m pip install peft "imageio[ffmpeg]" draccus opencv-python-headless
+pip_install "datasets>=3.0" decord
+pip_install "ray[default]==2.47.0"
+pip_install peft "imageio[ffmpeg]" draccus opencv-python-headless
 
 echo "[install/model/gr00t] done"

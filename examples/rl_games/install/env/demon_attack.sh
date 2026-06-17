@@ -2,8 +2,15 @@
 set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
-"$PYTHON_BIN" -m pip install ale-py "gymnasium[atari]" autorom
-AutoROM --accept-license
+# shellcheck source=../_pip.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_pip.sh"
+
+pip_install ale-py "gymnasium[atari]" autorom
+# Only download ROMs if they aren't already importable (ale-py may bundle them,
+# and a cloned env already has them) — avoids a redundant AutoROM fetch per env.
+if ! "$PYTHON_BIN" -c "import ale_py, gymnasium as gym; gym.make('ALE/DemonAttack-v5').close()" >/dev/null 2>&1; then
+  AutoROM --accept-license
+fi
 "$PYTHON_BIN" - <<'PY'
 import gymnasium as gym
 import ale_py  # noqa: F401
