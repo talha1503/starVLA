@@ -72,6 +72,10 @@ fi
 CONDA_BASE="$(conda info --base)"
 source "${CONDA_BASE}/etc/profile.d/conda.sh"
 
+# Keep uv's cache on the same filesystem as the conda envs so packages are
+# hardlinked into each env (download/disk dedup) instead of silently copied.
+export UV_CACHE_DIR="${UV_CACHE_DIR:-${CONDA_BASE}/.uv_cache}"
+
 MODELS=(openvla pi0 pi05 gr00t)
 ENVS=(flappy demon_attack deadly_corridor)
 
@@ -186,65 +190,51 @@ install_in_active_env() {
   fi
 }
 
-# Install model + per-task env deps into the *currently active* env. Assumes the
-# shared base (torch + common requirements) is already present (e.g. via clone).
-install_model_env_deps() {
+# Build one model env from scratch in the currently active env: common stack +
+# model deps + per-task env deps (validation runs separately). uv dedups the
+# heavy stack across envs via its shared cache + hardlinks, so there is no need
+# to clone a base env (conda --clone cannot reproduce a pip-dominated env).
+build_split_env() {
   local model="$1"
-  shift
-  local envs=("$@")
-  local env_name
-
-  echo "[bootstrap] Installing model dependencies: ${model}"
-  PYTHON_BIN=python "${SCRIPT_DIR}/model/${model}.sh"
-  for env_name in "${envs[@]}"; do
-    echo "[bootstrap] Installing environment dependencies: ${env_name}"
-    PYTHON_BIN=python "${SCRIPT_DIR}/env/${env_name}.sh"
-  done
+  local target="$2"
+  conda activate "${target}"
+  validate_active_python_version "${target}"
+  install_in_active_env "${model}" "false" "${ENVS_TO_INSTALL[@]}"
 }
 
 if [[ "${SPLIT_ENVS}" == "true" ]]; then
-  # Build the shared base (torch + common requirements + editable repo) ONCE,
-  # then clone it per model. Avoids reinstalling the multi-GB torch stack and the
-  # full requirements set once per model env.
-  BASE_ENV_NAME="${CONDA_ENV_NAME}_base"
-  ensure_conda_env "${BASE_ENV_NAME}"
-  conda activate "${BASE_ENV_NAME}"
-  validate_active_python_version "${BASE_ENV_NAME}"
-  echo "[bootstrap] Building shared base env: ${BASE_ENV_NAME}"
-  PYTHON_BIN=python "${SCRIPT_DIR}/common.sh"
-  conda deactivate
-
-  # Clone base -> per-model env (serial: conda metadata is not concurrency-safe).
+  # Create the (empty) per-model conda envs serially (conda metadata is not
+  # concurrency-safe), collecting their names.
   TARGET_ENVS=()
   for model in "${MODELS_TO_INSTALL[@]}"; do
     target="${CONDA_ENV_NAME}_${model}"
     TARGET_ENVS+=("${target}")
-    if conda env list | awk '{print $1}' | grep -qx "${target}"; then
-      echo "[bootstrap] Using existing conda env: ${target} (skipping clone)"
-    else
-      echo "[bootstrap] Cloning ${BASE_ENV_NAME} -> ${target}"
-      conda create --clone "${BASE_ENV_NAME}" -n "${target}" -y
-    fi
+    ensure_conda_env "${target}"
   done
 
-  # Install model + env deps per env in parallel (uv/pip caches are shared and
-  # lock-safe; each cloned env has its own independent site-packages).
-  echo "[bootstrap] Installing model/env deps in parallel; logs at /tmp/bootstrap_<model>.log"
+  # Build the first env serially: fail-fast smoke test + warms the uv cache
+  # (torch and the common stack) so the parallel batch only hardlinks.
+  echo "[bootstrap] Building ${TARGET_ENVS[0]} (model=${MODELS_TO_INSTALL[0]}) — warms uv cache"
+  build_split_env "${MODELS_TO_INSTALL[0]}" "${TARGET_ENVS[0]}"
+  conda deactivate
+
+  # Build the remaining envs in parallel against the warm uv cache. uv's cache is
+  # concurrency-safe (per-package locks), so there is no duplicate download.
   pids=()
-  for i in "${!MODELS_TO_INSTALL[@]}"; do
+  for ((i=1; i<${#MODELS_TO_INSTALL[@]}; i++)); do
     model="${MODELS_TO_INSTALL[$i]}"
     target="${TARGET_ENVS[$i]}"
+    echo "[bootstrap] Building ${target} (model=${model}) in background — log: /tmp/bootstrap_${model}.log"
     (
-      conda activate "${target}"
-      install_model_env_deps "${model}" "${ENVS_TO_INSTALL[@]}"
+      build_split_env "${model}" "${target}"
     ) > "/tmp/bootstrap_${model}.log" 2>&1 &
     pids+=("$!")
   done
 
   fail=0
-  for i in "${!pids[@]}"; do
-    model="${MODELS_TO_INSTALL[$i]}"
-    if wait "${pids[$i]}"; then
+  for ((j=0; j<${#pids[@]}; j++)); do
+    model="${MODELS_TO_INSTALL[$((j+1))]}"
+    if wait "${pids[$j]}"; then
       echo "[bootstrap] Install OK: ${model}"
     else
       echo "[bootstrap] Install FAILED: ${model} (see /tmp/bootstrap_${model}.log)" >&2
@@ -270,7 +260,6 @@ if [[ "${SPLIT_ENVS}" == "true" ]]; then
 
   echo "[bootstrap] Complete."
   echo "[bootstrap] Split env mode used. Activate with: conda activate ${CONDA_ENV_NAME}_<model>"
-  echo "[bootstrap] Shared base env: ${BASE_ENV_NAME}"
   echo "[bootstrap] Repo root: ${REPO_ROOT}"
   exit 0
 fi
