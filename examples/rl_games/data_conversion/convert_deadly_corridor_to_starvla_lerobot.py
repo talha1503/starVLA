@@ -141,6 +141,32 @@ def _resolve_deadly_corridor_columns(
     )
 
 
+def _deadly_corridor_column_candidates(
+    dataset_name: str,
+    split: str,
+    want_latency: bool,
+    dataset_source_subdir: str | None = None,
+) -> list[DeadlyCorridorColumns]:
+    available = _local_parquet_columns(dataset_name, split, dataset_source_subdir)
+    if available is not None:
+        return [_resolve_deadly_corridor_columns(dataset_name, split, want_latency, dataset_source_subdir)]
+
+    base_candidates = (
+        DeadlyCorridorColumns(frame="t", reward="reward", done="done", latency="latency", latency_ms="latency_ms"),
+        DeadlyCorridorColumns(frame="decision_step", reward="raw_reward", done=None, latency="latency_raw_frames", latency_ms="latency_ms"),
+        DeadlyCorridorColumns(frame="decision_step", reward="raw_reward", done=None, latency="latency", latency_ms="latency_ms"),
+        DeadlyCorridorColumns(frame="t", reward="reward", done="done", latency="latency_raw_frames", latency_ms="latency_ms"),
+        DeadlyCorridorColumns(frame="frame_index", reward="rewards", done="done", latency="latency", latency_ms="latency_ms"),
+        DeadlyCorridorColumns(frame="step", reward="reward", done="terminated", latency="latency", latency_ms="latency_ms"),
+    )
+    if want_latency:
+        return list(base_candidates)
+    return [
+        DeadlyCorridorColumns(frame=columns.frame, reward=columns.reward, done=columns.done, latency=None, latency_ms=None)
+        for columns in base_candidates
+    ]
+
+
 def _load_hf_dataset(
     dataset_name: str,
     dataset_config_name: str | None,
@@ -249,9 +275,12 @@ def _row_get(row: dict[str, Any], names: tuple[str, ...], default: Any = None) -
 
 
 def _row_latency(row: dict[str, Any], latency_column: str | None) -> int | None:
-    if latency_column is not None and latency_column in row and row.get(latency_column) is not None:
-        return int(row[latency_column])
-    return None
+    return latency_id_from_row(
+        row,
+        frameskip=LATENCY_FRAMESKIP,
+        latency_column=latency_column,
+        default_latency=None,
+    )
 
 
 def _filter_latency(ds, latency_filter: list[int] | None, *, latency_column: str | None):
@@ -260,7 +289,17 @@ def _filter_latency(ds, latency_filter: list[int] | None, *, latency_column: str
     if latency_column is None or latency_column not in ds.column_names:
         raise ValueError("latency_filter was requested, but the dataset has no latency column")
     allowed = {int(value) for value in latency_filter}
-    return ds.filter(lambda row: row.get(latency_column) is not None and int(row[latency_column]) in allowed)
+    return ds.filter(lambda row: _row_latency(row, latency_column) in allowed)
+
+
+def _episode_key(episode_idx: int, latency: int | None) -> EpisodeKey:
+    return (episode_idx, int(latency)) if latency is not None else episode_idx
+
+
+def _episode_sort_key(episode_key: EpisodeKey) -> tuple[int, int]:
+    if isinstance(episode_key, tuple):
+        return episode_key
+    return (episode_key, -1)
 
 
 def _load_index_split(
@@ -270,27 +309,60 @@ def _load_index_split(
     *,
     want_latency: bool,
     dataset_config_name: str | None = None,
+    dataset_source_subdir: str | None = None,
 ):
-    deadly_corridor_columns = _resolve_deadly_corridor_columns(
+    candidate_columns = _deadly_corridor_column_candidates(
         dataset_name,
         split,
         want_latency=want_latency,
         dataset_source_subdir=dataset_source_subdir,
     )
-    columns = ["episode_idx", deadly_corridor_columns.frame, "prompt"]
-    if deadly_corridor_columns.latency is not None:
-        columns.append(deadly_corridor_columns.latency)
-    if deadly_corridor_columns.latency_ms is not None:
-        columns.append(deadly_corridor_columns.latency_ms)
-    return (
-        _load_split(
+    last_error: Exception | None = None
+    for deadly_corridor_columns in candidate_columns:
+        columns = ["episode_idx", deadly_corridor_columns.frame, "prompt"]
+        if deadly_corridor_columns.latency is not None:
+            columns.append(deadly_corridor_columns.latency)
+        if deadly_corridor_columns.latency_ms is not None:
+            columns.append(deadly_corridor_columns.latency_ms)
+        try:
+            return (
+                _load_split(
+                    dataset_name,
+                    split,
+                    cache_dir=cache_dir,
+                    columns=columns,
+                    dataset_config_name=dataset_config_name,
+                    dataset_source_subdir=dataset_source_subdir,
+                ),
+                deadly_corridor_columns,
+            )
+        except Exception as exc:
+            last_error = exc
+            if len(candidate_columns) == 1:
+                raise
+
+    try:
+        ds = _load_split(
             dataset_name,
             split,
             cache_dir=cache_dir,
-            columns=columns,
             dataset_config_name=dataset_config_name,
+            dataset_source_subdir=dataset_source_subdir,
+        )
+    except Exception:
+        if last_error is not None:
+            raise last_error
+        raise
+    available = set(ds.column_names)
+    return (
+        ds,
+        DeadlyCorridorColumns(
+            frame=_resolve_required_column(available, ("t", "decision_step", "frame_index", "frame_idx", "step"), "frame index"),
+            reward=_resolve_required_column(available, ("reward", "raw_reward", "rewards"), "reward"),
+            done=_resolve_optional_column(available, ("done", "terminal", "terminated")),
+            latency=_resolve_optional_column(available, ("latency", "latency_raw_frames")) if want_latency else None,
+            latency_ms=_resolve_optional_column(available, ("latency_ms",)) if want_latency else None,
         ),
-        deadly_corridor_columns,
     )
 
 
@@ -415,7 +487,7 @@ def _select_episode_ids(
         return episode_ids[:max_episodes]
 
     selected: list[EpisodeKey] = []
-    selected_set: set[int] = set()
+    selected_set: set[EpisodeKey] = set()
     for latency in sorted(set(episode_latencies.values())):
         for episode_id in episode_ids:
             if episode_id in selected_set:
@@ -588,6 +660,7 @@ def convert_dataset(
             split,
             cache_dir=cache_dir,
             dataset_config_name=dataset_config_name,
+            dataset_source_subdir=dataset_source_subdir,
             want_latency=want_latency,
         )
         ds_meta = _filter_latency(
@@ -608,10 +681,11 @@ def convert_dataset(
         for row_idx, row in enumerate(tqdm(ds_meta, desc=f"Indexing Deadly Corridor {split} rows")):
             episode_idx = int(_row_get(row, ("episode_idx", "episode_index", "episode")))
             timestep = int(row[deadly_corridor_columns.frame])
-            episode_indices.setdefault(episode_idx, []).append((timestep, row_idx))
             latency = _row_latency(row, deadly_corridor_columns.latency)
+            episode_key = _episode_key(episode_idx, latency)
+            episode_indices.setdefault(episode_key, []).append((timestep, row_idx))
             if require_latency_prompt_map and latency is not None:
-                episode_latencies.setdefault(episode_idx, latency)
+                episode_latencies.setdefault(episode_key, latency)
             prompt = str(row["prompt"])
             if prompt not in prompt_to_task_index:
                 prompt_to_task_index[prompt] = len(task_prompts)

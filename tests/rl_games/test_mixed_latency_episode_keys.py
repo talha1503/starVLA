@@ -95,7 +95,7 @@ def test_demon_attack_index_split_retries_canonical_hf_columns(
 
     monkeypatch.setattr(demon, "load_dataset", fake_load_dataset)
 
-    ds = demon._load_index_split(
+    ds, columns = demon._load_index_split(
         "talha1503/demon_attack_mixed_latency_parquet",
         "train",
         cache_dir="/tmp/cache",
@@ -103,43 +103,19 @@ def test_demon_attack_index_split_retries_canonical_hf_columns(
     )
 
     assert isinstance(ds, FakeDataset)
+    assert columns.frame == "decision_step"
+    assert columns.reward == "raw_reward"
+    assert columns.done is None
+    assert columns.latency == "latency_raw_frames"
     assert calls[0][1]["columns"] == [
         "episode_idx",
         "t",
         "action_id",
-        "done",
         "reward",
         "prompt",
+        "done",
         "latency",
         "latency_ms",
-    ]
-    assert calls[1][1]["columns"] == [
-        "episode_idx",
-        "t",
-        "action_id",
-        "done",
-        "reward",
-        "prompt",
-        "latency_raw_frames",
-        "latency_ms",
-    ]
-    assert calls[2][1]["columns"] == [
-        "episode_idx",
-        "t",
-        "action_id",
-        "done",
-        "reward",
-        "prompt",
-        "latency",
-    ]
-    assert calls[3][1]["columns"] == [
-        "episode_idx",
-        "t",
-        "action_id",
-        "done",
-        "reward",
-        "prompt",
-        "latency_raw_frames",
     ]
     assert calls[-1][1]["columns"] == [
         "episode_idx",
@@ -175,7 +151,7 @@ def test_demon_attack_zero_latency_index_split_retries_canonical_hf_columns(
 
     monkeypatch.setattr(demon, "load_dataset", fake_load_dataset)
 
-    ds = demon._load_index_split(
+    ds, columns = demon._load_index_split(
         "talha1503/demon_attack_zero_latency_parquet",
         "train",
         cache_dir="/tmp/cache",
@@ -183,6 +159,9 @@ def test_demon_attack_zero_latency_index_split_retries_canonical_hf_columns(
     )
 
     assert isinstance(ds, FakeDataset)
+    assert columns.frame == "decision_step"
+    assert columns.reward == "raw_reward"
+    assert columns.done is None
     assert calls[-1][1]["columns"] == ["episode_idx", "decision_step", "action_id", "raw_reward", "prompt"]
 
 
@@ -215,7 +194,7 @@ def test_deadly_corridor_index_split_retries_canonical_hf_columns(
 
     monkeypatch.setattr(deadly, "load_dataset", fake_load_dataset)
 
-    ds = deadly._load_index_split(
+    ds, columns = deadly._load_index_split(
         "talha1503/deadly_corridor_mixed_latency_parquet",
         "train",
         cache_dir="/tmp/cache",
@@ -223,6 +202,8 @@ def test_deadly_corridor_index_split_retries_canonical_hf_columns(
     )
 
     assert isinstance(ds, FakeDataset)
+    assert columns.frame == "decision_step"
+    assert columns.latency == "latency_raw_frames"
     assert calls[-1][1]["columns"] == [
         "episode_idx",
         "decision_step",
@@ -255,7 +236,7 @@ def test_deadly_corridor_zero_latency_index_split_retries_canonical_hf_columns(
 
     monkeypatch.setattr(deadly, "load_dataset", fake_load_dataset)
 
-    ds = deadly._load_index_split(
+    ds, columns = deadly._load_index_split(
         "talha1503/deadly_corridor_zero_latency_parquet",
         "train",
         cache_dir="/tmp/cache",
@@ -263,4 +244,5 @@ def test_deadly_corridor_zero_latency_index_split_retries_canonical_hf_columns(
     )
 
     assert isinstance(ds, FakeDataset)
+    assert columns.frame == "decision_step"
     assert calls[-1][1]["columns"] == ["episode_idx", "decision_step", "prompt"]
