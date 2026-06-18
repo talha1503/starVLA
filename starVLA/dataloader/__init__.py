@@ -65,9 +65,12 @@ def build_dataloader(
                 vla_dataset_cfg.sequential_step_sampling = eval_sequential
 
         vla_dataset = get_vla_dataset(data_cfg=vla_dataset_cfg, mode=mode)
-        num_workers = int(vla_dataset_cfg.get("num_workers", 4))
+        num_workers_value = vla_dataset_cfg.get("num_workers", 4)
+        num_workers = int(4 if num_workers_value is None else num_workers_value)
         if mode == "eval":
-            num_workers = int(vla_dataset_cfg.get("eval_num_workers", num_workers))
+            eval_num_workers = vla_dataset_cfg.get("eval_num_workers", None)
+            if eval_num_workers is not None:
+                num_workers = int(eval_num_workers)
         persistent_workers = num_workers > 0 and not _cfg_bool(
             vla_dataset_cfg.get("sequential_step_sampling", False),
             default=False,
