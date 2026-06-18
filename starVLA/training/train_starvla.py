@@ -73,10 +73,32 @@ def _sample_latency(sample: dict) -> int | None:
     return int(value)
 
 
+def _sample_task(sample: dict) -> str | None:
+    if not isinstance(sample, dict):
+        return None
+    value = sample.get("rl_games_task", sample.get("task", None))
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        value = value.detach().cpu().reshape(-1)[0].item()
+    if isinstance(value, np.ndarray):
+        value = value.reshape(-1)[0].item()
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    return str(value)
+
+
 def _group_examples_by_latency(examples: list[dict]) -> dict[int | None, list[dict]]:
     grouped: dict[int | None, list[dict]] = {}
     for example in examples:
         grouped.setdefault(_sample_latency(example), []).append(example)
+    return grouped
+
+
+def _group_examples_by_task_latency(examples: list[dict]) -> dict[tuple[str | None, int | None], list[dict]]:
+    grouped: dict[tuple[str | None, int | None], list[dict]] = {}
+    for example in examples:
+        grouped.setdefault((_sample_task(example), _sample_latency(example)), []).append(example)
     return grouped
 
 
@@ -121,6 +143,19 @@ def _dataset_latency_values(dataset) -> list[int]:
                 values.update(int(value) for value in latency_data[latency_key].dropna().unique().tolist())
                 break
     return sorted(values)
+
+
+def _dataset_task_latency_values(dataset) -> dict[str, list[int]]:
+    values: dict[str, set[int]] = {}
+    single_datasets = list(getattr(dataset, "datasets", None) or [dataset])
+    for ds in single_datasets:
+        task = getattr(ds, "rl_games_task", None)
+        if task in (None, ""):
+            continue
+        task = str(task)
+        for latency in _dataset_latency_values(ds):
+            values.setdefault(task, set()).add(int(latency))
+    return {task: sorted(latencies) for task, latencies in values.items()}
 
 
 def _episode_latency(ds, trajectory_id: int) -> int | None:
@@ -902,14 +937,32 @@ class VLATrainer(TrainerUtils):
         total_loss_count = torch.zeros((), device=self.accelerator.device, dtype=torch.float32)
         latency_loss_sums: dict[int, torch.Tensor] = {}
         latency_loss_counts: dict[int, torch.Tensor] = {}
+        task_loss_sums: dict[str, torch.Tensor] = {}
+        task_loss_counts: dict[str, torch.Tensor] = {}
+        task_latency_loss_sums: dict[tuple[str, int], torch.Tensor] = {}
+        task_latency_loss_counts: dict[tuple[str, int], torch.Tensor] = {}
         num_batches = int(getattr(self.config.trainer, "eval_num_batches", 20))
         per_latency_batches = _optional_positive_int(getattr(self.config.trainer, "per_latency_eval_num_batches", None))
         batch_size = int(self.config.datasets.vla_data.per_device_batch_size)
         per_latency_sample_budget = per_latency_batches * batch_size if per_latency_batches is not None else None
         seen_latency_counts: dict[int, int] = {}
+        seen_task_latency_counts: dict[tuple[str, int], int] = {}
+        eval_task = str(getattr(getattr(self.config, "rl_games", None), "task", "") or "").lower()
+        cross_task_mode = eval_task == "cross_task"
         expected_latencies = (
             _dataset_latency_values(getattr(self.vla_eval_dataloader, "dataset", None))
             if per_latency_sample_budget is not None
+            else []
+        )
+        expected_task_latencies = (
+            [
+                (task_name, latency)
+                for task_name, latencies in _dataset_task_latency_values(
+                    getattr(self.vla_eval_dataloader, "dataset", None)
+                ).items()
+                for latency in latencies
+            ]
+            if cross_task_mode and per_latency_sample_budget is not None
             else []
         )
         use_per_latency_budget = per_latency_sample_budget is not None and bool(expected_latencies)
@@ -918,14 +971,24 @@ class VLATrainer(TrainerUtils):
                 if not use_per_latency_budget and batch_idx >= num_batches:
                     break
                 batch_examples = list(batch_vla)
-                grouped = _group_examples_by_latency(batch_examples)
-                for latency, examples in grouped.items():
+                grouped = _group_examples_by_task_latency(batch_examples)
+                for (task_name, latency), examples in grouped.items():
                     if latency is not None and use_per_latency_budget:
-                        remaining = per_latency_sample_budget - seen_latency_counts.get(int(latency), 0)
+                        if cross_task_mode and task_name is not None:
+                            task_latency_key = (str(task_name), int(latency))
+                            remaining = per_latency_sample_budget - seen_task_latency_counts.get(task_latency_key, 0)
+                        else:
+                            task_latency_key = None
+                            remaining = per_latency_sample_budget - seen_latency_counts.get(int(latency), 0)
                         if remaining <= 0:
                             continue
                         examples = examples[:remaining]
-                        seen_latency_counts[int(latency)] = seen_latency_counts.get(int(latency), 0) + len(examples)
+                        if task_latency_key is not None:
+                            seen_task_latency_counts[task_latency_key] = (
+                                seen_task_latency_counts.get(task_latency_key, 0) + len(examples)
+                            )
+                        else:
+                            seen_latency_counts[int(latency)] = seen_latency_counts.get(int(latency), 0) + len(examples)
                     if not examples:
                         continue
                     with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -945,10 +1008,50 @@ class VLATrainer(TrainerUtils):
                         )
                         latency_loss_sums[int(latency)] += action_loss * weight
                         latency_loss_counts[int(latency)] += weight
+                    if task_name is not None:
+                        task_name = str(task_name)
+                        task_loss_sums.setdefault(
+                            task_name,
+                            torch.zeros((), device=self.accelerator.device, dtype=torch.float32),
+                        )
+                        task_loss_counts.setdefault(
+                            task_name,
+                            torch.zeros((), device=self.accelerator.device, dtype=torch.float32),
+                        )
+                        task_loss_sums[task_name] += action_loss * weight
+                        task_loss_counts[task_name] += weight
+                        if latency is not None:
+                            task_latency_key = (task_name, int(latency))
+                            task_latency_loss_sums.setdefault(
+                                task_latency_key,
+                                torch.zeros((), device=self.accelerator.device, dtype=torch.float32),
+                            )
+                            task_latency_loss_counts.setdefault(
+                                task_latency_key,
+                                torch.zeros((), device=self.accelerator.device, dtype=torch.float32),
+                            )
+                            task_latency_loss_sums[task_latency_key] += action_loss * weight
+                            task_latency_loss_counts[task_latency_key] += weight
                 if (
                     use_per_latency_budget
-                    and expected_latencies
-                    and all(seen_latency_counts.get(latency, 0) >= per_latency_sample_budget for latency in expected_latencies)
+                    and (
+                        (
+                            cross_task_mode
+                            and expected_task_latencies
+                            and all(
+                                seen_task_latency_counts.get(task_latency, 0) >= per_latency_sample_budget
+                                for task_latency in expected_task_latencies
+                            )
+                        )
+                        or (
+                            not cross_task_mode
+                            and expected_latencies
+                            and all(
+                                seen_latency_counts.get(latency, 0) >= per_latency_sample_budget
+                                for latency in expected_latencies
+                            )
+                        )
+                    )
                 ):
                     break
 
@@ -975,6 +1078,42 @@ class VLATrainer(TrainerUtils):
                 dist.all_reduce(loss_count, op=dist.ReduceOp.SUM)
                 latency_loss_sums[latency] = loss_sum
                 latency_loss_counts[latency] = loss_count
+            task_keys = sorted(task_loss_sums)
+            gathered_task_keys = [None for _ in range(dist.get_world_size())]
+            dist.all_gather_object(gathered_task_keys, task_keys)
+            all_task_keys = sorted({str(key) for keys in gathered_task_keys for key in keys})
+            for task_name in all_task_keys:
+                loss_sum = task_loss_sums.get(
+                    task_name,
+                    torch.zeros((), device=self.accelerator.device, dtype=torch.float32),
+                )
+                loss_count = task_loss_counts.get(
+                    task_name,
+                    torch.zeros((), device=self.accelerator.device, dtype=torch.float32),
+                )
+                dist.all_reduce(loss_sum, op=dist.ReduceOp.SUM)
+                dist.all_reduce(loss_count, op=dist.ReduceOp.SUM)
+                task_loss_sums[task_name] = loss_sum
+                task_loss_counts[task_name] = loss_count
+            task_latency_keys = sorted(task_latency_loss_sums)
+            gathered_task_latency_keys = [None for _ in range(dist.get_world_size())]
+            dist.all_gather_object(gathered_task_latency_keys, task_latency_keys)
+            all_task_latency_keys = sorted(
+                {(str(task_name), int(latency)) for keys in gathered_task_latency_keys for task_name, latency in keys}
+            )
+            for task_latency_key in all_task_latency_keys:
+                loss_sum = task_latency_loss_sums.get(
+                    task_latency_key,
+                    torch.zeros((), device=self.accelerator.device, dtype=torch.float32),
+                )
+                loss_count = task_latency_loss_counts.get(
+                    task_latency_key,
+                    torch.zeros((), device=self.accelerator.device, dtype=torch.float32),
+                )
+                dist.all_reduce(loss_sum, op=dist.ReduceOp.SUM)
+                dist.all_reduce(loss_count, op=dist.ReduceOp.SUM)
+                task_latency_loss_sums[task_latency_key] = loss_sum
+                task_latency_loss_counts[task_latency_key] = loss_count
 
         if self.accelerator.is_main_process and total_loss_count.item() > 0:
             step_metrics["eval/loss"] = (total_loss_sum / total_loss_count.clamp_min(1.0)).item()
@@ -983,6 +1122,18 @@ class VLATrainer(TrainerUtils):
                 if count.item() > 0:
                     step_metrics[f"eval/latency_{latency}/loss"] = (
                         latency_loss_sums[latency] / count.clamp_min(1.0)
+                    ).item()
+            for task_name in sorted(task_loss_sums):
+                count = task_loss_counts[task_name]
+                if count.item() > 0:
+                    step_metrics[f"eval/{task_name}/loss"] = (
+                        task_loss_sums[task_name] / count.clamp_min(1.0)
+                    ).item()
+            for task_name, latency in sorted(task_latency_loss_sums):
+                count = task_latency_loss_counts[(task_name, latency)]
+                if count.item() > 0:
+                    step_metrics[f"eval/{task_name}/latency_{latency}/loss"] = (
+                        task_latency_loss_sums[(task_name, latency)] / count.clamp_min(1.0)
                     ).item()
 
         if dist.is_initialized():
@@ -1010,7 +1161,8 @@ class VLATrainer(TrainerUtils):
         if self.vla_eval_dataloader is None:
             return step_metrics
         task = str(getattr(getattr(self.config, "rl_games", None), "task", "") or "").lower()
-        if task not in action_cc_f1.SUPPORTED_TASKS:
+        cross_task_mode = task == "cross_task"
+        if not cross_task_mode and task not in action_cc_f1.SUPPORTED_TASKS:
             return step_metrics
         if not bool(getattr(self.config.trainer, "eval_action_classification", True)):
             return step_metrics
@@ -1019,15 +1171,27 @@ class VLATrainer(TrainerUtils):
         # Read the layout exactly like action_spec._deadly_action_dim (same default)
         # so the decode matches the action dim the model was actually trained with.
         deadly_layout = action_cc_f1.DEADLY_MULTIBINARY_7
-        if task == "deadly_corridor":
-            deadly_cfg = getattr(getattr(getattr(self.config, "rl_games", None), "env_eval", None), "deadly", None)
+        deadly_cfg = getattr(getattr(getattr(self.config, "rl_games", None), "env_eval", None), "deadly", None)
+        if deadly_cfg is not None:
             deadly_layout = str(getattr(deadly_cfg, "action_layout", action_cc_f1.DEADLY_MULTIBINARY_7))
-        spec = action_cc_f1.get_spec(task, deadly_layout)
-        k = spec.default_k
-        if task != "flappy":  # flappy stays per-frame (K=0) to match the shipped flap-F1
-            override = getattr(self.config.trainer, "cc_f1_tolerance", None)
-            if override is not None:
-                k = int(override)
+
+        def _spec_for_task(task_name: str):
+            return action_cc_f1.get_spec(task_name, deadly_layout)
+
+        def _tolerance_for_task(task_name: str, spec) -> int:
+            k = spec.default_k
+            if task_name != "flappy":  # flappy stays per-frame (K=0) to match the shipped flap-F1
+                override = getattr(self.config.trainer, "cc_f1_tolerance", None)
+                if override is not None:
+                    k = int(override)
+            return k
+
+        if not cross_task_mode:
+            spec = _spec_for_task(task)
+            k = _tolerance_for_task(task, spec)
+        else:
+            spec = None
+            k = None
 
         dataset = getattr(self.vla_eval_dataloader, "dataset", None)
         if dataset is None:
@@ -1035,9 +1199,12 @@ class VLATrainer(TrainerUtils):
         single_datasets = list(getattr(dataset, "datasets", None) or [dataset])
 
         # Enumerate episodes as contiguous same-trajectory runs of all_steps.
-        # episodes: list of (single_ds, episode_key, latency, [(flat_idx, base_index), ...]).
+        # episodes: list of (task, single_ds, episode_key, latency, [(flat_idx, base_index), ...]).
         episodes = []
         for ds in single_datasets:
+            ds_task = str(getattr(ds, "rl_games_task", task) or task)
+            if ds_task not in action_cc_f1.SUPPORTED_TASKS:
+                continue
             all_steps = getattr(ds, "all_steps", None)
             if not all_steps:
                 continue
@@ -1047,12 +1214,12 @@ class VLATrainer(TrainerUtils):
             for flat_idx, step in enumerate(all_steps):
                 traj_id, base_idx = step
                 if cur and traj_id != cur_traj:
-                    episodes.append((ds, f"{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
+                    episodes.append((ds_task, ds, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
                     cur = []
                 cur_traj = traj_id
                 cur.append((int(flat_idx), int(base_idx)))
             if cur:
-                episodes.append((ds, f"{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
+                episodes.append((ds_task, ds, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
         if not episodes:
             return step_metrics
 
@@ -1066,111 +1233,204 @@ class VLATrainer(TrainerUtils):
         assigned = []
         frame_count = 0
         latency_frame_counts: dict[int, int] = {}
-        expected_latencies = sorted({int(ep[2]) for ep in episodes if ep[2] is not None})
+        task_latency_frame_counts: dict[tuple[str, int], int] = {}
+        expected_latencies = sorted({int(ep[3]) for ep in episodes if ep[3] is not None})
+        expected_task_latencies = (
+            sorted({(str(ep[0]), int(ep[3])) for ep in episodes if ep[3] is not None})
+            if cross_task_mode
+            else []
+        )
         use_per_latency_budget = per_latency_frame_budget is not None and bool(expected_latencies)
         for ep_idx, ep in enumerate(episodes):
             if ep_idx % num_procs != rank:
                 continue
-            latency = ep[2]
+            ep_task = str(ep[0])
+            latency = ep[3]
             if latency is not None and use_per_latency_budget:
                 latency = int(latency)
-                if latency_frame_counts.get(latency, 0) >= per_latency_frame_budget:
-                    continue
+                if cross_task_mode:
+                    task_latency_key = (ep_task, latency)
+                    if task_latency_frame_counts.get(task_latency_key, 0) >= per_latency_frame_budget:
+                        continue
+                else:
+                    if latency_frame_counts.get(latency, 0) >= per_latency_frame_budget:
+                        continue
             assigned.append(ep)
-            frame_count += len(ep[3])
+            frame_count += len(ep[4])
             if latency is not None and use_per_latency_budget:
-                latency_frame_counts[int(latency)] = latency_frame_counts.get(int(latency), 0) + len(ep[3])
-                if all(
-                    latency_frame_counts.get(value, 0) >= per_latency_frame_budget
-                    for value in expected_latencies
-                ):
-                    break
+                if cross_task_mode:
+                    task_latency_key = (ep_task, int(latency))
+                    task_latency_frame_counts[task_latency_key] = (
+                        task_latency_frame_counts.get(task_latency_key, 0) + len(ep[4])
+                    )
+                    if all(
+                        task_latency_frame_counts.get(value, 0) >= per_latency_frame_budget
+                        for value in expected_task_latencies
+                    ):
+                        break
+                else:
+                    latency_frame_counts[int(latency)] = latency_frame_counts.get(int(latency), 0) + len(ep[4])
+                    if all(
+                        latency_frame_counts.get(value, 0) >= per_latency_frame_budget
+                        for value in expected_latencies
+                    ):
+                        break
             elif not use_per_latency_budget and frame_count >= shared_frame_budget:
                 break
 
         was_training = self.model.training
         self.model.eval()
         unwrapped = self.accelerator.unwrap_model(self.model)
-        counts = action_cc_f1.new_counts(spec)
+        counts = action_cc_f1.new_counts(spec) if spec is not None else None
 
         # Materialize assigned frames (tagged with their episode), batch for inference.
-        tagged = []  # (episode_key, base_index, latency, packed_sample)
-        for ds, episode_key, _episode_latency_value, frames in assigned:
+        tagged = []  # (task, episode_key, base_index, latency, packed_sample)
+        for ep_task, ds, episode_key, _episode_latency_value, frames in assigned:
             for flat_idx, base_idx in frames:
                 sample = ds[flat_idx]
-                tagged.append((episode_key, base_idx, _sample_latency(sample), sample))
+                sample_task = _sample_task(sample) or ep_task
+                tagged.append((sample_task, episode_key, base_idx, _sample_latency(sample), sample))
 
         per_ep = {}  # episode_key -> list of (base_index, teacher_components, model_components)
         with torch.no_grad():
             for start in range(0, len(tagged), bs):
                 chunk = tagged[start : start + bs]
-                normalized = unwrapped.predict_action(examples=[c[3] for c in chunk])["normalized_actions"]
-                for i, (episode_key, base_idx, latency, sample) in enumerate(chunk):
+                normalized = unwrapped.predict_action(examples=[c[4] for c in chunk])["normalized_actions"]
+                for i, (sample_task, episode_key, base_idx, latency, sample) in enumerate(chunk):
+                    sample_task = str(sample_task)
+                    sample_spec = _spec_for_task(sample_task)
                     teacher_vec = np.asarray(sample["action"])[0, :]
                     model_vec = normalized[i, 0, :]
-                    entry = per_ep.setdefault(episode_key, {"latency": latency, "items": []})
-                    entry["items"].append((base_idx, spec.comp_fn(teacher_vec), spec.comp_fn(model_vec)))
+                    entry = per_ep.setdefault(episode_key, {"task": sample_task, "latency": latency, "items": []})
+                    entry["items"].append((base_idx, sample_spec.comp_fn(teacher_vec), sample_spec.comp_fn(model_vec)))
 
         if was_training:
             self.model.train()
 
         latency_counts: dict[int, np.ndarray] = {}
+        task_counts: dict[str, np.ndarray] = {}
+        task_latency_counts: dict[tuple[str, int], np.ndarray] = {}
         for entry in per_ep.values():
+            entry_task = str(entry.get("task", task))
+            entry_spec = _spec_for_task(entry_task)
+            entry_k = _tolerance_for_task(entry_task, entry_spec)
             items = entry["items"]
             items.sort(key=lambda r: r[0])
+            target_counts = task_counts.setdefault(entry_task, action_cc_f1.new_counts(entry_spec)) if cross_task_mode else counts
             action_cc_f1.accumulate_episode(
-                spec,
+                entry_spec,
                 frames=[r[0] for r in items],
                 teacher_comps=[r[1] for r in items],
                 model_comps=[r[2] for r in items],
-                k=k,
-                counts=counts,
+                k=entry_k,
+                counts=target_counts,
             )
             latency = entry.get("latency")
             if latency is not None:
                 latency = int(latency)
-                latency_counts.setdefault(latency, action_cc_f1.new_counts(spec))
+                if cross_task_mode:
+                    task_latency_key = (entry_task, latency)
+                    task_latency_counts.setdefault(task_latency_key, action_cc_f1.new_counts(entry_spec))
+                    target_latency_counts = task_latency_counts[task_latency_key]
+                else:
+                    latency_counts.setdefault(latency, action_cc_f1.new_counts(entry_spec))
+                    target_latency_counts = latency_counts[latency]
                 action_cc_f1.accumulate_episode(
-                    spec,
+                    entry_spec,
                     frames=[r[0] for r in items],
                     teacher_comps=[r[1] for r in items],
                     model_comps=[r[2] for r in items],
-                    k=k,
-                    counts=latency_counts[latency],
+                    k=entry_k,
+                    counts=target_latency_counts,
                 )
 
         # Counts are small integers (well within float32's exact range); float32
         # keeps NCCL all_reduce broadly compatible across torch builds.
-        counts_t = torch.tensor(counts, device=self.accelerator.device, dtype=torch.float32)
-        if dist.is_initialized():
-            dist.all_reduce(counts_t, op=dist.ReduceOp.SUM)
-        if self.accelerator.is_main_process:
-            step_metrics.update(action_cc_f1.reduce_metrics(spec, counts_t.detach().cpu().numpy()))
-
-        if dist.is_initialized():
-            latency_keys = sorted(latency_counts)
-            gathered_keys = [None for _ in range(dist.get_world_size())]
-            dist.all_gather_object(gathered_keys, latency_keys)
-            all_latency_keys = sorted({int(key) for keys in gathered_keys for key in keys})
-        else:
-            all_latency_keys = sorted(latency_counts)
-
-        for latency in all_latency_keys:
-            latency_counts_t = torch.tensor(
-                latency_counts.get(latency, action_cc_f1.new_counts(spec)),
-                device=self.accelerator.device,
-                dtype=torch.float32,
-            )
+        if not cross_task_mode:
+            counts_t = torch.tensor(counts, device=self.accelerator.device, dtype=torch.float32)
             if dist.is_initialized():
-                dist.all_reduce(latency_counts_t, op=dist.ReduceOp.SUM)
+                dist.all_reduce(counts_t, op=dist.ReduceOp.SUM)
             if self.accelerator.is_main_process:
-                latency_metrics = action_cc_f1.reduce_metrics(spec, latency_counts_t.detach().cpu().numpy())
-                for key, value in latency_metrics.items():
-                    if key.startswith("eval/"):
-                        key = f"eval/latency_{int(latency)}/{key[len('eval/'):]}"
-                    else:
-                        key = f"eval/latency_{int(latency)}/{key}"
-                    step_metrics[key] = value
+                step_metrics.update(action_cc_f1.reduce_metrics(spec, counts_t.detach().cpu().numpy()))
+
+            if dist.is_initialized():
+                latency_keys = sorted(latency_counts)
+                gathered_keys = [None for _ in range(dist.get_world_size())]
+                dist.all_gather_object(gathered_keys, latency_keys)
+                all_latency_keys = sorted({int(key) for keys in gathered_keys for key in keys})
+            else:
+                all_latency_keys = sorted(latency_counts)
+
+            for latency in all_latency_keys:
+                latency_counts_t = torch.tensor(
+                    latency_counts.get(latency, action_cc_f1.new_counts(spec)),
+                    device=self.accelerator.device,
+                    dtype=torch.float32,
+                )
+                if dist.is_initialized():
+                    dist.all_reduce(latency_counts_t, op=dist.ReduceOp.SUM)
+                if self.accelerator.is_main_process:
+                    latency_metrics = action_cc_f1.reduce_metrics(spec, latency_counts_t.detach().cpu().numpy())
+                    for key, value in latency_metrics.items():
+                        if key.startswith("eval/"):
+                            key = f"eval/latency_{int(latency)}/{key[len('eval/'):]}"
+                        else:
+                            key = f"eval/latency_{int(latency)}/{key}"
+                        step_metrics[key] = value
+        else:
+            if dist.is_initialized():
+                task_keys = sorted(task_counts)
+                gathered_task_keys = [None for _ in range(dist.get_world_size())]
+                dist.all_gather_object(gathered_task_keys, task_keys)
+                all_task_keys = sorted({str(key) for keys in gathered_task_keys for key in keys})
+            else:
+                all_task_keys = sorted(task_counts)
+
+            for task_name in all_task_keys:
+                task_spec = _spec_for_task(task_name)
+                counts_t = torch.tensor(
+                    task_counts.get(task_name, action_cc_f1.new_counts(task_spec)),
+                    device=self.accelerator.device,
+                    dtype=torch.float32,
+                )
+                if dist.is_initialized():
+                    dist.all_reduce(counts_t, op=dist.ReduceOp.SUM)
+                if self.accelerator.is_main_process:
+                    metrics = action_cc_f1.reduce_metrics(task_spec, counts_t.detach().cpu().numpy())
+                    for key, value in metrics.items():
+                        if key.startswith("eval/"):
+                            key = f"eval/{task_name}/{key[len('eval/'):]}"
+                        else:
+                            key = f"eval/{task_name}/{key}"
+                        step_metrics[key] = value
+
+            if dist.is_initialized():
+                task_latency_keys = sorted(task_latency_counts)
+                gathered_task_latency_keys = [None for _ in range(dist.get_world_size())]
+                dist.all_gather_object(gathered_task_latency_keys, task_latency_keys)
+                all_task_latency_keys = sorted(
+                    {(str(task_name), int(latency)) for keys in gathered_task_latency_keys for task_name, latency in keys}
+                )
+            else:
+                all_task_latency_keys = sorted(task_latency_counts)
+
+            for task_name, latency in all_task_latency_keys:
+                task_spec = _spec_for_task(task_name)
+                counts_t = torch.tensor(
+                    task_latency_counts.get((task_name, latency), action_cc_f1.new_counts(task_spec)),
+                    device=self.accelerator.device,
+                    dtype=torch.float32,
+                )
+                if dist.is_initialized():
+                    dist.all_reduce(counts_t, op=dist.ReduceOp.SUM)
+                if self.accelerator.is_main_process:
+                    latency_metrics = action_cc_f1.reduce_metrics(task_spec, counts_t.detach().cpu().numpy())
+                    for key, value in latency_metrics.items():
+                        if key.startswith("eval/"):
+                            key = f"eval/{task_name}/latency_{int(latency)}/{key[len('eval/'):]}"
+                        else:
+                            key = f"eval/{task_name}/latency_{int(latency)}/{key}"
+                        step_metrics[key] = value
 
         if dist.is_initialized():
             dist.barrier()
