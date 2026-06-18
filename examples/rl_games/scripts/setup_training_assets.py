@@ -660,8 +660,20 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
 
         latency_filter = _get_task_value(task_cfg, "train_latency_filter", "latency_filter", default=None)
         latency_filter = [int(value) for value in latency_filter] if latency_filter not in (None, "") else None
+        eval_latency_filter = _get_task_value(task_cfg, "eval_latency_filter", default=latency_filter)
+        eval_latency_filter = (
+            [int(value) for value in eval_latency_filter]
+            if eval_latency_filter not in (None, "")
+            else None
+        )
         episodes_per_latency = _get_task_value(task_cfg, "episodes_per_latency", default=None)
         episodes_per_latency = int(episodes_per_latency) if episodes_per_latency not in (None, "") else None
+        eval_episodes_per_latency = _get_task_value(task_cfg, "eval_episodes_per_latency", default=episodes_per_latency)
+        eval_episodes_per_latency = (
+            int(eval_episodes_per_latency)
+            if eval_episodes_per_latency not in (None, "")
+            else None
+        )
         max_episodes = _get_task_value(task_cfg, "max_episodes", default=None)
         max_episodes = int(max_episodes) if max_episodes not in (None, "") else None
         weight = float(_get_task_value(task_cfg, "weight", default=1.0))
@@ -693,7 +705,12 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
             latency_filter=latency_filter,
         )
 
-        def _manifest_matches(dataset_path: Path) -> bool:
+        def _manifest_matches(
+            dataset_path: Path,
+            *,
+            expected_latency_filter: list[int] | None,
+            expected_episodes_per_latency: int | None,
+        ) -> bool:
             manifest_path = dataset_path / "manifest.json"
             if not manifest_path.exists():
                 return False
@@ -709,8 +726,8 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 and (manifest.get("source_subdir") or None) == train_subdir
                 and (manifest.get("prompt_source_subdir") or None) == prompt_subdir
                 and str(manifest.get("action_carrier", "")) == action_carrier
-                and manifest.get("latency_filter") == latency_filter
-                and manifest.get("episodes_per_latency") == episodes_per_latency
+                and manifest.get("latency_filter") == expected_latency_filter
+                and manifest.get("episodes_per_latency") == expected_episodes_per_latency
                 and manifest.get("max_episodes") == max_episodes
             )
 
@@ -718,11 +735,19 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
             force
             or not _dataset_ready(dataset_dir)
             or not _dataset_ready(eval_dataset_dir)
-            or not _manifest_matches(dataset_dir)
-            or not _manifest_matches(eval_dataset_dir)
+            or not _manifest_matches(
+                dataset_dir,
+                expected_latency_filter=latency_filter,
+                expected_episodes_per_latency=episodes_per_latency,
+            )
+            or not _manifest_matches(
+                eval_dataset_dir,
+                expected_latency_filter=eval_latency_filter,
+                expected_episodes_per_latency=eval_episodes_per_latency,
+            )
         )
         if rebuild:
-            allow_mixed = bool(latency_filter) and train_source == prompt_source
+            allow_mixed = bool(latency_filter or eval_latency_filter) and train_source == prompt_source
             verify_dataset(
                 train_source,
                 rows=args.verify_rows,
@@ -740,9 +765,13 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 dataset_source_subdir=train_subdir,
                 max_episodes=max_episodes,
                 force=rebuild,
-                require_latency_prompt_map=bool(latency_filter),
+                require_latency_prompt_map=bool(latency_filter or eval_latency_filter),
                 latency_filter=latency_filter,
+                train_latency_filter=latency_filter,
+                eval_latency_filter=eval_latency_filter,
                 episodes_per_latency=episodes_per_latency,
+                train_episodes_per_latency=episodes_per_latency,
+                eval_episodes_per_latency=eval_episodes_per_latency,
                 prompt_map_override=prompt_map,
                 default_latency=0,
                 action_carrier=action_carrier,
@@ -754,6 +783,10 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 manifest["prompt_source_subdir"] = prompt_subdir
                 manifest["eval_prompt_map_path"] = str(eval_prompt_map_path)
                 manifest["train_prompt_map_path"] = str(train_prompt_map_path)
+                manifest["train_latency_filter"] = latency_filter
+                manifest["eval_latency_filter"] = eval_latency_filter
+                manifest["train_episodes_per_latency"] = episodes_per_latency
+                manifest["eval_episodes_per_latency"] = eval_episodes_per_latency
                 manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
             converted = True
 

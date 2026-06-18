@@ -59,6 +59,10 @@ def build_dataloader(
         vla_dataset_cfg = copy.deepcopy(cfg.datasets.vla_data)
         if data_mix:
             vla_dataset_cfg.data_mix = data_mix
+        if mode == "eval":
+            eval_sequential = vla_dataset_cfg.get("eval_sequential_step_sampling", None)
+            if eval_sequential is not None:
+                vla_dataset_cfg.sequential_step_sampling = eval_sequential
 
         vla_dataset = get_vla_dataset(data_cfg=vla_dataset_cfg, mode=mode)
         num_workers = 4

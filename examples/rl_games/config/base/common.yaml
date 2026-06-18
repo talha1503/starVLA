@@ -22,6 +22,7 @@ datasets:
     custom_mixtures_path: null
     action_type: discrete
     sequential_step_sampling: false
+    eval_sequential_step_sampling: null
     shuffle: true
     action_balance:
       enabled: false
