@@ -73,3 +73,5 @@ framework:
   action_model:
     action_dim: 7
     action_env_dim: 7
+
+env: cross_task
