@@ -65,16 +65,24 @@ def build_dataloader(
                 vla_dataset_cfg.sequential_step_sampling = eval_sequential
 
         vla_dataset = get_vla_dataset(data_cfg=vla_dataset_cfg, mode=mode)
-        num_workers = 4
-        persistent_workers = not _cfg_bool(vla_dataset_cfg.get("sequential_step_sampling", False), default=False)
+        num_workers = int(vla_dataset_cfg.get("num_workers", 4))
+        if mode == "eval":
+            num_workers = int(vla_dataset_cfg.get("eval_num_workers", num_workers))
+        persistent_workers = num_workers > 0 and not _cfg_bool(
+            vla_dataset_cfg.get("sequential_step_sampling", False),
+            default=False,
+        )
+        dataloader_kwargs = {}
+        if num_workers > 0:
+            dataloader_kwargs["multiprocessing_context"] = "spawn"
+            dataloader_kwargs["persistent_workers"] = persistent_workers
         
         vla_train_dataloader = DataLoader(
             vla_dataset,
             batch_size=cfg.datasets.vla_data.per_device_batch_size,
             collate_fn=collate_fn,
             num_workers=num_workers,
-            multiprocessing_context="spawn",
-            persistent_workers=persistent_workers,
+            **dataloader_kwargs,
             # shuffle=True
         )        
         if save_statistics_filename and (not dist.is_initialized() or dist.get_rank() == 0): 

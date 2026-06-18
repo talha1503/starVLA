@@ -8,6 +8,7 @@ datasets:
   vla_data:
     sequential_step_sampling: true
     eval_sequential_step_sampling: false
+    eval_num_workers: 0
     latency_curriculum:
       enabled: true
       strategy: cumulative
