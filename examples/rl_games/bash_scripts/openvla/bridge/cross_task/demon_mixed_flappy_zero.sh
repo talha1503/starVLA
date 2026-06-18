@@ -22,7 +22,7 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.save_best_model=false \
     trainer.max_train_steps=7000 \
     trainer.num_warmup_steps=0 \
-    trainer.eval_interval=300 \
+    trainer.eval_interval=1400 \
     trainer.save_interval=7000 \
     trainer.logging_frequency=1 \
     trainer.gradient_accumulation_steps=4 \

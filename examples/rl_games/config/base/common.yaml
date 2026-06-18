@@ -87,6 +87,9 @@ trainer:
   # Supported tasks: flappy, demon_attack, deadly_corridor.
   # Uses predict_action, so enabled tasks get an extra forward pass per eval batch.
   eval_action_classification: true
+  # Optional separate interval for action classification metrics. When null,
+  # action classification runs with eval_interval.
+  eval_action_classification_interval: null
   # Temporal tolerance, in decision steps, for non-Flappy CC-F1 event matching.
   # Flappy always uses 0 so flap_f1 remains exact per-frame flap F1.
   cc_f1_tolerance: 1

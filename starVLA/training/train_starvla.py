@@ -865,8 +865,28 @@ class VLATrainer(TrainerUtils):
                     interval=self.config.trainer.eval_interval,
                     gradients_synced=gradients_synced,
                 ):
+                    if self.accelerator.is_main_process:
+                        logger.info("Starting held-out action loss eval at step %s", self.completed_steps)
                     step_metrics = self.eval_action_loss(step_metrics)
+                    if self.accelerator.is_main_process:
+                        logger.info("Finished held-out action loss eval at step %s", self.completed_steps)
+                action_classification_interval = getattr(
+                    self.config.trainer,
+                    "eval_action_classification_interval",
+                    None,
+                )
+                if action_classification_interval is None:
+                    action_classification_interval = self.config.trainer.eval_interval
+                if should_run_step_interval_event(
+                    completed_steps=self.completed_steps,
+                    interval=action_classification_interval,
+                    gradients_synced=gradients_synced,
+                ):
+                    if self.accelerator.is_main_process:
+                        logger.info("Starting held-out action classification eval at step %s", self.completed_steps)
                     step_metrics = self.eval_action_cc_f1(step_metrics)
+                    if self.accelerator.is_main_process:
+                        logger.info("Finished held-out action classification eval at step %s", self.completed_steps)
                 if self._rl_games_eval_runner is not None:
                     eval_every = self._rl_games_eval_runner.interval_steps()
                     if eval_every > 0 and should_run_step_interval_event(
