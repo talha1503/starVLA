@@ -78,7 +78,7 @@ def _load_source_latency_prompt_map(
     frameskip: int = 1,
 ) -> dict[str, dict[str, Any]]:
     from datasets import load_dataset
-    from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import build_latency_prompt_map
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import build_latency_prompt_map
 
     def _load(columns: list[str] | None = None):
         load_kwargs = {"split": "train", "cache_dir": cache_dir, "columns": columns}
@@ -576,8 +576,8 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
 
 
 def _ensure_flappy_dataset(args) -> dict[str, Any]:
-    from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion.convert_flappy_to_starvla_lerobot import convert_dataset
-    from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import verify_dataset
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_flappy_to_starvla_lerobot import convert_dataset
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import verify_dataset
 
     return _ensure_rl_games_lerobot_dataset(
         args,
@@ -587,8 +587,8 @@ def _ensure_flappy_dataset(args) -> dict[str, Any]:
 
 
 def _ensure_demon_attack_dataset(args) -> dict[str, Any]:
-    from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion.convert_demon_attack_to_starvla_lerobot import convert_dataset
-    from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion.verify_demon_attack_dataset import verify_dataset
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_demon_attack_to_starvla_lerobot import convert_dataset
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_demon_attack_dataset import verify_dataset
 
     return _ensure_rl_games_lerobot_dataset(
         args,
@@ -599,12 +599,12 @@ def _ensure_demon_attack_dataset(args) -> dict[str, Any]:
 
 def _task_converter_and_verifier(task: str):
     if task == "flappy":
-        from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion.convert_flappy_to_starvla_lerobot import convert_dataset
-        from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import verify_dataset
+        from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_flappy_to_starvla_lerobot import convert_dataset
+        from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import verify_dataset
         return convert_dataset, verify_dataset, "rl_games_flappy"
     if task == "demon_attack":
-        from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion.convert_demon_attack_to_starvla_lerobot import convert_dataset
-        from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion.verify_demon_attack_dataset import verify_dataset
+        from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_demon_attack_to_starvla_lerobot import convert_dataset
+        from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_demon_attack_dataset import verify_dataset
         return convert_dataset, verify_dataset, "rl_games_demon_attack"
     raise ValueError(f"cross-task rl_games currently supports only flappy and demon_attack, got {task!r}")
 
@@ -826,8 +826,8 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
 
 
 def _ensure_deadly_corridor_dataset(args) -> dict[str, Any]:
-    from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion.convert_deadly_corridor_to_starvla_lerobot import convert_dataset
-    from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion.verify_deadly_corridor_dataset import verify_dataset
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_deadly_corridor_to_starvla_lerobot import convert_dataset
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_deadly_corridor_dataset import verify_dataset
 
     return _ensure_rl_games_lerobot_dataset(
         args,
