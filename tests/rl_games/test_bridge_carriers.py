@@ -4,9 +4,9 @@ pytest.importorskip("datasets")
 pytest.importorskip("numpy")
 pytest.importorskip("pyarrow")
 
-from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion import convert_deadly_corridor_to_starvla_lerobot as deadly
-from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion import convert_demon_attack_to_starvla_lerobot as demon
-from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion import convert_flappy_to_starvla_lerobot as flappy
+from examples.rl_games.bash_scripts.gr00t.data_conversion import convert_deadly_corridor_to_starvla_lerobot as deadly
+from examples.rl_games.bash_scripts.gr00t.data_conversion import convert_demon_attack_to_starvla_lerobot as demon
+from examples.rl_games.bash_scripts.gr00t.data_conversion import convert_flappy_to_starvla_lerobot as flappy
 
 
 def test_flappy_bridge_labels_pad_to_7d_carrier():

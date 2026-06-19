@@ -6,7 +6,7 @@ import json
 import sys
 from collections import defaultdict
 
-from starVLA.examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import (
+from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import (
     _load_train_split,
     build_latency_prompt_map,
 )
