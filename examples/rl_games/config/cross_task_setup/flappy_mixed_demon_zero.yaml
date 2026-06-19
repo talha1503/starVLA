@@ -12,7 +12,9 @@ rl_games:
         prompt_source_hf: talha1503/flappy_bird_mixed_latency_parquet
         converted_name: flappy_mixed_latency_train
         train_latency_filter: [0, 1, 2, 3, 4]
+        eval_latency_filter: null
         episodes_per_latency: 50
+        eval_episodes_per_latency: null
         max_episodes: null
         weight: 1.0
       - name: demon_attack
@@ -21,7 +23,9 @@ rl_games:
         prompt_source_hf: talha1503/demon_attack_mixed_latency_parquet
         converted_name: demon_attack_zero_latency_train
         train_latency_filter: [0]
+        eval_latency_filter: null
         episodes_per_latency: null
+        eval_episodes_per_latency: null
         max_episodes: 100
         weight: 1.0
     eval_tasks:
