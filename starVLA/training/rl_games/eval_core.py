@@ -329,6 +329,10 @@ class _TaskEvaluator:
         ))
         vla_data_cfg = getattr(getattr(cfg, "datasets", None), "vla_data", None)
         self.include_state = bool(getattr(vla_data_cfg, "include_state", False))
+        self.pack_image_sequence = _as_bool(getattr(vla_data_cfg, "pack_image_sequence", False), default=False)
+        self.image_sequence_length = _as_int(getattr(vla_data_cfg, "image_sequence_length", None), 1)
+        if self.image_sequence_length <= 0:
+            raise ValueError(f"image_sequence_length must be positive, got {self.image_sequence_length}")
         self.state_dim = int(getattr(cfg.framework.action_model, "state_dim", 1) or 1)
         self.deadly_multibinary_threshold = self._resolve_deadly_multibinary_threshold()
         self.fixed_episode_seeds = _as_bool(getattr(self.env_eval_cfg, "fixed_episode_seeds", True), default=True)
@@ -472,14 +476,42 @@ class _TaskEvaluator:
     def _queue_default_action(self):
         return [0] * 7 if self.task == "deadly_corridor" else 0
 
+    def _initial_model_history(self, model_obs) -> List[Any]:
+        return [model_obs for _ in range(self.image_sequence_length)]
+
+    def _advance_model_history(self, model_history: List[Any], model_obs) -> List[Any]:
+        if len(model_history) != self.image_sequence_length:
+            raise ValueError(
+                f"Expected model history length={self.image_sequence_length}, got {len(model_history)}"
+            )
+        return [*model_history[1:], model_obs]
+
     def _make_model_example(self, model_obs, prompt: str) -> Dict[str, Any]:
-        obs_rgb = _resize_rgb(
-            model_obs,
-            image_size=self.image_size,
-            prefer_area=self.task == "flappy",
-        )
+        if self.pack_image_sequence:
+            model_frames = list(model_obs)
+            if len(model_frames) != self.image_sequence_length:
+                raise ValueError(
+                    f"Expected {self.image_sequence_length} model frames, got {len(model_frames)}"
+                )
+            images = [
+                Image.fromarray(
+                    _resize_rgb(
+                        frame,
+                        image_size=self.image_size,
+                        prefer_area=self.task == "flappy",
+                    )
+                )
+                for frame in model_frames
+            ]
+        else:
+            obs_rgb = _resize_rgb(
+                model_obs,
+                image_size=self.image_size,
+                prefer_area=self.task == "flappy",
+            )
+            images = [Image.fromarray(obs_rgb)]
         example = {
-            "image": [Image.fromarray(obs_rgb)],
+            "image": images,
             "lang": prompt,
         }
         if self.include_state:
@@ -582,11 +614,16 @@ class _TaskEvaluator:
                 seed_overrides=seed_overrides,
             )
             obs, _ = self._reset_env(slot["env"], episode_seed)
+            model_obs = self._model_observation(slot["env"], obs)
             slot.update({
                 "active": True,
                 "episode": int(episode),
                 "seed": episode_seed,
-                "model_obs": self._model_observation(slot["env"], obs),
+                "model_obs": (
+                    self._initial_model_history(model_obs)
+                    if self.pack_image_sequence
+                    else model_obs
+                ),
                 "queue": ActionLatencyQueue(latency=latency, default_action=self._queue_default_action()),
                 "reward": 0.0,
                 "steps": 0,
@@ -633,7 +670,12 @@ class _TaskEvaluator:
                         action_hist[str(effective_action)] += 1
 
                         obs, step_reward, terminated, truncated = self._step_env_once(slot["env"], effective_action)
-                        slot["model_obs"] = self._model_observation(slot["env"], obs)
+                        next_model_obs = self._model_observation(slot["env"], obs)
+                        slot["model_obs"] = (
+                            self._advance_model_history(slot["model_obs"], next_model_obs)
+                            if self.pack_image_sequence
+                            else next_model_obs
+                        )
                         slot["reward"] += step_reward
                         slot["steps"] += 1
                         done = terminated or truncated or slot["steps"] >= max_steps
@@ -752,6 +794,7 @@ class _TaskEvaluator:
             episode_seeds.append(episode_seed)
             obs, _ = self._reset_env(env, episode_seed)
             model_obs = self._model_observation(env, obs)
+            model_input = self._initial_model_history(model_obs) if self.pack_image_sequence else model_obs
             queue.reset()
             done = False
             total_reward = 0.0
@@ -763,7 +806,7 @@ class _TaskEvaluator:
                     frames.append(frame)
 
             while not done and steps < max_steps:
-                example = self._make_model_example(model_obs, prompt)
+                example = self._make_model_example(model_input, prompt)
                 output = model.predict_action(examples=[example])
                 actions = output["normalized_actions"]
                 if actions.ndim != 3:
@@ -775,6 +818,11 @@ class _TaskEvaluator:
 
                 obs, step_reward, terminated, truncated = self._step_env_once(env, effective_action)
                 model_obs = self._model_observation(env, obs)
+                model_input = (
+                    self._advance_model_history(model_input, model_obs)
+                    if self.pack_image_sequence
+                    else model_obs
+                )
                 if video_dir is not None:
                     frame = _render_frame(env, fallback_obs=model_obs)
                     if frame is not None:

@@ -147,6 +147,45 @@ def test_task_evaluator_respects_explicit_task_seed_stride():
     assert [evaluator._episode_seed(latency=0, episode=episode) for episode in range(3)] == [100042, 100043, 100044]
 
 
+def test_task_evaluator_builds_temporal_image_examples_for_wan_oft():
+    cfg = OmegaConf.create(
+        {
+            "rl_games": {
+                "env_eval": {
+                    "frameskip": 1,
+                    "image_size": 4,
+                },
+            },
+            "datasets": {
+                "vla_data": {
+                    "pack_image_sequence": True,
+                    "image_sequence_length": 4,
+                    "include_state": True,
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 7,
+                },
+            },
+        }
+    )
+    evaluator = _TaskEvaluator(task="flappy", cfg=cfg)
+    frames = [
+        np.full((4, 4, 3), fill_value=value, dtype=np.uint8)
+        for value in (10, 20, 30, 40)
+    ]
+
+    history = evaluator._initial_model_history(frames[0])
+    for frame in frames[1:]:
+        history = evaluator._advance_model_history(history, frame)
+    example = evaluator._make_model_example(history, "play flappy")
+
+    assert len(example["image"]) == 4
+    assert [int(np.asarray(image)[0, 0, 0]) for image in example["image"]] == [10, 20, 30, 40]
+    assert example["state"].shape == (1, 7)
+
+
 def test_task_evaluator_saved_seed_overrides_take_precedence():
     cfg = OmegaConf.create(
         {

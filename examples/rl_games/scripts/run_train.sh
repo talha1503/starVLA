@@ -11,7 +11,7 @@ Usage:
 
 Options:
   --config-name <name>         Hydra top-level config name (default: train)
-  --model <openvla|pi0|pi05|gr00t>  Model config group (default: openvla)
+  --model <openvla|pi0|pi05|gr00t|wan_oft>  Model config group (default: openvla)
   --env <flappy|demon_attack|deadly_corridor>  Env config group (default: flappy)
   --mode <single|mixed_latency|curriculum_exclusive|curriculum_cumulative|cross_task>      Mode config group (default: single)
   --init-mode <scratch|bridge>  Action-carrier initialization mode (default: scratch)
@@ -339,12 +339,16 @@ case "$INIT_MODE_LOWER" in
     INIT_MODE="bridge"
     INIT_MODE_LOWER="bridge"
     ACTION_CARRIER="bridge"
-    if [[ "$MODEL" == "pi0" && "$BASE_MODEL_REPO_ID_EXPLICIT" != "true" ]]; then
+    if [[ "$MODEL" == "wan_oft" && "$BASE_MODEL_REPO_ID_EXPLICIT" != "true" ]]; then
+      BASE_MODEL_REPO_ID="Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+    elif [[ "$MODEL" == "pi0" && "$BASE_MODEL_REPO_ID_EXPLICIT" != "true" ]]; then
       BASE_MODEL_REPO_ID="StarVLA/Qwen2.5-VL-3B-Instruct-Action"
     elif [[ "$BASE_MODEL_REPO_ID" == "StarVLA/Qwen3-VL-4B-Instruct-Action" ]]; then
       BASE_MODEL_REPO_ID="Qwen/Qwen3-VL-4B-Instruct"
     fi
-    if [[ "$MODEL" == "pi0" && "$BASE_MODEL_DIR_EXPLICIT" != "true" ]]; then
+    if [[ "$MODEL" == "wan_oft" && "$BASE_MODEL_DIR_EXPLICIT" != "true" ]]; then
+      BASE_MODEL_DIR="playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+    elif [[ "$MODEL" == "pi0" && "$BASE_MODEL_DIR_EXPLICIT" != "true" ]]; then
       BASE_MODEL_DIR="playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action"
     elif [[ "$BASE_MODEL_DIR" == *"Qwen3-VL-4B-Instruct-Action" ]]; then
       BASE_MODEL_DIR="${BASE_MODEL_DIR%-Action}"
@@ -355,6 +359,7 @@ case "$INIT_MODE_LOWER" in
         pi0) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen-PI-Bridge-RT-1" ;;
         pi05) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1" ;;
         gr00t) INITIALIZATION_HF_REPO_ID="StarVLA/Qwen3VL-GR00T-Bridge-RT-1" ;;
+        wan_oft) INITIALIZATION_HF_REPO_ID="StarVLA/WM4A-Wan2d2-OFT-LIBERO-4in1" ;;
         *) echo "No default bridge initializer for model '${MODEL}'." >&2; exit 1 ;;
       esac
     fi
@@ -364,6 +369,7 @@ case "$INIT_MODE_LOWER" in
         pi0) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen-PI-Bridge-RT-1" ;;
         pi05) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen3VL-PI_v3-Bridge-RT_1" ;;
         gr00t) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/Qwen3VL-GR00T-Bridge-RT-1" ;;
+        wan_oft) INITIALIZATION_LOCAL_DIR="playground/Pretrained_models/WM4A-Wan2d2-OFT-LIBERO-4in1" ;;
         *) echo "No default bridge initializer local dir for model '${MODEL}'." >&2; exit 1 ;;
       esac
     fi
@@ -373,6 +379,7 @@ case "$INIT_MODE_LOWER" in
         pi0) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_30000_pytorch_model.pt" ;;
         pi05) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_50000_pytorch_model.pt" ;;
         gr00t) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_20000_pytorch_model.pt" ;;
+        wan_oft) INITIALIZATION_CHECKPOINT_FILENAME="checkpoints/steps_60000_pytorch_model.pt" ;;
         *) echo "No default bridge checkpoint filename for model '${MODEL}'." >&2; exit 1 ;;
       esac
     fi
@@ -529,6 +536,9 @@ if [[ -n "$RESOLVED_DATA_MIX" ]]; then
 fi
 if [[ -n "$RESOLVED_BASE_MODEL" ]]; then
   CMD+=("framework.qwenvl.base_vlm=$RESOLVED_BASE_MODEL")
+  if [[ "$MODEL" == "wan_oft" ]]; then
+    CMD+=("framework.world_model.base_wm=$RESOLVED_BASE_MODEL")
+  fi
 fi
 if [[ -z "$LATENCY_PROMPT_MAP_PATH" && -n "$RESOLVED_LATENCY_PROMPT_MAP" ]]; then
   CMD+=("rl_games.env_eval.latency.prompt_map_path=$RESOLVED_LATENCY_PROMPT_MAP")

@@ -41,6 +41,7 @@ from PIL import Image
 import torch.distributed as dist
 
 from starVLA.dataloader.gr00t_lerobot.video import get_all_frames, get_frames_by_timestamps
+from starVLA.training.rl_games.temporal_clip import pack_image_sequence
 
 from starVLA.dataloader.gr00t_lerobot.embodiment_tags import EmbodimentTag
 from starVLA.dataloader.gr00t_lerobot.schema import (
@@ -1384,10 +1385,22 @@ class LeRobotSingleDataset(Dataset):
     def _pack_sample(self, data: dict) -> dict:
         """Pack transformed modality data into training sample format."""
         step_images = []
+        pack_sequence = (
+            self.data_cfg is not None
+            and _as_bool(self.data_cfg.get("pack_image_sequence", False), default=False)
+        )
+        image_sequence_length = int(
+            self.data_cfg.get("image_sequence_length", 1) if self.data_cfg is not None else 1
+        )
         for video_key in self.modality_keys["video"]:
-            image = data[video_key][0]
-            image = Image.fromarray(image).resize((224, 224))
-            step_images.append(image)
+            step_images.extend(
+                pack_image_sequence(
+                    frames=data[video_key],
+                    pack_image_sequence=pack_sequence,
+                    image_sequence_length=image_sequence_length,
+                    resize_size=(224, 224),
+                )
+            )
 
         language = data[self.modality_keys["language"][0]][0]
         action = []

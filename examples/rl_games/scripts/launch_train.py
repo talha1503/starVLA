@@ -405,6 +405,8 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
         ("framework.name", "framework.name"),
         ("framework.qwenvl.attn_implementation", "framework.qwenvl.attn_implementation"),
         ("framework.qwenvl.enable_gradient_checkpointing", "framework.qwenvl.enable_gradient_checkpointing"),
+        ("framework.world_model.base_wm", "framework.world_model.base_wm"),
+        ("framework.world_model.extract_layers", "framework.world_model.extract_layers"),
         ("framework.action_model.action_model_type", "framework.action_model.action_model_type"),
         ("framework.action_model.action_dim", "framework.action_model.action_dim"),
         ("framework.action_model.action_env_dim", "framework.action_model.action_env_dim"),
@@ -473,6 +475,12 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
         ("datasets.vla_data.load_all_data_for_training", "datasets.vla_data.load_all_data_for_training"),
         ("datasets.vla_data.obs_image_size", "datasets.vla_data.obs_image_size"),
         ("datasets.vla_data.video_backend", "datasets.vla_data.video_backend"),
+        ("datasets.vla_data.observation_indices", "datasets.vla_data.observation_indices"),
+        ("datasets.vla_data.language_indices", "datasets.vla_data.language_indices"),
+        ("datasets.vla_data.state_indices", "datasets.vla_data.state_indices"),
+        ("datasets.vla_data.action_indices", "datasets.vla_data.action_indices"),
+        ("datasets.vla_data.pack_image_sequence", "datasets.vla_data.pack_image_sequence"),
+        ("datasets.vla_data.image_sequence_length", "datasets.vla_data.image_sequence_length"),
     ):
         _append_override(cmd, cfg, cfg_path, hydra_path)
 
@@ -487,6 +495,8 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
         cmd.append(f"datasets.vla_data.custom_mixtures_path={setup['custom_mixtures_path']}")
     if setup.get("base_model_dir"):
         cmd.append(f"framework.qwenvl.base_vlm={setup['base_model_dir']}")
+        if _cfg_get(cfg, "framework.world_model.base_wm") not in (None, ""):
+            cmd.append(f"framework.world_model.base_wm={setup['base_model_dir']}")
 
     for hydra_key, cfg_path in (
         ("rl_games.task", "rl_games.task"),

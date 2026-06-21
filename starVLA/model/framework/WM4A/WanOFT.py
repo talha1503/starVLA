@@ -74,7 +74,8 @@ class WanOFTDefaultConfig:
             "action_model_type": "MLP",
             "action_dim": 7,
             "action_hidden_dim": 3072,
-            "future_action_window_size": 8,
+            "action_horizon": 8,
+            "future_action_window_size": 7,
             "past_action_window_size": 0,
         }
     )
@@ -107,10 +108,37 @@ class Wan_OFT(baseframework):
         # only ever read `action_horizon` here.
         self.action_horizon = int(self.config.framework.action_model.action_horizon)
         self.chunk_len = self.action_horizon
+        self.action_dim = int(self.config.framework.action_model.action_dim)
+        self.action_env_dim = int(getattr(self.config.framework.action_model, "action_env_dim", self.action_dim))
 
         self.action_query_proj = nn.Linear(wm_hidden, self.chunk_len * wm_hidden)  # Project into a two-layer MLP
 
         self.l1_loss = nn.L1Loss()
+
+    def _prepare_action_array(self, action) -> np.ndarray:
+        values = np.asarray(action)
+        if values.ndim == 1:
+            values = values[None, :]
+        if values.shape[-1] != self.action_dim:
+            raise ValueError(
+                f"WanOFT expected action dim={self.action_dim}, got action shape={values.shape}. "
+                "Use the explicit 7D bridge action carrier for released WanOFT checkpoints."
+            )
+        return values
+
+    def _compute_action_loss(self, pred_actions: torch.Tensor, actions_target: torch.Tensor) -> torch.Tensor:
+        if actions_target.shape[-2] != self.action_horizon:
+            raise ValueError(
+                f"WanOFT expected action target horizon={self.action_horizon}, got target shape={actions_target.shape}. "
+                "Set datasets.vla_data.action_indices to the released checkpoint chunk length."
+            )
+        effective_dim = min(self.action_env_dim, pred_actions.shape[-1], actions_target.shape[-1])
+        if effective_dim <= 0:
+            raise ValueError(
+                f"Invalid action_env_dim={self.action_env_dim} for predicted shape={pred_actions.shape} "
+                f"and target shape={actions_target.shape}"
+            )
+        return self.l1_loss(pred_actions[..., :effective_dim], actions_target[..., :effective_dim])
 
     def _pool_to_action_queries(self, hidden_states: torch.Tensor) -> torch.Tensor:
         B, N, H = hidden_states.shape
@@ -122,7 +150,7 @@ class Wan_OFT(baseframework):
     def forward(self, examples: List[dict] = None, **kwargs) -> Tuple:
         batch_images = [example["image"] for example in examples]
         instructions = [example["lang"] for example in examples]
-        actions = [example["action"] for example in examples]
+        actions = [self._prepare_action_array(example["action"]) for example in examples]
         state = [example["state"] for example in examples] if "state" in examples[0] else None
 
         # Optionally prepend discretised proprioceptive state tokens (π₀.5 style).
@@ -147,7 +175,7 @@ class Wan_OFT(baseframework):
             actions = torch.tensor(np.array(actions), device=pred_actions.device, dtype=pred_actions.dtype)
             actions_target = actions[:, -self.action_horizon :, :]
 
-            action_loss = self.l1_loss(pred_actions, actions_target)
+            action_loss = self._compute_action_loss(pred_actions, actions_target)
 
         return {"action_loss": action_loss}
 
