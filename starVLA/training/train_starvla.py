@@ -1304,26 +1304,30 @@ class VLATrainer(TrainerUtils):
         unwrapped = self.accelerator.unwrap_model(self.model)
         counts = action_cc_f1.new_counts(spec) if spec is not None else None
 
-        # Materialize assigned frames (tagged with their episode), batch for inference.
-        tagged = []  # (task, episode_key, base_index, latency, packed_sample)
-        for ep_task, ds, episode_key, _episode_latency_value, frames in assigned:
-            for flat_idx, base_idx in frames:
-                sample = ds[flat_idx]
-                sample_task = _sample_task(sample) or ep_task
-                tagged.append((sample_task, episode_key, base_idx, _sample_latency(sample), sample))
-
         per_ep = {}  # episode_key -> list of (base_index, teacher_components, model_components)
+
+        def flush_chunk(chunk):
+            normalized = unwrapped.predict_action(examples=[c[4] for c in chunk])["normalized_actions"]
+            for i, (sample_task, episode_key, base_idx, latency, sample) in enumerate(chunk):
+                sample_task = str(sample_task)
+                sample_spec = _spec_for_task(sample_task)
+                teacher_vec = np.asarray(sample["action"])[0, :]
+                model_vec = normalized[i, 0, :]
+                entry = per_ep.setdefault(episode_key, {"task": sample_task, "latency": latency, "items": []})
+                entry["items"].append((base_idx, sample_spec.comp_fn(teacher_vec), sample_spec.comp_fn(model_vec)))
+
         with torch.no_grad():
-            for start in range(0, len(tagged), bs):
-                chunk = tagged[start : start + bs]
-                normalized = unwrapped.predict_action(examples=[c[4] for c in chunk])["normalized_actions"]
-                for i, (sample_task, episode_key, base_idx, latency, sample) in enumerate(chunk):
-                    sample_task = str(sample_task)
-                    sample_spec = _spec_for_task(sample_task)
-                    teacher_vec = np.asarray(sample["action"])[0, :]
-                    model_vec = normalized[i, 0, :]
-                    entry = per_ep.setdefault(episode_key, {"task": sample_task, "latency": latency, "items": []})
-                    entry["items"].append((base_idx, sample_spec.comp_fn(teacher_vec), sample_spec.comp_fn(model_vec)))
+            chunk = []
+            for ep_task, ds, episode_key, _episode_latency_value, frames in assigned:
+                for flat_idx, base_idx in frames:
+                    sample = ds[flat_idx]
+                    sample_task = _sample_task(sample) or ep_task
+                    chunk.append((sample_task, episode_key, base_idx, _sample_latency(sample), sample))
+                    if len(chunk) == bs:
+                        flush_chunk(chunk)
+                        chunk = []
+            if chunk:
+                flush_chunk(chunk)
 
         if was_training:
             self.model.train()
