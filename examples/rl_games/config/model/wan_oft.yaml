@@ -36,7 +36,7 @@ framework:
     action_horizon: 8
     future_action_window_size: 7
     past_action_window_size: 0
-    loss_type: l1
+    loss_type: discrete_ce
 
 datasets:
   vla_data:

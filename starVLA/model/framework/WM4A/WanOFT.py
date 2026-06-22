@@ -32,6 +32,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from deployment.model_server.tools.image_tools import to_pil_preserve
 from starVLA.training.trainer_utils import initialize_overwatch
@@ -77,6 +78,7 @@ class WanOFTDefaultConfig:
             "action_horizon": 8,
             "future_action_window_size": 7,
             "past_action_window_size": 0,
+            "loss_type": "l1",
         }
     )
 
@@ -110,6 +112,7 @@ class Wan_OFT(baseframework):
         self.chunk_len = self.action_horizon
         self.action_dim = int(self.config.framework.action_model.action_dim)
         self.action_env_dim = int(getattr(self.config.framework.action_model, "action_env_dim", self.action_dim))
+        self.action_loss_type = str(getattr(self.config.framework.action_model, "loss_type", "l1")).lower()
 
         self.action_query_proj = nn.Linear(wm_hidden, self.chunk_len * wm_hidden)  # Project into a two-layer MLP
 
@@ -138,6 +141,25 @@ class Wan_OFT(baseframework):
                 f"Invalid action_env_dim={self.action_env_dim} for predicted shape={pred_actions.shape} "
                 f"and target shape={actions_target.shape}"
             )
+        if self.action_loss_type in {"discrete_ce", "ce", "cross_entropy"}:
+            if effective_dim < 2:
+                raise ValueError(
+                    f"action_model.loss_type={self.action_loss_type!r} requires at least 2 action classes, "
+                    f"got effective_dim={effective_dim}"
+                )
+            logits = pred_actions[..., :effective_dim]
+            target_class = actions_target[..., :effective_dim].argmax(dim=-1).long()
+            return F.cross_entropy(
+                logits.reshape(-1, effective_dim),
+                target_class.reshape(-1),
+            )
+
+        if self.action_loss_type not in {"l1", "mae"}:
+            raise ValueError(
+                f"Unsupported action_model.loss_type={self.action_loss_type!r}; "
+                "expected one of: l1, discrete_ce"
+            )
+
         return self.l1_loss(pred_actions[..., :effective_dim], actions_target[..., :effective_dim])
 
     def _pool_to_action_queries(self, hidden_states: torch.Tensor) -> torch.Tensor:

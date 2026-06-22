@@ -49,6 +49,7 @@ def test_wan_oft_flappy_config_preserves_released_checkpoint_shapes() -> None:
     assert cfg.framework.action_model.action_horizon == 8
     assert cfg.framework.action_model.future_action_window_size == 7
     assert cfg.framework.action_model.past_action_window_size == 0
+    assert cfg.framework.action_model.loss_type == "discrete_ce"
     assert cfg.datasets.vla_data.include_state is True
     assert list(cfg.datasets.vla_data.observation_indices) == [-3, -2, -1, 0]
     assert list(cfg.datasets.vla_data.state_indices) == [0]
@@ -164,3 +165,12 @@ def test_pack_sample_preserves_configured_temporal_clip() -> None:
 
     assert len(images) == 4
     assert [int(np.asarray(image.resize((4, 4)))[0, 0, 0]) for image in images] == [10, 20, 30, 40]
+
+
+def test_wan_oft_implements_discrete_ce_action_loss() -> None:
+    wan_oft_source = (REPO_ROOT / "starVLA" / "model" / "framework" / "WM4A" / "WanOFT.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "discrete_ce" in wan_oft_source
+    assert "F.cross_entropy" in wan_oft_source
