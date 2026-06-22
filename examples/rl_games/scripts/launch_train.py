@@ -487,12 +487,18 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
     data_root = setup.get("dataset_local_dir") or _resolve_path(_cfg_get(cfg, "paths.dataset_local_dir"), workspace_dir)
     cmd.append(f"datasets.vla_data.data_root_dir={data_root}")
 
-    if setup.get("data_mix"):
-        cmd.append(f"datasets.vla_data.data_mix={setup['data_mix']}")
-    if setup.get("eval_data_mix"):
-        cmd.append(f"datasets.vla_data.eval_data_mix={setup['eval_data_mix']}")
-    if setup.get("custom_mixtures_path"):
-        cmd.append(f"datasets.vla_data.custom_mixtures_path={setup['custom_mixtures_path']}")
+    data_mix = setup.get("data_mix") or _cfg_get(cfg, "datasets.vla_data.data_mix")
+    eval_data_mix = setup.get("eval_data_mix") or _cfg_get(cfg, "datasets.vla_data.eval_data_mix")
+    custom_mixtures_path = setup.get("custom_mixtures_path") or _cfg_get(
+        cfg,
+        "datasets.vla_data.custom_mixtures_path",
+    )
+    if data_mix not in (None, ""):
+        cmd.append(f"datasets.vla_data.data_mix={data_mix}")
+    if eval_data_mix not in (None, ""):
+        cmd.append(f"datasets.vla_data.eval_data_mix={eval_data_mix}")
+    if custom_mixtures_path not in (None, ""):
+        cmd.append(f"datasets.vla_data.custom_mixtures_path={custom_mixtures_path}")
     if setup.get("base_model_dir"):
         cmd.append(f"framework.qwenvl.base_vlm={setup['base_model_dir']}")
         if _cfg_get(cfg, "framework.world_model.base_wm") not in (None, ""):

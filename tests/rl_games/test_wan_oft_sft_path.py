@@ -94,6 +94,30 @@ def test_launch_train_forwards_world_model_path_only_for_wan_oft(tmp_path: Path)
     assert not any(item.startswith("framework.world_model.base_wm=") for item in openvla_cmd)
 
 
+def test_launch_train_forwards_explicit_wan_oft_bridge_data_mix(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="wan_oft",
+        env="flappy",
+        init="wan_oft_libero",
+        mode="single",
+        overrides=[
+            "datasets.vla_data.data_mix=flappy_train__bridge",
+            "datasets.vla_data.eval_data_mix=flappy_train__bridge__val",
+        ],
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "wan_base"),
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert "datasets.vla_data.data_mix=flappy_train__bridge" in cmd
+    assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in cmd
+
+
 def test_rl_games_modality_indices_can_be_overridden_for_wan_oft_clip() -> None:
     temporal_clip = importlib.import_module("starVLA.training.rl_games.temporal_clip")
 
