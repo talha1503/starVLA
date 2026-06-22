@@ -195,6 +195,57 @@ class FrameKVMemory:
             self.text = _d(self.text)
         self.frames = [_d(b) for b in self.frames]
 
+    # ── Batching across streams (eval slots) ────────────────────────────
+    # The rotation / cache math is already batch-general (positions carry B),
+    # so several same-layout streams can share one forward. We stack their
+    # per-layer key/value tensors along the batch dim, step once, then slice
+    # the updated blocks back out to each stream.
+
+    def layout_key(self):
+        """Identity of the cache layout: streams with equal keys can be batched.
+
+        Two streams batch only if their text presence and per-frame block lengths
+        match exactly, so the stacked tensors are rectangular and positions align.
+        """
+        text_len = self.text[2] if self.text is not None else None
+        return (text_len, tuple(block[2] for block in self.frames))
+
+    @classmethod
+    def stack(cls, memories: List["FrameKVMemory"]) -> "FrameKVMemory":
+        """Stack same-layout per-stream memories into one batched memory (dim 0)."""
+        head = memories[0]
+        keys = {m.layout_key() for m in memories}
+        if len(keys) != 1:
+            raise ValueError(f"cannot batch streams with differing layouts: {keys}")
+
+        def _cat(blocks):
+            k0_list, v_list, length = blocks[0]
+            num_layers = len(k0_list)
+            k0 = [torch.cat([b[0][layer] for b in blocks], dim=0) for layer in range(num_layers)]
+            v = [torch.cat([b[1][layer] for b in blocks], dim=0) for layer in range(num_layers)]
+            return (k0, v, length)
+
+        batched = cls(head.rotary_emb, head.window, head.num_layers, head.text_config)
+        if head.text is not None:
+            batched.text = _cat([m.text for m in memories])
+        for fi in range(len(head.frames)):
+            batched.frames.append(_cat([m.frames[fi] for m in memories]))
+        return batched
+
+    def slice(self, index: int) -> "FrameKVMemory":
+        """Extract stream ``index`` from a batched memory as a fresh per-stream memory."""
+        def _slice(block):
+            k0_list, v_list, length = block
+            k0 = [k[index : index + 1] for k in k0_list]
+            v = [vv[index : index + 1] for vv in v_list]
+            return (k0, v, length)
+
+        out = FrameKVMemory(self.rotary_emb, self.window, self.num_layers, self.text_config)
+        if self.text is not None:
+            out.text = _slice(self.text)
+        out.frames = [_slice(b) for b in self.frames]
+        return out
+
 
 def memory_step(
     qwen_model,

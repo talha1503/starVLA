@@ -505,61 +505,83 @@ class Qwenvl_OFT(baseframework):
         frame_lens = [bounds[i + 1] - bounds[i] for i in range(len(starts))]
         return starts[0], frame_lens, len(ids) - action_start
 
-    def _kv_forward_step(self, memory, current_frame, instruction):
-        """Run one streaming KV-memory step for ``current_frame`` and return
-        ``(last_hidden_new, new_input_ids)`` for the freshly fed tokens.
+    def _kv_forward_step_batched(self, memories, frames, instruction):
+        """Run ONE streaming KV-memory step for a group of same-layout streams and
+        return ``(last_hidden_new [B, new_len, H], new_input_ids [B, new_len])``.
 
-        Positions for the whole visible window are computed via get_rope_index over
-        a virtual window where the current frame stands in for every visible frame
-        (positions are content independent); only the current frame's real pixels are
-        fed, with past frames served from ``memory``.
+        ``memories`` and ``frames`` are aligned lists (one entry per stream / eval
+        slot); all entries share ``instruction`` and history layout (grouped by the
+        caller). Two efficiencies vs a naive per-frame, per-step encode:
+
+        - Single-frame preprocessing: the image processor runs once per stream on its
+          OWN current frame. The window's multi-frame token layout (needed only for
+          M-RoPE positions via ``get_rope_index``) is reconstructed by replicating the
+          frame's token block, so duplicate frames are never re-preprocessed.
+        - Cross-stream batching: the streams' canonical KV blocks are stacked along the
+          batch dim, so the whole group is one forward; results are sliced back to each
+          stream's memory afterwards.
+
+        Past frames come from each stream's memory; only the current frame's pixels are
+        encoded fresh. ``B == 1`` (training rollout) reuses the same path with no
+        stacking, so gradients flow through the in-place memory updates.
         """
-        from starVLA.model.modules.vlm.kv_memory import memory_step
+        from starVLA.model.modules.vlm.kv_memory import FrameKVMemory, memory_step
 
         backbone = self.qwen_vl_interface.model.model  # Qwen3VLModel
-        n_visible = memory.num_past_frames() + 1
-        batch = self._build_text_first_inputs([current_frame] * n_visible, instruction)
-        input_ids = batch["input_ids"]
-        grid = batch["image_grid_thw"]
-        pixel_values = batch["pixel_values"]
-        full_pos, _ = backbone.get_rope_index(input_ids, image_grid_thw=grid)
+        B = len(memories)
+        n_past = memories[0].num_past_frames()
+        n_visible = n_past + 1
 
-        prefix_len, frame_lens, _action_len = self._kv_segments(input_ids[0])
-        past_len = memory.past_length()
-        is_prefill = not memory.has_text()
+        # One processor call per stream's current frame (no duplicate-frame work).
+        per_stream = [self._build_text_first_inputs([frame], instruction) for frame in frames]
+        ids1 = per_stream[0]["input_ids"][0]
+        cur_grid = per_stream[0]["image_grid_thw"][:1]
+        prefix_len, frame_lens, action_len = self._kv_segments(ids1)
+        frame_len = frame_lens[0]
 
-        if is_prefill:
-            expected_past = 0
-            new_start = 0
-            frame_start_in_new = prefix_len
-            prefill_text_len = prefix_len
-        else:
-            expected_past = prefix_len + sum(frame_lens[:-1])
-            new_start = past_len
-            frame_start_in_new = 0
-            prefill_text_len = 0
+        # Reconstruct the n_visible-frame window ids by replicating the frame block,
+        # then let get_rope_index assign the (content-independent) M-RoPE positions.
+        prefix, action = ids1[:prefix_len], ids1[prefix_len + frame_len :]
+        block = ids1[prefix_len : prefix_len + frame_len]
+        window_ids = torch.cat([prefix] + [block] * n_visible + [action]).unsqueeze(0)
+        full_pos1, _ = backbone.get_rope_index(window_ids, image_grid_thw=cur_grid.repeat(n_visible, 1))
+        full_pos = full_pos1.expand(3, B, full_pos1.shape[-1]).contiguous()
+
+        batched = FrameKVMemory.stack(memories) if B > 1 else memories[0]
+        past_len = batched.past_length()
+        is_prefill = not batched.has_text()
+        expected_past = 0 if is_prefill else prefix_len + n_past * frame_len
         if past_len != expected_past:
             raise RuntimeError(
                 f"KV memory slice misaligned: memory past_length={past_len} but window "
                 f"expects {expected_past}. Token boundaries drifted across steps."
             )
+        if is_prefill:
+            new_start, frame_start_in_new, prefill_text_len = 0, prefix_len, prefix_len
+        else:
+            new_start, frame_start_in_new, prefill_text_len = past_len, 0, 0
 
-        per_frame_patches = pixel_values.shape[0] // n_visible
-        cur_pixels = pixel_values[-per_frame_patches:]
-        cur_grid = grid[-1:].clone()
+        new_ids = window_ids[:, new_start:].expand(B, -1).contiguous()
+        pixels = torch.cat([b["pixel_values"] for b in per_stream], dim=0)
+        grid = cur_grid.repeat(B, 1)
 
         last_hidden = memory_step(
             backbone,
-            memory,
-            new_input_ids=input_ids[:, new_start:],
-            pixel_values=cur_pixels,
-            image_grid_thw=cur_grid,
+            batched,
+            new_input_ids=new_ids,
+            pixel_values=pixels,
+            image_grid_thw=grid,
             full_position_ids=full_pos,
             frame_start_in_new=frame_start_in_new,
-            frame_len=frame_lens[-1],
+            frame_len=frame_len,
             prefill_text_len=prefill_text_len,
         )
-        return last_hidden, input_ids[:, new_start:]
+
+        if B > 1:
+            for i, memory in enumerate(memories):
+                sliced = batched.slice(i)
+                memory.text, memory.frames = sliced.text, sliced.frames
+        return last_hidden, new_ids
 
     def _instruction_with_state(self, instruction, state):
         if state is None:
@@ -584,7 +606,7 @@ class Qwenvl_OFT(baseframework):
             for step, frame in enumerate(frames):
                 if step > 0:
                     memory.detach_()  # truncated BPTT: history is a fixed memory
-                last_hidden, new_ids = self._kv_forward_step(memory, frame, instruction)
+                last_hidden, new_ids = self._kv_forward_step_batched([memory], [frame], instruction)
 
             with torch.autocast("cuda", dtype=torch.float32):
                 action_queries = self._gather_action_token_embeddings(
@@ -604,12 +626,16 @@ class Qwenvl_OFT(baseframework):
 
         The newest frame (``example['image'][-1]``) is encoded fresh; past frames are
         served from the slot's memory. ``reset_memory(slot_id)`` (called from the
-        policy at episode boundaries) clears a slot.
+        policy at episode boundaries) clears a slot. Streams that currently share the
+        same instruction and history layout are processed in one batched forward; the
+        rest fall back to their own group (no left padding needed).
         """
         train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
-        outputs = []
-        for example in examples:
-            slot_id = example.get("slot_id", 0)
+
+        # Resolve each example to its (slot memory, current frame, instruction).
+        entries = []
+        for idx, example in enumerate(examples):
+            slot_id = example.get("slot_id", idx)
             frames = [to_pil_preserve(f) for f in example["image"]]
             if train_obs_image_size:
                 frames = resize_images(frames, target_size=train_obs_image_size)
@@ -619,14 +645,29 @@ class Qwenvl_OFT(baseframework):
             if memory is None:
                 memory = self._new_kv_memory()
                 self._kv_memories[slot_id] = memory
-            last_hidden, new_ids = self._kv_forward_step(memory, frames[-1], instruction)
+            entries.append({"idx": idx, "frame": frames[-1], "instruction": instruction, "memory": memory})
+
+        # Group same-layout streams (same prompt + same cached layout) into one forward.
+        groups: dict = {}
+        for entry in entries:
+            key = (entry["instruction"], entry["memory"].layout_key())
+            groups.setdefault(key, []).append(entry)
+
+        preds: List[Optional[torch.Tensor]] = [None] * len(examples)
+        for group in groups.values():
+            instruction = group[0]["instruction"]
+            memories = [entry["memory"] for entry in group]
+            frames = [entry["frame"] for entry in group]
+            last_hidden, new_ids = self._kv_forward_step_batched(memories, frames, instruction)
             with torch.autocast("cuda", dtype=torch.float32):
                 action_queries = self._gather_action_token_embeddings(
                     last_hidden, new_ids, action_token_id=self.action_token_id
                 )
                 pred_actions = self.action_model.predict_action(action_queries)
-            outputs.append(pred_actions)
-        normalized = torch.cat(outputs, dim=0).detach().cpu().numpy()
+            for i, entry in enumerate(group):
+                preds[entry["idx"]] = pred_actions[i : i + 1]
+
+        normalized = torch.cat(preds, dim=0).detach().cpu().numpy()
         return {"normalized_actions": normalized}
 
     def _gather_action_token_embeddings(
