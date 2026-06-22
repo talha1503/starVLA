@@ -37,22 +37,22 @@ install_torch() {
   case "${profile}" in
     cu130)
       echo "[install/torch] Installing PyTorch 2.10.0 CUDA 13.0 stack for datacenter Blackwell/sm_100"
-      pip_install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
+      pip_install torch==2.10.0+cu130 torchvision==0.25.0+cu130 torchaudio==2.10.0+cu130 \
         --index-url "${TORCH_INDEX_BASE}/cu130"
       ;;
     cu128)
       echo "[install/torch] Installing PyTorch 2.7.1 CUDA 12.8 stack for Blackwell/sm_120"
-      pip_install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
+      pip_install torch==2.7.1+cu128 torchvision==0.22.1+cu128 torchaudio==2.7.1+cu128 \
         --index-url "${TORCH_INDEX_BASE}/cu128"
       ;;
     cu126)
       echo "[install/torch] Installing PyTorch 2.6.0 CUDA 12.6 stack"
-      pip_install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
+      pip_install torch==2.6.0+cu126 torchvision==0.21.0+cu126 torchaudio==2.6.0+cu126 \
         --index-url "${TORCH_INDEX_BASE}/cu126"
       ;;
     cu124)
       echo "[install/torch] Installing PyTorch 2.6.0 CUDA 12.4 stack"
-      pip_install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
+      pip_install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 \
         --index-url "${TORCH_INDEX_BASE}/cu124"
       ;;
     cpu)
