@@ -551,8 +551,12 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
     _append_eval_stage_overrides(cmd, cfg, "mid_train_eval", "mid_train")
     _append_eval_stage_overrides(cmd, cfg, "post_train_eval", "post_train")
 
-    if str(_get(cfg, "env")) == "deadly_corridor" or str(_get(cfg, "rl_games.task", "")) == "deadly_corridor":
-        cmd.append(f"rl_games.env_eval.deadly.action_layout={_get(cfg, 'rl_games.deadly_action_layout', 'multibinary_7')}")
+    action_layout = _get(cfg, "rl_games.env_eval.deadly.action_layout", _get(cfg, "rl_games.deadly_action_layout", None))
+    if action_layout not in (None, "") or str(_get(cfg, "env")) == "deadly_corridor" or str(_get(cfg, "rl_games.task", "")) == "deadly_corridor":
+        cmd.append(f"rl_games.env_eval.deadly.action_layout={action_layout or 'multibinary_7'}")
+    threshold = _get(cfg, "rl_games.env_eval.deadly.multibinary_threshold", None)
+    if threshold not in (None, ""):
+        cmd.append(f"rl_games.env_eval.deadly.multibinary_threshold={_hydra_value(threshold)}")
 
     return cmd
 

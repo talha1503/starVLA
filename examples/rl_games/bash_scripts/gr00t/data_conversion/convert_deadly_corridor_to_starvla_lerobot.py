@@ -274,22 +274,40 @@ def _row_get(row: dict[str, Any], names: tuple[str, ...], default: Any = None) -
     return default
 
 
-def _row_latency(row: dict[str, Any], latency_column: str | None) -> int | None:
+def _normalize_prompt_map(prompt_map: dict[str, Any] | dict[int, Any] | None) -> dict[int, dict[str, Any]]:
+    if not prompt_map:
+        return {}
+    normalized: dict[int, dict[str, Any]] = {}
+    for key, value in prompt_map.items():
+        if not isinstance(value, dict):
+            continue
+        latency = int(value.get("latency", key))
+        normalized[latency] = {
+            "latency": latency,
+            "latency_ms": value.get("latency_ms"),
+            "prompt": str(value["prompt"]),
+        }
+    return normalized
+
+
+def _row_latency(row: dict[str, Any], latency_column: str | None, default_latency: int | None = None) -> int | None:
     return latency_id_from_row(
         row,
         frameskip=LATENCY_FRAMESKIP,
         latency_column=latency_column,
-        default_latency=None,
+        default_latency=default_latency,
     )
 
 
-def _filter_latency(ds, latency_filter: list[int] | None, *, latency_column: str | None):
+def _filter_latency(ds, latency_filter: list[int] | None, *, latency_column: str | None, default_latency: int | None = None):
     if not latency_filter:
         return ds
-    if latency_column is None or latency_column not in ds.column_names:
-        raise ValueError("latency_filter was requested, but the dataset has no latency column")
     allowed = {int(value) for value in latency_filter}
-    return ds.filter(lambda row: _row_latency(row, latency_column) in allowed)
+    if latency_column is None or latency_column not in ds.column_names:
+        if default_latency is not None and int(default_latency) in allowed:
+            return ds
+        raise ValueError("latency_filter was requested, but the dataset has no latency column")
+    return ds.filter(lambda row: _row_latency(row, latency_column, default_latency=default_latency) in allowed)
 
 
 def _episode_key(episode_idx: int, latency: int | None) -> EpisodeKey:
@@ -635,7 +653,13 @@ def convert_dataset(
     force: bool = False,
     require_latency_prompt_map: bool = False,
     latency_filter: list[int] | None = None,
+    train_latency_filter: list[int] | None = None,
+    eval_latency_filter: list[int] | None = None,
     episodes_per_latency: int | None = None,
+    train_episodes_per_latency: int | None = None,
+    eval_episodes_per_latency: int | None = None,
+    prompt_map_override: dict[str, Any] | dict[int, Any] | None = None,
+    default_latency: int | None = None,
     action_carrier: str = "native",
     action_layout: str = ACTION_LAYOUT_MULTIBINARY_7,
 ) -> dict[str, Any]:
@@ -646,15 +670,35 @@ def convert_dataset(
     active_action_dim = _active_action_dim(action_layout)
     state_dim = _state_dim(action_carrier)
     state_labels = _state_labels(action_carrier)
+    prompt_map_override = _normalize_prompt_map(prompt_map_override)
+    if train_latency_filter is None:
+        train_latency_filter = latency_filter
+    if eval_latency_filter is None:
+        eval_latency_filter = latency_filter
+    if train_episodes_per_latency is None:
+        train_episodes_per_latency = episodes_per_latency
+    if eval_episodes_per_latency is None:
+        eval_episodes_per_latency = episodes_per_latency
     val_output_dir = output_dir.with_name(f"{output_dir.name}__val")
     if output_dir.exists() and force:
         shutil.rmtree(output_dir)
     if val_output_dir.exists() and force:
         shutil.rmtree(val_output_dir)
 
-    def _convert_split(split: str, split_output_dir: Path) -> dict[str, Any]:
+    def _convert_split(
+        split: str,
+        split_output_dir: Path,
+        *,
+        split_latency_filter: list[int] | None,
+        split_episodes_per_latency: int | None,
+    ) -> dict[str, Any]:
         split_output_dir.mkdir(parents=True, exist_ok=True)
-        want_latency = bool(require_latency_prompt_map or latency_filter)
+        want_latency = bool(
+            require_latency_prompt_map
+            or split_latency_filter
+            or prompt_map_override
+            or split_episodes_per_latency is not None
+        )
         ds_meta, deadly_corridor_columns = _load_index_split(
             dataset_name,
             split,
@@ -665,11 +709,12 @@ def convert_dataset(
         )
         ds_meta = _filter_latency(
             ds_meta,
-            latency_filter,
+            split_latency_filter,
             latency_column=deadly_corridor_columns.latency,
+            default_latency=default_latency,
         )
         if len(ds_meta) == 0:
-            suffix = f" after latency_filter={latency_filter}" if latency_filter else ""
+            suffix = f" after latency_filter={split_latency_filter}" if split_latency_filter else ""
             raise ValueError(f"{dataset_name} has no {split} rows{suffix}")
 
         episode_indices: dict[EpisodeKey, list[tuple[int, int]]] = {}
@@ -681,7 +726,7 @@ def convert_dataset(
         for row_idx, row in enumerate(tqdm(ds_meta, desc=f"Indexing Deadly Corridor {split} rows")):
             episode_idx = int(_row_get(row, ("episode_idx", "episode_index", "episode")))
             timestep = int(row[deadly_corridor_columns.frame])
-            latency = _row_latency(row, deadly_corridor_columns.latency)
+            latency = _row_latency(row, deadly_corridor_columns.latency, default_latency=default_latency)
             episode_key = _episode_key(episode_idx, latency)
             episode_indices.setdefault(episode_key, []).append((timestep, row_idx))
             if require_latency_prompt_map and latency is not None:
@@ -697,7 +742,7 @@ def convert_dataset(
             episode_latencies,
             max_episodes=max_episodes,
             require_latency_prompt_map=require_latency_prompt_map,
-            episodes_per_latency=episodes_per_latency,
+            episodes_per_latency=split_episodes_per_latency,
         )
         for episode_id in original_episode_ids:
             episode_indices[episode_id].sort(key=lambda item: item[0])
@@ -710,8 +755,9 @@ def convert_dataset(
                 dataset_config_name=dataset_config_name,
                 dataset_source_subdir=dataset_source_subdir,
             ),
-            latency_filter,
+            split_latency_filter,
             latency_column=deadly_corridor_columns.latency,
+            default_latency=default_latency,
         )
         episode_lengths: list[int] = []
 
@@ -723,9 +769,16 @@ def convert_dataset(
             out_rows = []
             for frame_idx, row in enumerate(episode):
                 prompt = str(row["prompt"])
-                latency = _row_latency(row, deadly_corridor_columns.latency)
+                latency = _row_latency(row, deadly_corridor_columns.latency, default_latency=default_latency)
+                latency_prompt = prompt_map_override.get(int(latency)) if latency is not None else None
+                if latency_prompt is not None:
+                    prompt = str(latency_prompt["prompt"])
                 if latency is not None:
-                    latency_ms = row.get(deadly_corridor_columns.latency_ms) if deadly_corridor_columns.latency_ms is not None else None
+                    latency_ms = None
+                    if latency_prompt is not None:
+                        latency_ms = latency_prompt.get("latency_ms")
+                    elif deadly_corridor_columns.latency_ms is not None:
+                        latency_ms = row.get(deadly_corridor_columns.latency_ms)
                     latency_rows.append(
                         {
                             "latency": latency,
@@ -800,9 +853,11 @@ def convert_dataset(
             "active_state_dim": STATE_DIM,
             "state_carrier": action_carrier,
             "latency_metadata": True,
-            "latency_filter": latency_filter,
-            "episodes_per_latency": int(episodes_per_latency) if episodes_per_latency is not None else None,
+            "latency_filter": [int(value) for value in split_latency_filter] if split_latency_filter else None,
+            "episodes_per_latency": int(split_episodes_per_latency) if split_episodes_per_latency is not None else None,
             "max_episodes": int(max_episodes) if max_episodes is not None else None,
+            "prompt_override": bool(prompt_map_override),
+            "default_latency": default_latency,
             "episodes": len(episode_lengths),
             "frames": int(sum(episode_lengths)),
             "task_prompts": task_prompts,
@@ -810,8 +865,18 @@ def convert_dataset(
         (split_output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         return manifest
 
-    train_manifest = _convert_split("train", output_dir)
-    val_manifest = _convert_split("validation", val_output_dir)
+    train_manifest = _convert_split(
+        "train",
+        output_dir,
+        split_latency_filter=train_latency_filter,
+        split_episodes_per_latency=train_episodes_per_latency,
+    )
+    val_manifest = _convert_split(
+        "validation",
+        val_output_dir,
+        split_latency_filter=eval_latency_filter,
+        split_episodes_per_latency=eval_episodes_per_latency,
+    )
     train_manifest["validation_dataset_name"] = val_output_dir.name
     train_manifest["validation_episodes"] = val_manifest["episodes"]
     train_manifest["validation_frames"] = val_manifest["frames"]

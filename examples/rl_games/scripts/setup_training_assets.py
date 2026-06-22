@@ -606,7 +606,11 @@ def _task_converter_and_verifier(task: str):
         from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_demon_attack_to_starvla_lerobot import convert_dataset
         from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_demon_attack_dataset import verify_dataset
         return convert_dataset, verify_dataset, "rl_games_demon_attack"
-    raise ValueError(f"cross-task rl_games currently supports only flappy and demon_attack, got {task!r}")
+    if task == "deadly_corridor":
+        from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_deadly_corridor_to_starvla_lerobot import convert_dataset
+        from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_deadly_corridor_dataset import verify_dataset
+        return convert_dataset, verify_dataset, "rl_games_deadly_corridor"
+    raise ValueError(f"cross-task rl_games currently supports only flappy, demon_attack, and deadly_corridor, got {task!r}")
 
 
 def _get_task_value(task_cfg: dict[str, Any], *names: str, default: Any = None) -> Any:
@@ -677,6 +681,8 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
         max_episodes = _get_task_value(task_cfg, "max_episodes", default=None)
         max_episodes = int(max_episodes) if max_episodes not in (None, "") else None
         weight = float(_get_task_value(task_cfg, "weight", default=1.0))
+        action_layout = _get_task_value(task_cfg, "action_layout", default=None)
+        action_layout = None if action_layout in (None, "") else str(action_layout)
 
         base_converted_name = str(_get_task_value(task_cfg, "converted_name", default=f"{task_name}_cross_task_train"))
         converted_base = _derived_dataset_name(
@@ -726,6 +732,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 and (manifest.get("source_subdir") or None) == train_subdir
                 and (manifest.get("prompt_source_subdir") or None) == prompt_subdir
                 and str(manifest.get("action_carrier", "")) == action_carrier
+                and (not action_layout or str(manifest.get("action_layout", "")) == action_layout)
                 and manifest.get("latency_filter") == expected_latency_filter
                 and manifest.get("episodes_per_latency") == expected_episodes_per_latency
                 and manifest.get("max_episodes") == max_episodes
@@ -748,34 +755,44 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
         )
         if rebuild:
             allow_mixed = bool(latency_filter or eval_latency_filter) and train_source == prompt_source
-            verify_dataset(
-                train_source,
-                rows=args.verify_rows,
-                cache_dir=args.dataset_cache_dir,
-                dataset_config_name=train_config_name,
-                dataset_source_subdir=train_subdir,
-                strict=True,
-                allow_mixed_latency_prompts=allow_mixed,
-            )
-            convert_dataset(
-                train_source,
-                dataset_dir,
-                cache_dir=args.dataset_cache_dir,
-                dataset_config_name=train_config_name,
-                dataset_source_subdir=train_subdir,
-                max_episodes=max_episodes,
-                force=rebuild,
-                require_latency_prompt_map=bool(latency_filter or eval_latency_filter),
-                latency_filter=latency_filter,
-                train_latency_filter=latency_filter,
-                eval_latency_filter=eval_latency_filter,
-                episodes_per_latency=episodes_per_latency,
-                train_episodes_per_latency=episodes_per_latency,
-                eval_episodes_per_latency=eval_episodes_per_latency,
-                prompt_map_override=prompt_map,
-                default_latency=0,
-                action_carrier=action_carrier,
-            )
+            verify_kwargs = {
+                "rows": args.verify_rows,
+                "cache_dir": args.dataset_cache_dir,
+                "dataset_config_name": train_config_name,
+                "dataset_source_subdir": train_subdir,
+                "strict": True,
+                "allow_mixed_latency_prompts": allow_mixed,
+            }
+            if action_layout and "action_layout" in inspect.signature(verify_dataset).parameters:
+                verify_kwargs["action_layout"] = action_layout
+            verify_dataset(train_source, **verify_kwargs)
+
+            convert_kwargs = {
+                "cache_dir": args.dataset_cache_dir,
+                "dataset_config_name": train_config_name,
+                "dataset_source_subdir": train_subdir,
+                "max_episodes": max_episodes,
+                "force": rebuild,
+                "require_latency_prompt_map": bool(latency_filter or eval_latency_filter),
+                "latency_filter": latency_filter,
+                "train_latency_filter": latency_filter,
+                "eval_latency_filter": eval_latency_filter,
+                "episodes_per_latency": episodes_per_latency,
+                "train_episodes_per_latency": episodes_per_latency,
+                "eval_episodes_per_latency": eval_episodes_per_latency,
+                "prompt_map_override": prompt_map,
+                "default_latency": 0,
+                "action_carrier": action_carrier,
+            }
+            if action_layout:
+                convert_kwargs["action_layout"] = action_layout
+            supported_convert_kwargs = inspect.signature(convert_dataset).parameters
+            convert_kwargs = {
+                key: value
+                for key, value in convert_kwargs.items()
+                if key in supported_convert_kwargs
+            }
+            convert_dataset(train_source, dataset_dir, **convert_kwargs)
             for manifest_path in (dataset_dir / "manifest.json", eval_dataset_dir / "manifest.json"):
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 manifest["prompt_source"] = prompt_source

@@ -6,13 +6,20 @@ from pathlib import Path
 from omegaconf import OmegaConf
 
 from examples.rl_games.scripts import launch_train
-from examples.rl_games.scripts.setup_training_assets import _resolve_explicit_resume_checkpoint
+from examples.rl_games.scripts.setup_training_assets import _resolve_explicit_resume_checkpoint, _task_converter_and_verifier
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 MODELS = ("openvla", "pi0", "pi05", "gr00t")
 ENVS = ("flappy", "demon_attack", "deadly_corridor")
+OPENVLA_DEADLY_CROSS_TASK_SETUPS = (
+    "flappy_zero_deadly_mixed",
+    "deadly_zero_flappy_mixed",
+    "demon_zero_deadly_mixed",
+    "deadly_zero_demon_mixed",
+    "flappy_demon_deadly_024",
+)
 
 
 def _command_path(model: str, env: str) -> Path:
@@ -46,6 +53,85 @@ def test_training_commands_are_valid_bash() -> None:
     command_paths = [str(_command_path(model, env)) for model in MODELS for env in ENVS]
 
     subprocess.run(["bash", "-n", *command_paths], check=True, cwd=REPO_ROOT)
+
+
+def test_openvla_deadly_cross_task_scripts_are_valid_bash() -> None:
+    script_dir = REPO_ROOT / "examples" / "rl_games" / "bash_scripts" / "openvla" / "bridge" / "cross_task"
+    command_paths = [str(script_dir / f"{setup}.sh") for setup in OPENVLA_DEADLY_CROSS_TASK_SETUPS]
+
+    subprocess.run(["bash", "-n", *command_paths], check=True, cwd=REPO_ROOT)
+
+
+def test_cross_task_setup_supports_deadly_corridor_converter() -> None:
+    _, _, robot_type = _task_converter_and_verifier("deadly_corridor")
+
+    assert robot_type == "rl_games_deadly_corridor"
+
+
+def test_openvla_deadly_cross_task_setups_compose() -> None:
+    for setup_name in OPENVLA_DEADLY_CROSS_TASK_SETUPS:
+        cfg = launch_train.compose_training_config(
+            config_name="train",
+            model="openvla",
+            env="cross_task",
+            init="bridge",
+            mode="cross_task",
+            overrides=[f"cross_task_setup={setup_name}"],
+        )
+        train_tasks = OmegaConf.to_container(cfg.rl_games.cross_task.train_tasks, resolve=True)
+        task_names = {task["name"] for task in train_tasks}
+
+        assert "deadly_corridor" in task_names
+        assert cfg.framework.name == "QwenOFT"
+        assert cfg.framework.action_model.action_dim == 7
+        assert cfg.framework.action_model.action_env_dim == 7
+        assert cfg.rl_games.cross_task.loss_by_task.deadly_corridor == "multibinary_bce"
+        assert cfg.rl_games.env_eval.deadly.action_layout == "multibinary_7"
+
+
+def test_openvla_three_env_cross_task_setup_uses_024_latencies() -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="cross_task",
+        init="bridge",
+        mode="cross_task",
+        overrides=["cross_task_setup=flappy_demon_deadly_024"],
+    )
+    train_tasks = OmegaConf.to_container(cfg.rl_games.cross_task.train_tasks, resolve=True)
+
+    assert [task["name"] for task in train_tasks] == ["flappy", "demon_attack", "deadly_corridor"]
+    for task in train_tasks:
+        assert task["train_latency_filter"] == [0, 2, 4]
+        assert task["eval_latency_filter"] == [0, 2, 4]
+    assert cfg.rl_games.cross_task.loss_by_task.flappy == "discrete_ce"
+    assert cfg.rl_games.cross_task.loss_by_task.demon_attack == "discrete_ce"
+    assert cfg.rl_games.cross_task.loss_by_task.deadly_corridor == "multibinary_bce"
+    assert cfg.rl_games.env_eval.deadly.multibinary_threshold == 0.0
+    for task_name in ("flappy", "demon_attack", "deadly_corridor"):
+        post_train = getattr(cfg.rl_games.cross_task.eval_tasks, task_name).post_train
+        assert list(post_train.latencies) == [0, 2, 4]
+
+
+def test_openvla_three_env_cross_task_forwards_deadly_threshold(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="cross_task",
+        init="bridge",
+        mode="cross_task",
+        overrides=["cross_task_setup=flappy_demon_deadly_024"],
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "base_model"),
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert "rl_games.env_eval.deadly.action_layout=multibinary_7" in cmd
+    assert "rl_games.env_eval.deadly.multibinary_threshold=0.0" in cmd
 
 
 def test_launcher_does_not_translate_trainer_batch_size_alias() -> None:
