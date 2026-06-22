@@ -40,6 +40,9 @@ datasets:
       phase_steps: null
     per_device_batch_size: 4
     load_all_data_for_training: true
+    num_obs_frames: 1
+    image_mode: single
+    stitch_grid: [2, 2]
     obs_image_size: null
     video_backend: torchvision_av
 
