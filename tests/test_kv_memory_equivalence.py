@@ -219,6 +219,97 @@ def test_rotation_roundtrip_is_exact():
     )
 
 
+def _stream_action_hidden_batched(model, streams, window):
+    """Drive several same-layout streams together via FrameKVMemory.stack/slice and
+    return the final step's action hidden states [B, act_len, H].
+
+    Mirrors QwenOFT._kv_forward_step_batched at the text-model level: per-stream
+    memories are stacked along the batch dim, stepped once, then sliced back. The
+    result for stream i must equal running stream i alone (batching changes nothing).
+    """
+    B = len(streams)
+    mems = [FrameKVMemory(model.rotary_emb, window, len(model.layers), model.config) for _ in range(B)]
+    text_len = streams[0]["text"].shape[1]
+    frame_len = streams[0]["frames"][0].shape[1]
+    act_len = streams[0]["act"].shape[1]
+    n_frames = len(streams[0]["frames"])
+    action_hidden = None
+    for fi in range(n_frames):
+        n_past = mems[0].num_past_frames()
+        specs = [("text", text_len)] + [("frame", frame_len)] * (n_past + 1) + [("action", act_len)]
+        full_pos1 = _build_positions(specs)
+        full_pos = full_pos1.expand(3, B, full_pos1.shape[-1]).contiguous()
+        batched = FrameKVMemory.stack(mems) if B > 1 else mems[0]
+        if not batched.has_text():
+            new_emb = torch.cat(
+                [torch.cat([s["text"], s["frames"][fi], s["act"]], dim=1) for s in streams], dim=0
+            )
+            cache = DynamicCache(config=model.config)
+            out = model(
+                inputs_embeds=new_emb,
+                position_ids=full_pos,
+                attention_mask=torch.ones(B, new_emb.shape[1], dtype=torch.long),
+                past_key_values=cache,
+                use_cache=True,
+                cache_position=torch.arange(0, new_emb.shape[1]),
+            )
+            batched.set_text(batched.canonicalize_block(cache, 0, text_len, full_pos[:, :, :text_len]))
+            batched.add_frame(
+                batched.canonicalize_block(cache, text_len, frame_len, full_pos[:, :, text_len : text_len + frame_len])
+            )
+        else:
+            past_len = text_len + n_past * frame_len
+            cache = batched.assemble_cache(full_pos[:, :, :past_len])
+            new_emb = torch.cat([torch.cat([s["frames"][fi], s["act"]], dim=1) for s in streams], dim=0)
+            out = model(
+                inputs_embeds=new_emb,
+                position_ids=full_pos[:, :, past_len:],
+                attention_mask=torch.ones(B, past_len + new_emb.shape[1], dtype=torch.long),
+                past_key_values=cache,
+                use_cache=True,
+                cache_position=torch.arange(past_len, past_len + new_emb.shape[1]),
+            )
+            batched.add_frame(
+                batched.canonicalize_block(cache, past_len, frame_len, full_pos[:, :, past_len : past_len + frame_len])
+            )
+        if B > 1:
+            for i, mem in enumerate(mems):
+                sliced = batched.slice(i)
+                mem.text, mem.frames = sliced.text, sliced.frames
+        action_hidden = out.last_hidden_state[:, -act_len:]
+    return action_hidden
+
+
+@torch.no_grad()
+def test_batched_streaming_matches_per_sample():
+    """Cross-stream batching (FrameKVMemory.stack/slice) must be a no-op on values:
+    each stream in a batched forward gets the same action hidden as running it alone.
+    Exercises the eviction path (n_frames > window) at batch size > 1."""
+    model = _tiny_text_model(num_hidden_layers=2)
+    window = 3
+    text_len, frame_len, act_len = 4, 4, 2
+    n_frames = window + 1  # one eviction
+
+    torch.manual_seed(7)
+    streams = []
+    for _ in range(2):
+        streams.append(
+            {
+                "text": torch.randn(1, text_len, model.config.hidden_size),
+                "frames": [torch.randn(1, frame_len, model.config.hidden_size) for _ in range(n_frames)],
+                "act": torch.randn(1, act_len, model.config.hidden_size),
+            }
+        )
+
+    batched = _stream_action_hidden_batched(model, streams, window)
+    assert batched.shape[0] == 2
+    for i, stream in enumerate(streams):
+        ref = _stream_action_hidden(model, stream["text"], stream["frames"], stream["act"], window)
+        assert torch.allclose(batched[i : i + 1], ref, atol=1e-6), (
+            f"stream {i} batched vs alone max abs diff = {(batched[i:i+1] - ref).abs().max().item():.2e}"
+        )
+
+
 @torch.no_grad()
 def test_streaming_memory_with_eviction_matches_windowed_forward_single_layer():
     """With a single decoder layer, layer-0 keys are context-independent, so the
