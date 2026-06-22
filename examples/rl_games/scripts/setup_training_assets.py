@@ -81,7 +81,15 @@ def _load_source_latency_prompt_map(
     from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import build_latency_prompt_map
 
     def _load(columns: list[str] | None = None):
-        load_kwargs = {"split": "train", "cache_dir": cache_dir, "columns": columns}
+        load_kwargs = {
+            "split": "train",
+            "cache_dir": cache_dir,
+            "columns": columns,
+            # Hosted RL-game datasets may disagree on `val` vs `validation`
+            # between dataset_info and generated splits. This prompt-map load
+            # only needs train rows, so ignore that metadata-only mismatch.
+            "verification_mode": "no_checks",
+        }
         if dataset_source_subdir not in (None, ""):
             load_kwargs["data_dir"] = dataset_source_subdir
         if dataset_config_name not in (None, ""):
