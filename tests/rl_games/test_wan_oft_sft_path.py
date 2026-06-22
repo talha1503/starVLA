@@ -118,6 +118,15 @@ def test_launch_train_forwards_explicit_wan_oft_bridge_data_mix(tmp_path: Path) 
     assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in cmd
 
 
+def test_train_starvla_uses_device_aware_distributed_barrier() -> None:
+    trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
+
+    assert "def _distributed_barrier()" in trainer_text
+    assert "dist.barrier(device_ids=[device_idx])" in trainer_text
+    assert trainer_text.count("dist.barrier()") == 1
+    assert trainer_text.count("_distributed_barrier()") == 5
+
+
 def test_rl_games_modality_indices_can_be_overridden_for_wan_oft_clip() -> None:
     temporal_clip = importlib.import_module("starVLA.training.rl_games.temporal_clip")
 

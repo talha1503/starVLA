@@ -205,8 +205,7 @@ def prepare_data(cfg, accelerator, output_dir) -> tuple[DataLoader, DataLoader |
         )
 
     accelerator.dataloader_config.dispatch_batches = False
-    if dist.is_initialized():
-        dist.barrier()
+    _distributed_barrier()
     return vla_train_dataloader, vla_eval_dataloader
 
 
@@ -272,6 +271,17 @@ def _pin_cuda_device_from_local_rank() -> None:
         )
         return
     torch.cuda.set_device(device_idx)
+
+
+def _distributed_barrier() -> None:
+    if not dist.is_initialized():
+        return
+    backend = str(dist.get_backend()).lower()
+    if backend == "nccl" and torch.cuda.is_available():
+        device_idx = int(torch.cuda.current_device())
+        dist.barrier(device_ids=[device_idx])
+        return
+    dist.barrier()
 
 
 def _preload_model_checkpoint_before_accelerator(cfg, model):
@@ -1156,8 +1166,7 @@ class VLATrainer(TrainerUtils):
                         task_latency_loss_sums[(task_name, latency)] / count.clamp_min(1.0)
                     ).item()
 
-        if dist.is_initialized():
-            dist.barrier()
+        _distributed_barrier()
         return step_metrics
 
     def eval_action_model(self, step_metrics: dict = None) -> dict:
@@ -1452,8 +1461,7 @@ class VLATrainer(TrainerUtils):
                             key = f"eval/{task_name}/latency_{int(latency)}/{key}"
                         step_metrics[key] = value
 
-        if dist.is_initialized():
-            dist.barrier()
+        _distributed_barrier()
         return step_metrics
 
     def _log_training_config(self):
@@ -1609,8 +1617,8 @@ def main(cfg) -> None:
     trainer.train()
 
     logger.info("... and that's all, folks!")
+    _distributed_barrier()
     if dist.is_initialized():
-        dist.barrier()
         dist.destroy_process_group()
 
 
