@@ -13,7 +13,7 @@ python examples/rl_games/scripts/launch_train.py \
   paths.dataset_local_dir=data/flappy_fix_latency_0_200ep_context4 \
   trainer.distributed_backend=deepspeed \
   launch.use_accelerate=true \
-  launch.gpus=${WAN_OFT_GPUS:-0,1} \
+  launch.gpus="'${WAN_OFT_GPUS:-0,1}'" \
   launch.num_processes=${WAN_OFT_NUM_PROCESSES:-2} \
   trainer.gradient_accumulation_steps=8 \
   datasets.vla_data.per_device_batch_size=8 \

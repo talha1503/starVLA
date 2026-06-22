@@ -59,7 +59,7 @@ def test_wan_oft_multigpu_command_enables_distributed_eval() -> None:
     assert "init=wan_oft_libero" in command_text
     assert "trainer.distributed_backend=deepspeed" in command_text
     assert "launch.use_accelerate=true" in command_text
-    assert "launch.gpus=${WAN_OFT_GPUS:-0,1}" in command_text
+    assert "launch.gpus=\"'${WAN_OFT_GPUS:-0,1}'\"" in command_text
     assert "launch.num_processes=${WAN_OFT_NUM_PROCESSES:-2}" in command_text
     assert "datasets.vla_data.data_mix=flappy_train__bridge" in command_text
     assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in command_text
