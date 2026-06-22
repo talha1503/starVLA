@@ -4,6 +4,9 @@
 export HF_DATASETS_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
+export NCCL_DEBUG=${NCCL_DEBUG:-INFO}
+export NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}
 
 python examples/rl_games/scripts/launch_train.py \
   model=wan_oft \
