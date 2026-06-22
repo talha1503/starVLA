@@ -48,6 +48,29 @@ def test_training_commands_are_valid_bash() -> None:
     subprocess.run(["bash", "-n", *command_paths], check=True, cwd=REPO_ROOT)
 
 
+def test_wan_oft_multigpu_command_enables_distributed_eval() -> None:
+    command_path = REPO_ROOT / "commands" / "train_flappy_wan_oft_multigpu.sh"
+    command_text = command_path.read_text(encoding="utf-8")
+
+    subprocess.run(["bash", "-n", str(command_path)], check=True, cwd=REPO_ROOT)
+
+    assert "model=wan_oft" in command_text
+    assert "env=flappy" in command_text
+    assert "init=wan_oft_libero" in command_text
+    assert "trainer.distributed_backend=deepspeed" in command_text
+    assert "launch.use_accelerate=true" in command_text
+    assert "launch.gpus=${WAN_OFT_GPUS:-0,1}" in command_text
+    assert "launch.num_processes=${WAN_OFT_NUM_PROCESSES:-2}" in command_text
+    assert "datasets.vla_data.data_mix=flappy_train__bridge" in command_text
+    assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in command_text
+    assert "rl_games.env_eval.enabled=true" in command_text
+    assert "rl_games.env_eval.distributed_mode=rank_sharded" in command_text
+    assert "rl_games.env_eval.mid_train.enabled=true" in command_text
+    assert "rl_games.env_eval.mid_train.latencies=[0]" in command_text
+    assert "rl_games.env_eval.post_train.enabled=true" in command_text
+    assert "rl_games.env_eval.post_train.latencies=[0,1,2,3,4]" in command_text
+
+
 def test_launcher_does_not_translate_trainer_batch_size_alias() -> None:
     launcher_text = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "launch_train.py").read_text(
         encoding="utf-8"
