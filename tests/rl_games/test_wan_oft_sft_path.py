@@ -55,6 +55,7 @@ def test_wan_oft_flappy_config_preserves_released_checkpoint_shapes() -> None:
     assert list(cfg.datasets.vla_data.action_indices) == list(range(8))
     assert cfg.datasets.vla_data.pack_image_sequence is True
     assert cfg.datasets.vla_data.image_sequence_length == 4
+    assert cfg.datasets.vla_data.context_images_column == "observation.context_images"
     assert cfg.base_model.repo_id == "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
     assert cfg.initialization.checkpoint_hf_repo_id == "StarVLA/WM4A-Wan2d2-OFT-LIBERO-4in1"
     assert cfg.initialization.checkpoint_filename == "checkpoints/steps_60000_pytorch_model.pt"

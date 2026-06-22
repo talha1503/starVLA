@@ -8,9 +8,26 @@ from types import ModuleType
 import pytest
 
 
+class FakeDatasetImage:
+    def __init__(self, decode: bool) -> None:
+        self.decode = decode
+
+
+class FakeDatasetSequence:
+    def __init__(self, feature: object) -> None:
+        self.feature = feature
+
+
+class FakeListFeature:
+    def __init__(self, feature: object) -> None:
+        self.feature = feature
+
+
 def _optional_dependency_stubs() -> dict[str, ModuleType]:
     datasets = ModuleType("datasets")
     datasets.load_dataset = lambda *args, **kwargs: None
+    datasets.Image = FakeDatasetImage
+    datasets.Sequence = FakeDatasetSequence
 
     numpy = ModuleType("numpy")
     pyarrow = ModuleType("pyarrow")
@@ -31,16 +48,18 @@ def _optional_dependency_stubs() -> dict[str, ModuleType]:
 @pytest.fixture()
 def flappy_modules(monkeypatch: pytest.MonkeyPatch) -> tuple[ModuleType, ModuleType]:
     module_names = (
-        "examples.rl_games.data_conversion.convert_flappy_to_starvla_lerobot",
-        "examples.rl_games.data_conversion.verify_flappy_dataset",
+        "examples.rl_games.bash_scripts.gr00t.data_conversion.convert_flappy_to_starvla_lerobot",
+        "examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset",
     )
     for module_name in module_names:
         sys.modules.pop(module_name, None)
     for module_name, module in _optional_dependency_stubs().items():
         monkeypatch.setitem(sys.modules, module_name, module)
 
-    convert_flappy = importlib.import_module("examples.rl_games.data_conversion.convert_flappy_to_starvla_lerobot")
-    verify_flappy = importlib.import_module("examples.rl_games.data_conversion.verify_flappy_dataset")
+    convert_flappy = importlib.import_module(
+        "examples.rl_games.bash_scripts.gr00t.data_conversion.convert_flappy_to_starvla_lerobot"
+    )
+    verify_flappy = importlib.import_module("examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset")
     yield convert_flappy, verify_flappy
     for module_name in module_names:
         sys.modules.pop(module_name, None)
@@ -63,6 +82,78 @@ def test_convert_flappy_resolves_local_parquet_directory(
 
     assert train_files == [str(train_dir / "part-000.parquet")]
     assert validation_files == [str(validation_dir / "part-000.parquet")]
+
+
+def test_convert_flappy_skips_split_filter_for_split_specific_local_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    flappy_modules: tuple[ModuleType, ModuleType],
+) -> None:
+    convert_flappy, _ = flappy_modules
+    train_file = tmp_path / "train.parquet"
+    train_file.touch()
+
+    class FakeDataset:
+        column_names = ["split", "image"]
+
+        def filter(self, fn):
+            raise AssertionError("split-specific local files should not run row-level split filtering")
+
+    fake_dataset = FakeDataset()
+
+    def fake_load_dataset(*args, **kwargs):
+        return fake_dataset
+
+    monkeypatch.setattr(convert_flappy, "load_dataset", fake_load_dataset)
+
+    loaded = convert_flappy._load_split(str(tmp_path), "train")
+
+    assert loaded is fake_dataset
+
+
+def test_convert_flappy_casts_image_columns_to_encoded_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    flappy_modules: tuple[ModuleType, ModuleType],
+) -> None:
+    convert_flappy, _ = flappy_modules
+    train_file = tmp_path / "train.parquet"
+    train_file.touch()
+
+    class FakeDataset:
+        column_names = ["image", "context_images"]
+        features = {
+            "image": FakeDatasetImage(decode=True),
+            "context_images": FakeListFeature(FakeDatasetImage(decode=True)),
+        }
+
+        def __init__(self) -> None:
+            self.cast_calls: list[tuple[str, object]] = []
+
+        def cast_column(self, column: str, feature: object):
+            self.cast_calls.append((column, feature))
+            return self
+
+    fake_dataset = FakeDataset()
+
+    def fake_load_dataset(*args, **kwargs):
+        return fake_dataset
+
+    monkeypatch.setattr(convert_flappy, "load_dataset", fake_load_dataset)
+
+    loaded = convert_flappy._load_split(
+        str(tmp_path),
+        "train",
+        image_columns=["image", "context_images"],
+    )
+
+    assert loaded is fake_dataset
+    assert [column for column, _ in fake_dataset.cast_calls] == ["image", "context_images"]
+    assert isinstance(fake_dataset.cast_calls[0][1], FakeDatasetImage)
+    assert fake_dataset.cast_calls[0][1].decode is False
+    assert isinstance(fake_dataset.cast_calls[1][1], FakeDatasetSequence)
+    assert isinstance(fake_dataset.cast_calls[1][1].feature, FakeDatasetImage)
+    assert fake_dataset.cast_calls[1][1].feature.decode is False
 
 
 def test_verify_flappy_resolves_local_parquet_directory(

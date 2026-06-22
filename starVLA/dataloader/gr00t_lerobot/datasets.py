@@ -41,7 +41,11 @@ from PIL import Image
 import torch.distributed as dist
 
 from starVLA.dataloader.gr00t_lerobot.video import get_all_frames, get_frames_by_timestamps
-from starVLA.training.rl_games.temporal_clip import pack_image_sequence
+from starVLA.training.rl_games.temporal_clip import (
+    decode_context_image_sequence,
+    decode_prepacked_image_sequence,
+    pack_image_sequence,
+)
 
 from starVLA.dataloader.gr00t_lerobot.embodiment_tags import EmbodimentTag
 from starVLA.dataloader.gr00t_lerobot.schema import (
@@ -1758,6 +1762,55 @@ class LeRobotSingleDataset(Dataset):
         original_key = self.lerobot_modality_meta.video[key].original_key
         if original_key is None:
             original_key = key
+        image_sequence_column = None
+        context_images_column = None
+        if self.data_cfg is not None:
+            configured_image_sequence_column = self.data_cfg.get("image_sequence_column", None)
+            if configured_image_sequence_column not in (None, ""):
+                image_sequence_column = str(configured_image_sequence_column)
+            configured_context_images_column = self.data_cfg.get("context_images_column", None)
+            if configured_context_images_column not in (None, ""):
+                context_images_column = str(configured_context_images_column)
+        if image_sequence_column is not None and context_images_column is not None:
+            raise ValueError(
+                "Configure only one of image_sequence_column or context_images_column "
+                f"for dataset {self.dataset_name}"
+            )
+        if image_sequence_column is not None and self.curr_traj_data is not None:
+            if image_sequence_column not in self.curr_traj_data.columns:
+                raise ValueError(
+                    f"Configured image_sequence_column={image_sequence_column!r} is missing from "
+                    f"dataset {self.dataset_name} trajectory {trajectory_id}"
+                )
+            image_sequence_length = int(
+                self.data_cfg.get("image_sequence_length", 1) if self.data_cfg is not None else 1
+            )
+            return decode_prepacked_image_sequence(
+                entry=self.curr_traj_data.iloc[int(base_index)][image_sequence_column],
+                image_sequence_length=image_sequence_length,
+                dataset_path=self.dataset_path,
+            )
+        if context_images_column is not None and self.curr_traj_data is not None:
+            missing_columns = [
+                column
+                for column in (context_images_column, original_key)
+                if column not in self.curr_traj_data.columns
+            ]
+            if missing_columns:
+                raise ValueError(
+                    f"Configured context image columns are missing from dataset {self.dataset_name} "
+                    f"trajectory {trajectory_id}: {missing_columns}"
+                )
+            image_sequence_length = int(
+                self.data_cfg.get("image_sequence_length", 1) if self.data_cfg is not None else 1
+            )
+            row = self.curr_traj_data.iloc[int(base_index)]
+            return decode_context_image_sequence(
+                context_entry=row[context_images_column],
+                current_entry=row[original_key],
+                image_sequence_length=image_sequence_length,
+                dataset_path=self.dataset_path,
+            )
         if self.curr_traj_data is not None and original_key in self.curr_traj_data.columns:
             image_entries = self.curr_traj_data[original_key].tolist()
 

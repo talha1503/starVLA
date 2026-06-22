@@ -23,7 +23,7 @@ def _optional_dependency_stubs() -> dict[str, ModuleType]:
 
 @pytest.fixture()
 def convert_demon_attack(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
-    module_name = "examples.rl_games.data_conversion.convert_demon_attack_to_starvla_lerobot"
+    module_name = "examples.rl_games.bash_scripts.gr00t.data_conversion.convert_demon_attack_to_starvla_lerobot"
     sys.modules.pop(module_name, None)
     for dependency_name, module in _optional_dependency_stubs().items():
         monkeypatch.setitem(sys.modules, dependency_name, module)

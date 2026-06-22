@@ -9,9 +9,21 @@ from typing import Any
 import pytest
 
 
+class FakeDatasetImage:
+    def __init__(self, decode: bool) -> None:
+        self.decode = decode
+
+
+class FakeDatasetSequence:
+    def __init__(self, feature: Any) -> None:
+        self.feature = feature
+
+
 def _optional_dependency_stubs() -> dict[str, ModuleType]:
     datasets = ModuleType("datasets")
     datasets.load_dataset = lambda *args, **kwargs: None
+    datasets.Image = FakeDatasetImage
+    datasets.Sequence = FakeDatasetSequence
 
     numpy = ModuleType("numpy")
     pyarrow = ModuleType("pyarrow")
@@ -34,10 +46,10 @@ def _optional_dependency_stubs() -> dict[str, ModuleType]:
 @pytest.fixture()
 def converters(monkeypatch: pytest.MonkeyPatch) -> list[ModuleType]:
     module_names = [
-        "examples.rl_games.data_conversion.convert_flappy_to_starvla_lerobot",
-        "examples.rl_games.data_conversion.convert_demon_attack_to_starvla_lerobot",
-        "examples.rl_games.data_conversion.convert_deadly_corridor_to_starvla_lerobot",
-        "examples.rl_games.data_conversion.verify_flappy_dataset",
+        "examples.rl_games.bash_scripts.gr00t.data_conversion.convert_flappy_to_starvla_lerobot",
+        "examples.rl_games.bash_scripts.gr00t.data_conversion.convert_demon_attack_to_starvla_lerobot",
+        "examples.rl_games.bash_scripts.gr00t.data_conversion.convert_deadly_corridor_to_starvla_lerobot",
+        "examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset",
     ]
     for module_name in module_names:
         sys.modules.pop(module_name, None)

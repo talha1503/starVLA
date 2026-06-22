@@ -9,8 +9,8 @@ python examples/rl_games/scripts/launch_train.py \
   model=wan_oft \
   env=flappy \
   init=wan_oft_libero \
-  run_id=wan_oft_flappy_fix_latency_0 \
-  paths.dataset_local_dir=data/flappy_fix_latency_0_200ep \
+  run_id=wan_oft_flappy_fix_latency_0_context4 \
+  paths.dataset_local_dir=data/flappy_fix_latency_0_200ep_context4 \
   trainer.distributed_backend=none \
   trainer.gradient_accumulation_steps=16 \
   datasets.vla_data.per_device_batch_size=1 \

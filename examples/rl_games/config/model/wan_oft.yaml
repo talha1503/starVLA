@@ -47,6 +47,7 @@ datasets:
     action_indices: [0, 1, 2, 3, 4, 5, 6, 7]
     pack_image_sequence: true
     image_sequence_length: 4
+    context_images_column: observation.context_images
     per_device_batch_size: 1
 
 trainer:
