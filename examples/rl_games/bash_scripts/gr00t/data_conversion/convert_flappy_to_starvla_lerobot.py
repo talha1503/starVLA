@@ -12,6 +12,7 @@ from typing import Any, NamedTuple
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+import datasets
 from datasets import load_dataset
 from PIL import Image
 from tqdm import tqdm
@@ -174,7 +175,12 @@ def _load_split(
 
     def _filter_internal_split(ds):
         if "split" in ds.column_names:
-            return ds.filter(lambda row: str(row["split"]).lower() in split_values)
+            # input_columns="split" 让 datasets 只物化 split 这一列来评估 predicate，
+            # 避免为读一个字符串而把每行的 image PNG 字节也解出来（否则 ~600 ex/s）。
+            return ds.filter(
+                lambda split: str(split).lower() in split_values,
+                input_columns="split",
+            )
         return ds
 
     local_files = _local_parquet_files(dataset_name, split, dataset_source_subdir)
@@ -684,6 +690,11 @@ def convert_dataset(
             latency_column=flappy_columns.latency,
             default_latency=default_latency,
         )
+        # 关闭 image 列的自动 PNG 解码：源字节已是合格的 RGB PNG，迭代时直接拿
+        # {"bytes": <png>, "path": ...} 原样透传，省掉每帧的 PNG 解码+重编码。
+        # cast_column 是惰性的（只改 feature 类型，不重写数据）。
+        if "image" in ds_full.column_names:
+            ds_full = ds_full.cast_column("image", datasets.Image(decode=False))
         episode_lengths: list[int] = []
 
         for new_episode_idx, original_episode_idx in enumerate(tqdm(original_episode_ids, desc=f"Writing Flappy {split} LeRobot episodes")):
@@ -707,8 +718,16 @@ def convert_dataset(
                         "latency_ms": latency_ms,
                         "prompt": prompt,
                     })
+                img_cell = row["image"]
+                # decode=False 时 img_cell 是 {"bytes": <png>, "path": ...}，直接透传；
+                # 万一拿到 PIL/array（未被识别为 Image feature）则回退到重新编码。
+                image_bytes = (
+                    img_cell["bytes"]
+                    if isinstance(img_cell, dict) and img_cell.get("bytes") is not None
+                    else _png_bytes(img_cell)
+                )
                 out_rows.append({
-                    "image_bytes": _png_bytes(row["image"]),
+                    "image_bytes": image_bytes,
                     "action": _one_hot(int(row["action_id"]), action_dim=action_dim),
                     "timestamp": float(frame_idx) / FPS,
                     "episode_index": new_episode_idx,
