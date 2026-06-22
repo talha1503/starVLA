@@ -20,10 +20,10 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="talha1503/openvla_bridge_cross_flappy_zero_deadly_024_exp1" \
     checkpoint.save_best_model=false \
-    trainer.max_train_steps=7000 \
+    trainer.max_train_steps=2000 \
     trainer.num_warmup_steps=0 \
-    trainer.eval_interval=1400 \
-    trainer.save_interval=7000 \
+    trainer.eval_interval=400 \
+    trainer.save_interval=2000 \
     trainer.logging_frequency=1 \
     trainer.gradient_accumulation_steps=4 \
     datasets.vla_data.per_device_batch_size=32 \
@@ -44,7 +44,7 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.1.prompt_source_hf=latency-sensitive-bench/deadly_1000ep \
     rl_games.cross_task.train_tasks.1.train_latency_filter=[0,2,4] \
     rl_games.cross_task.train_tasks.1.eval_latency_filter=[0,2,4] \
-    rl_games.cross_task.train_tasks.1.episodes_per_latency=40 \
+    rl_games.cross_task.train_tasks.1.episodes_per_latency=400 \
     rl_games.cross_task.train_tasks.1.action_layout=multibinary_7 \
     rl_games.env_eval.deadly.multibinary_threshold=0.0 \
     rl_games.cross_task.train_tasks.0.max_episodes=null \

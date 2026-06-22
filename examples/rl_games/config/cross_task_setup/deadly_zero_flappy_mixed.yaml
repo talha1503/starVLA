@@ -6,6 +6,7 @@ rl_games:
       interval_steps: 500
     deadly:
       action_layout: multibinary_7
+      multibinary_threshold: 0.0
   cross_task:
     loss_by_task:
       deadly_corridor: multibinary_bce
@@ -21,6 +22,7 @@ rl_games:
         converted_name: deadly_corridor_zero_latency_train
         train_latency_filter: [0]
         eval_latency_filter: [0, 1, 2, 3, 4]
+        episodes_per_latency: null
         max_episodes: 100
         action_layout: multibinary_7
         weight: 1.0
@@ -32,6 +34,7 @@ rl_games:
         train_latency_filter: [0, 1, 2, 3, 4]
         eval_latency_filter: [0, 1, 2, 3, 4]
         episodes_per_latency: 50
+        max_episodes: null
         weight: 1.0
     eval_tasks:
       deadly_corridor:
