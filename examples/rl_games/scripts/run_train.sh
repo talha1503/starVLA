@@ -24,8 +24,8 @@ Options:
   --distributed-backend <deepspeed|none> Trainer distributed backend (default: deepspeed)
   --accelerate-config <path>   Accelerate config path (default: starVLA/config/deepseeds/deepspeed_zero2.yaml)
   --seed <int>                 Seed override (default: 42)
-  --wandb-entity <name>        Wandb entity (default: your_wandb_entity)
-  --wandb-project <name>       Wandb project (default: starVLA_rl_games)
+  --wandb-entity <name>        Wandb entity (default: WANDB_ENTITY from environment/.env)
+  --wandb-project <name>       Wandb project (default: WANDB_PROJECT or starVLA_rl_games)
   --auth-env-file <path>       Optional auth.env path (default: auto-detect workspace/auth.env or examples/rl_games/auth.env)
   --hf-token-env <name>        Env var containing the Hugging Face token (default: HF_TOKEN)
   --wandb-api-key-env <name>   Env var containing the W&B key (default: WANDB_API_KEY)
@@ -94,8 +94,16 @@ USE_ACCELERATE="true"
 DIST_BACKEND="deepspeed"
 ACCELERATE_CONFIG="starVLA/config/deepseeds/deepspeed_zero2.yaml"
 SEED="42"
-WANDB_ENTITY="your_wandb_entity"
-WANDB_PROJECT="starVLA_rl_games"
+for ENV_FILE in "$REPO_ROOT/../.env" "$REPO_ROOT/.env"; do
+  if [[ -f "$ENV_FILE" ]]; then
+    set -a
+    source "$ENV_FILE"
+    set +a
+    break
+  fi
+done
+WANDB_ENTITY="${WANDB_ENTITY:-}"
+WANDB_PROJECT="${WANDB_PROJECT:-starVLA_rl_games}"
 AUTH_ENV_FILE=""
 AUTH_ENV_FILE_EXPLICIT="false"
 HF_TOKEN_ENV="HF_TOKEN"

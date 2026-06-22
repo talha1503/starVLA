@@ -3,8 +3,8 @@
 workspace_dir: WORKSPACE_DIR
 run_root_dir: results/Checkpoints
 seed: 42
-wandb_entity: your_wandb_entity
-wandb_project: starVLA_rl_games
+wandb_entity: ${oc.env:WANDB_ENTITY}
+wandb_project: ${oc.env:WANDB_PROJECT,starVLA_rl_games}
 
 auth:
   env_file: null

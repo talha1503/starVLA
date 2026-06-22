@@ -76,7 +76,10 @@ def _resolve_path(value: Any, *, workspace_dir: Path | None = None, repo_root: P
 
 def _default_env_candidates(workspace_dir: Path | None, repo_root: Path) -> Iterable[Path]:
     if workspace_dir is not None:
+        yield workspace_dir / ".env"
         yield workspace_dir / "auth.env"
+    yield repo_root.parent / ".env"
+    yield repo_root / ".env"
     yield repo_root / "examples/rl_games/auth.env"
 
 
