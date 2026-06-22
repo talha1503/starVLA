@@ -50,6 +50,9 @@ def test_wan_oft_flappy_config_preserves_released_checkpoint_shapes() -> None:
     assert cfg.framework.action_model.future_action_window_size == 7
     assert cfg.framework.action_model.past_action_window_size == 0
     assert cfg.framework.action_model.loss_type == "discrete_ce"
+    assert cfg.dataset.single_converted_name == "flappy_train__bridge"
+    assert cfg.dataset.converted_name == "flappy_train__bridge"
+    assert cfg.datasets.vla_data.data_mix == "flappy_train__bridge"
     assert cfg.datasets.vla_data.include_state is True
     assert list(cfg.datasets.vla_data.observation_indices) == [-3, -2, -1, 0]
     assert list(cfg.datasets.vla_data.state_indices) == [0]

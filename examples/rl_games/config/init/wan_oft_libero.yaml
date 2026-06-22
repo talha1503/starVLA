@@ -12,6 +12,9 @@ datasets:
   vla_data:
     include_state: true
 
+dataset:
+  single_converted_name: flappy_train__bridge
+
 framework:
   action_model:
     action_dim: 7
