@@ -28,6 +28,7 @@ import hashlib
 import io
 import json, torch
 import copy
+from starVLA.training.trainer_utils.trainer_tools import stitch_frames
 from collections import defaultdict
 from pathlib import Path
 from typing import Sequence
@@ -1383,11 +1384,23 @@ class LeRobotSingleDataset(Dataset):
 
     def _pack_sample(self, data: dict) -> dict:
         """Pack transformed modality data into training sample format."""
+        num_obs_frames = int(self.data_cfg.get("num_obs_frames", 1) or 1) if self.data_cfg is not None else 1
+        image_mode = str(self.data_cfg.get("image_mode", "single")) if self.data_cfg is not None else "single"
+        stitch_grid = tuple(self.data_cfg.get("stitch_grid", [2, 2])) if self.data_cfg is not None else (2, 2)
+
         step_images = []
         for video_key in self.modality_keys["video"]:
-            image = data[video_key][0]
-            image = Image.fromarray(image).resize((224, 224))
-            step_images.append(image)
+            frames = data[video_key]  # (T, H, W, C), chronological (oldest .. newest)
+            if image_mode == "single":
+                selected = [frames[-1]]
+            else:
+                n = min(num_obs_frames, len(frames))
+                selected = [frames[i] for i in range(len(frames) - n, len(frames))]
+            pil_frames = [Image.fromarray(f) for f in selected]
+            if image_mode == "stitch":
+                step_images.append(stitch_frames(pil_frames, grid=stitch_grid, size=(224, 224)))
+            else:  # "single" or "multiframe": each frame tokenized independently
+                step_images.extend(p.resize((224, 224)) for p in pil_frames)
 
         language = data[self.modality_keys["language"][0]][0]
         action = []
