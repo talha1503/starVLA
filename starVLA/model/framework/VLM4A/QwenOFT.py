@@ -142,6 +142,14 @@ class Qwenvl_OFT(baseframework):
         self.action_token = "🔍"  # TODO also can add spacail token to Qwen, but too complex
         self.action_token_id = self.qwen_vl_interface.processor.tokenizer("🔍", add_special_tokens=False)["input_ids"][0]
 
+        # --- Fixed-size KV memory; default OFF so existing paths are untouched. ---
+        kv_cfg = getattr(self.config.framework, "kv_memory", None)
+        self.kv_memory_enabled = bool(getattr(kv_cfg, "enabled", False)) if kv_cfg is not None else False
+        self.kv_window = int(getattr(kv_cfg, "window", 4)) if kv_cfg is not None else 4
+        self.kv_rollout_len = int(getattr(kv_cfg, "rollout_len", max(self.kv_window + 1, 2))) if kv_cfg is not None else self.kv_window + 1
+        # Per-stream (eval slot) memories; rebuilt per sample during training.
+        self._kv_memories: dict = {}
+
         # L1 loss
         self.l1_loss = nn.L1Loss()
 
@@ -319,6 +327,9 @@ class Qwenvl_OFT(baseframework):
             dict:
                 action_loss (torch.Tensor): Scalar diffusion noise prediction loss.
         """
+        if self.kv_memory_enabled:
+            return self._forward_memory(examples)
+
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
         actions = [self._prepare_action_array(example["action"]) for example in examples]  # label [B， len, action_dim]
@@ -390,6 +401,8 @@ class Qwenvl_OFT(baseframework):
         """
         if type(examples) is not list:
             examples = [examples]
+        if self.kv_memory_enabled:
+            return self._predict_action_memory(examples)
         batch_images = [to_pil_preserve(example["image"]) for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
         state = (
@@ -428,6 +441,193 @@ class Qwenvl_OFT(baseframework):
 
         normalized_actions = pred_actions.detach().cpu().numpy()
         return {"normalized_actions": normalized_actions}
+
+    # ──────────────────────────────────────────────────────────────────
+    #  Fixed-size KV memory. Default OFF. The cache/rotation core is
+    #  unit-proven (tests/test_kv_memory_equivalence.py); the processor-driven
+    #  segment construction below still needs end-to-end validation against the
+    #  real Qwen3-VL-4B checkpoint on GPU.
+    # ──────────────────────────────────────────────────────────────────
+    def reset_memory(self, slot_id=None) -> None:
+        """Clear the KV memory for one eval slot (episode boundary), or all."""
+        if slot_id is None:
+            self._kv_memories.clear()
+        else:
+            self._kv_memories.pop(slot_id, None)
+
+    def _kv_components(self):
+        hf = self.qwen_vl_interface.model  # Qwen3VLForConditionalGeneration
+        backbone = hf.model  # Qwen3VLModel
+        text_model = backbone.language_model  # Qwen3VLTextModel
+        return backbone, text_model.rotary_emb, len(text_model.layers), text_model.config
+
+    def _new_kv_memory(self):
+        from starVLA.model.modules.vlm.kv_memory import FrameKVMemory
+
+        _, rotary_emb, num_layers, text_config = self._kv_components()
+        return FrameKVMemory(rotary_emb, self.kv_window, num_layers, text_config)
+
+    def _build_text_first_inputs(self, frames, instruction):
+        """Tokenize a text-first window: [instruction][frame imgs...][action suffix].
+
+        Returns the processor batch (input_ids, pixel_values, image_grid_thw, ...).
+        Static text comes first so its KV stays positionally stable across steps.
+        """
+        action_tokens = self.action_token * self.chunk_len
+        action_suffix = f" Please predict the next {self.chunk_len} robot actions: <action>{action_tokens}<action>."
+        content = [{"type": "text", "text": instruction}]
+        content += [{"type": "image", "image": img} for img in frames]
+        content += [{"type": "text", "text": action_suffix}]
+        messages = [[{"role": "user", "content": content}]]
+        batch = self.qwen_vl_interface.processor.apply_chat_template(
+            messages, tokenize=True, padding=True, add_generation_prompt=True, return_dict=True, return_tensors="pt"
+        )
+        return batch.to(self.qwen_vl_interface.model.device)
+
+    def _kv_segments(self, input_ids_1d):
+        """Partition a text-first window's ids into (prefix_len, [frame_lens], action_len).
+
+        A frame block spans its vision_start .. vision_end (inclusive); the prefix is
+        everything before the first vision_start; the action suffix is everything
+        after the last vision_end. Using the real special-token ids keeps eviction
+        leak-free (each evicted frame removes exactly its own markers).
+        """
+        cfg = self.qwen_vl_interface.model.config
+        vstart = int(getattr(cfg, "vision_start_token_id", 151652))
+        vend = int(getattr(cfg, "vision_end_token_id", 151653))
+        ids = input_ids_1d.tolist()
+        starts = [i for i, t in enumerate(ids) if t == vstart]
+        ends = [i for i, t in enumerate(ids) if t == vend]
+        if not starts or not ends:
+            raise RuntimeError("KV memory: window inputs have no vision_start/end tokens")
+        action_start = ends[-1] + 1
+        bounds = starts + [action_start]
+        frame_lens = [bounds[i + 1] - bounds[i] for i in range(len(starts))]
+        return starts[0], frame_lens, len(ids) - action_start
+
+    def _kv_forward_step(self, memory, current_frame, instruction):
+        """Run one streaming KV-memory step for ``current_frame`` and return
+        ``(last_hidden_new, new_input_ids)`` for the freshly fed tokens.
+
+        Positions for the whole visible window are computed via get_rope_index over
+        a virtual window where the current frame stands in for every visible frame
+        (positions are content independent); only the current frame's real pixels are
+        fed, with past frames served from ``memory``.
+        """
+        from starVLA.model.modules.vlm.kv_memory import memory_step
+
+        backbone = self.qwen_vl_interface.model.model  # Qwen3VLModel
+        n_visible = memory.num_past_frames() + 1
+        batch = self._build_text_first_inputs([current_frame] * n_visible, instruction)
+        input_ids = batch["input_ids"]
+        grid = batch["image_grid_thw"]
+        pixel_values = batch["pixel_values"]
+        full_pos, _ = backbone.get_rope_index(input_ids, image_grid_thw=grid)
+
+        prefix_len, frame_lens, _action_len = self._kv_segments(input_ids[0])
+        past_len = memory.past_length()
+        is_prefill = not memory.has_text()
+
+        if is_prefill:
+            expected_past = 0
+            new_start = 0
+            frame_start_in_new = prefix_len
+            prefill_text_len = prefix_len
+        else:
+            expected_past = prefix_len + sum(frame_lens[:-1])
+            new_start = past_len
+            frame_start_in_new = 0
+            prefill_text_len = 0
+        if past_len != expected_past:
+            raise RuntimeError(
+                f"KV memory slice misaligned: memory past_length={past_len} but window "
+                f"expects {expected_past}. Token boundaries drifted across steps."
+            )
+
+        per_frame_patches = pixel_values.shape[0] // n_visible
+        cur_pixels = pixel_values[-per_frame_patches:]
+        cur_grid = grid[-1:].clone()
+
+        last_hidden = memory_step(
+            backbone,
+            memory,
+            new_input_ids=input_ids[:, new_start:],
+            pixel_values=cur_pixels,
+            image_grid_thw=cur_grid,
+            full_position_ids=full_pos,
+            frame_start_in_new=frame_start_in_new,
+            frame_len=frame_lens[-1],
+            prefill_text_len=prefill_text_len,
+        )
+        return last_hidden, input_ids[:, new_start:]
+
+    def _instruction_with_state(self, instruction, state):
+        if state is None:
+            return instruction
+        return self.add_discretized_state_to_instruction([instruction], [state])[0]
+
+    def _forward_memory(self, examples: List[dict]) -> dict:
+        """Training forward with the streaming KV memory (req3, milestone 5).
+
+        Each sample is a contiguous R-frame rollout (R = rollout_len, R > window so
+        eviction is exercised). History KV is detached between steps (truncated BPTT,
+        depth 1), and the action loss is taken at the final step. Per-step action
+        labels (loss at every step) are a future extension.
+        """
+        losses = []
+        for example in examples:
+            frames = example["image"]
+            state = example.get("state") if "state" in example else None
+            instruction = self._instruction_with_state(example["lang"], state)
+            memory = self._new_kv_memory()
+            last_hidden = new_ids = None
+            for step, frame in enumerate(frames):
+                if step > 0:
+                    memory.detach_()  # truncated BPTT: history is a fixed memory
+                last_hidden, new_ids = self._kv_forward_step(memory, frame, instruction)
+
+            with torch.autocast("cuda", dtype=torch.float32):
+                action_queries = self._gather_action_token_embeddings(
+                    last_hidden, new_ids, action_token_id=self.action_token_id
+                )
+                pred_actions = self.action_model.predict_action(action_queries)
+                target = self._prepare_action_array(example["action"])
+                target = torch.tensor(np.array([target]), device=pred_actions.device, dtype=pred_actions.dtype)
+                target = target[:, -self.action_horizon :, :]
+                env_dim = int(example.get("action_env_dim", self.action_env_dim))
+                losses.append(self._compute_action_loss(pred_actions, target, action_env_dims=[env_dim]))
+        return {"action_loss": torch.stack(losses).mean()}
+
+    @torch.inference_mode()
+    def _predict_action_memory(self, examples: List[dict]) -> dict:
+        """Eval-time streaming prediction with per-slot KV memory (req3, milestone 4).
+
+        The newest frame (``example['image'][-1]``) is encoded fresh; past frames are
+        served from the slot's memory. ``reset_memory(slot_id)`` (called from the
+        policy at episode boundaries) clears a slot.
+        """
+        train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
+        outputs = []
+        for example in examples:
+            slot_id = example.get("slot_id", 0)
+            frames = [to_pil_preserve(f) for f in example["image"]]
+            if train_obs_image_size:
+                frames = resize_images(frames, target_size=train_obs_image_size)
+            state = example.get("state") if "state" in example else None
+            instruction = self._instruction_with_state(example["lang"], state)
+            memory = self._kv_memories.get(slot_id)
+            if memory is None:
+                memory = self._new_kv_memory()
+                self._kv_memories[slot_id] = memory
+            last_hidden, new_ids = self._kv_forward_step(memory, frames[-1], instruction)
+            with torch.autocast("cuda", dtype=torch.float32):
+                action_queries = self._gather_action_token_embeddings(
+                    last_hidden, new_ids, action_token_id=self.action_token_id
+                )
+                pred_actions = self.action_model.predict_action(action_queries)
+            outputs.append(pred_actions)
+        normalized = torch.cat(outputs, dim=0).detach().cpu().numpy()
+        return {"normalized_actions": normalized}
 
     def _gather_action_token_embeddings(
         self,
