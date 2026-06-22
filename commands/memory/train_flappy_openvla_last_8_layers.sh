@@ -13,12 +13,12 @@ python examples/rl_games/scripts/launch_train.py \
   model=openvla \
   env=flappy \
   init=bridge \
-  run_id=flappy_fix_latency_2_200ep \
+  run_id=flappy_fix_latency_2_200ep_last_8_layers \
   paths.dataset_local_dir=data/flappy_fix_latency_2_200ep \
   trainer.distributed_backend=none \
-  trainer.gradient_accumulation_steps=4 \
+  trainer.gradient_accumulation_steps=2 \
   trainer.freeze_llm_bottom_ratio=0.7778 \
-  datasets.vla_data.per_device_batch_size=32 \
+  datasets.vla_data.per_device_batch_size=64 \
   datasets.vla_data.image_mode=single \
   datasets.vla_data.num_obs_frames=1 \
   trainer.max_train_steps=5000 \
