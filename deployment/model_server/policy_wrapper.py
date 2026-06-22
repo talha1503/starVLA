@@ -133,6 +133,15 @@ class PolicyServerWrapper:
             base["state_keys"] = proc.state_keys
         return base
 
+    def reset_memory(self, slot_id=None) -> None:
+        """Clear the framework's streaming KV memory for one slot (or all).
+
+        No-op for frameworks without KV memory.
+        """
+        reset = getattr(self._framework, "reset_memory", None)
+        if callable(reset):
+            reset(slot_id)
+
     def predict_action(
         self,
         examples: List[dict],
