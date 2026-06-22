@@ -117,6 +117,36 @@ def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, to
     return optimizer, lr_scheduler
 
 
+def _llm_decoder_layers(model):
+    """The Qwen3-VL language-model decoder ``ModuleList``.
+
+    Only reached when ``freeze_llm_bottom_ratio > 0``, i.e. the user explicitly
+    asked to freeze LLM layers, so a non-Qwen framework raises AttributeError
+    here, which is the correct signal for that misconfiguration.
+    """
+    return model.qwen_vl_interface.model.model.language_model.layers
+
+
+def resolve_freeze_llm_bottom_n(model, cfg):
+    """Translate ``trainer.freeze_llm_bottom_ratio`` into ``(n, total)`` layers."""
+    ratio = float(cfg.trainer.get("freeze_llm_bottom_ratio", 0) or 0)
+    if ratio <= 0:
+        return 0, 0
+    total = len(_llm_decoder_layers(model))
+    return min(int(round(ratio * total)), total), total
+
+
+def llm_bottom_frozen_param_ids(model, cfg):
+    """Parameter ids of the bottom-N LLM layers to exclude from optimizer groups."""
+    n, _ = resolve_freeze_llm_bottom_n(model, cfg)
+    if n <= 0:
+        return set()
+    ids = set()
+    for layer in list(_llm_decoder_layers(model))[:n]:
+        ids.update(id(p) for p in layer.parameters())
+    return ids
+
+
 def build_param_lr_groups(model, cfg):
     """
     build multiple param groups based on cfg.trainer.learning_rate.
@@ -151,6 +181,10 @@ def build_param_lr_groups(model, cfg):
         except AttributeError:
             print(f"⚠️ freeze module path does not exist: {freeze_path}")
             continue
+
+    # Exclude bottom-N LLM decoder layers (trainer.freeze_llm_bottom_ratio) so
+    # they never enter an optimizer param group.
+    frozen_params.update(llm_bottom_frozen_param_ids(model, cfg))
 
     for module_name, lr in lr_cfg.items():
         if module_name == "base":
@@ -212,6 +246,33 @@ def resize_images(images, target_size=(224, 224)):
         raise ValueError("Unsupported image type or structure.")
 
 
+def stitch_frames(frames, grid=(2, 2), size=(224, 224)):
+    """Tile temporal frames into one image, keeping the token count of a single image.
+
+    Used by the ``stitch`` multi-image mode: instead of feeding N frames as N
+    tokenized images, they are laid out on a fixed grid and the whole canvas is
+    returned at ``size``. Both training (``_pack_sample``) and eval
+    (``policy/starvla.py``) call this so the layouts match.
+
+    Args:
+        frames: list of ``PIL.Image`` or ``np.ndarray`` (H, W, C), oldest first.
+        grid: (rows, cols). Cells beyond ``len(frames)`` repeat the last frame so
+            the layout is fixed regardless of how many frames are available.
+        size: (width, height) of the returned canvas.
+    """
+    rows, cols = grid
+    canvas_w, canvas_h = size
+    cell_w, cell_h = canvas_w // cols, canvas_h // rows
+    pil = [f if isinstance(f, Image.Image) else Image.fromarray(f) for f in frames]
+    capacity = rows * cols
+    pil = (pil + [pil[-1]] * (capacity - len(pil))) if len(pil) < capacity else pil[:capacity]
+    canvas = Image.new("RGB", (canvas_w, canvas_h))
+    for idx, frame in enumerate(pil):
+        r, c = divmod(idx, cols)
+        canvas.paste(frame.convert("RGB").resize((cell_w, cell_h)), (c * cell_w, r * cell_h))
+    return canvas
+
+
 import torch.distributed as dist
 
 
@@ -259,6 +320,25 @@ class TrainerUtils:
         # accelerator.wait_for_everyone()  # synchronize when distributed training
         if not dist.is_initialized() or dist.get_rank() == 0:
             print(f"🔒 Frozen modules with re pattern: {frozen}")
+        return model
+
+    @staticmethod
+    def freeze_llm_bottom_layers(model, cfg):
+        """Freeze the bottom ``round(ratio * num_layers)`` VLM decoder layers.
+
+        Driven by ``cfg.trainer.freeze_llm_bottom_ratio`` (0~1). The total layer
+        count is read at runtime from the loaded model, so the caller never needs
+        to know it in advance. No-op when the ratio is 0 or no LLM layers exist.
+        """
+        n, total = resolve_freeze_llm_bottom_n(model, cfg)
+        if n <= 0:
+            return model
+        for layer in list(_llm_decoder_layers(model))[:n]:
+            for param in layer.parameters():
+                param.requires_grad = False
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            ratio = float(cfg.trainer.get("freeze_llm_bottom_ratio", 0) or 0)
+            print(f"🔒 freezing {n}/{total} bottom LLM layers (ratio={ratio})")
         return model
 
     @staticmethod

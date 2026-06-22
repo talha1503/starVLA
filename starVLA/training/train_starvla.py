@@ -372,6 +372,7 @@ class VLATrainer(TrainerUtils):
             else None
         )
         self.model = self.freeze_backbones(self.model, freeze_modules=freeze_modules)
+        self.model = self.freeze_llm_bottom_layers(self.model, self.config)
         self.print_trainable_parameters(self.model)
 
         if self.vla_eval_dataloader is not None:
