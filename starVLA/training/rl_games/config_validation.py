@@ -66,6 +66,28 @@ def _validate_latency_values(cfg: Any) -> None:
         raise ValueError("Missing required RL-games config field: rl_games.env_eval.latency.values")
 
 
+def sync_kv_memory_obs_window(cfg: Any) -> None:
+    """Tie the observation window to the KV-memory rollout length.
+
+    ``_forward_memory`` unrolls ``len(example["image"])`` steps, and that frame
+    count is the dataloader's observation window
+    (``datasets.vla_data.num_obs_frames`` driving the video ``delta_indices``).
+    When the KV memory is enabled but the window is left at the single-frame
+    default, the streaming rollout silently collapses to one step. Derive the
+    window — and the multi-frame image mode that emits a frame sequence — from the
+    KV config so the two cannot drift apart.
+    """
+    if not bool(_select_value(cfg=cfg, key="framework.kv_memory.enabled") or False):
+        return
+    window = int(_select_value(cfg=cfg, key="framework.kv_memory.window") or 0)
+    rollout_len = int(_select_value(cfg=cfg, key="framework.kv_memory.rollout_len") or 0)
+    if rollout_len <= 0:
+        # Mirror QwenOFT's default when rollout_len is unset.
+        rollout_len = max(window + 1, 2)
+    OmegaConf.update(cfg, "datasets.vla_data.num_obs_frames", rollout_len, force_add=True)
+    OmegaConf.update(cfg, "datasets.vla_data.image_mode", "multiframe", force_add=True)
+
+
 def validate_rl_games_config(cfg: Any) -> None:
     model_alias = str(_require_non_empty_value(cfg=cfg, key="rl_games.model_alias"))
     _require_non_empty_value(cfg=cfg, key="rl_games.task")

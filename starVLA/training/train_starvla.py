@@ -37,7 +37,7 @@ from transformers import AutoProcessor, get_scheduler
 from starVLA.dataloader import build_dataloader
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
-from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias, validate_rl_games_config
+from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias, sync_kv_memory_obs_window, validate_rl_games_config
 from starVLA.training.rl_games.auth import login_training_services
 from starVLA.training.rl_games.eval_core import EvalResult
 from starVLA.training.rl_games import action_cc_f1
@@ -1581,6 +1581,9 @@ def main(cfg) -> None:
     if hasattr(cfg, "rl_games"):
         login_training_services(cfg, workspace_dir=getattr(cfg, "workspace_dir", None))
         validate_rl_games_config(cfg)
+    # Keep the obs window tied to the KV-memory rollout length before the config is
+    # wrapped/consumed by the dataloader and framework.
+    sync_kv_memory_obs_window(cfg)
     apply_model_alias(cfg)
     apply_action_spec(cfg)
 
