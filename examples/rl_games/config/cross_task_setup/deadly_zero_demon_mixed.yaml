@@ -15,6 +15,16 @@ rl_games:
       deadly_corridor: 1.0
       demon_attack: 1.0
     train_tasks:
+      - name: demon_attack
+        role: B
+        train_source_hf: talha1503/demon_attack_mixed_latency_parquet
+        prompt_source_hf: talha1503/demon_attack_mixed_latency_parquet
+        converted_name: demon_attack_mixed_latency_train
+        train_latency_filter: [0, 1, 2, 3, 4]
+        eval_latency_filter: [0, 1, 2, 3, 4]
+        episodes_per_latency: 50
+        max_episodes: null
+        weight: 1.0
       - name: deadly_corridor
         role: A
         train_source_hf: talha1503/deadly_corridor_zero_latency_parquet_v2
@@ -25,16 +35,6 @@ rl_games:
         episodes_per_latency: null
         max_episodes: 100
         action_layout: multibinary_7
-        weight: 1.0
-      - name: demon_attack
-        role: B
-        train_source_hf: talha1503/demon_attack_mixed_latency_parquet
-        prompt_source_hf: talha1503/demon_attack_mixed_latency_parquet
-        converted_name: demon_attack_mixed_latency_train
-        train_latency_filter: [0, 1, 2, 3, 4]
-        eval_latency_filter: [0, 1, 2, 3, 4]
-        episodes_per_latency: 50
-        max_episodes: null
         weight: 1.0
     eval_tasks:
       deadly_corridor:
