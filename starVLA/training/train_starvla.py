@@ -1353,9 +1353,12 @@ class VLATrainer(TrainerUtils):
         if eval_num_workers is None:
             eval_num_workers = self.config.datasets.vla_data.num_workers
         eval_num_workers = int(eval_num_workers)
-        dataloader_kwargs = {}
+        dataloader_kwargs = {
+            "pin_memory": _as_bool(self.config.datasets.vla_data.pin_memory),
+        }
         if eval_num_workers > 0:
             dataloader_kwargs["multiprocessing_context"] = "spawn"
+            dataloader_kwargs["persistent_workers"] = _as_bool(self.config.datasets.vla_data.persistent_workers)
             if "prefetch_factor" in self.config.datasets.vla_data:
                 dataloader_kwargs["prefetch_factor"] = int(self.config.datasets.vla_data.prefetch_factor)
         frame_loader = DataLoader(
