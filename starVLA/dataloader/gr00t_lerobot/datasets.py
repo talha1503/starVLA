@@ -1473,7 +1473,9 @@ class LeRobotSingleDataset(Dataset):
                     episode_chunk=chunk_index, episode_index=trajectory_id
                 )
                 assert parquet_path.exists(), f"Parquet file not found at {parquet_path}"
-                return pd.read_parquet(parquet_path)
+                self.curr_traj_id = trajectory_id
+                self.curr_traj_data = pd.read_parquet(parquet_path)
+                return self.curr_traj_data
         elif self._lerobot_version == "v3.0":
             return self.get_trajectory_data_lerobot_v3(trajectory_id)
     
@@ -1496,7 +1498,9 @@ class LeRobotSingleDataset(Dataset):
             
             # filter by trajectory_id
             episode_data = file_data.loc[file_data["episode_index"] == trajectory_id].copy()
-            return episode_data
+            self.curr_traj_id = trajectory_id
+            self.curr_traj_data = episode_data
+            return self.curr_traj_data
 
     def get_trajectory_columns(self, trajectory_id: int, columns: Sequence[str]) -> pd.DataFrame:
         """Read selected columns for one trajectory without loading image/action payloads."""

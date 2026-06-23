@@ -972,6 +972,7 @@ class VLATrainer(TrainerUtils):
 
         was_training = self.model.training
         self.model.eval()
+        eval_start = time.perf_counter()
         total_loss_sum = torch.zeros((), device=self.accelerator.device, dtype=torch.float32)
         total_loss_count = torch.zeros((), device=self.accelerator.device, dtype=torch.float32)
         latency_loss_sums: dict[int, torch.Tensor] = {}
@@ -1155,6 +1156,8 @@ class VLATrainer(TrainerUtils):
                 task_latency_loss_counts[task_latency_key] = loss_count
 
         if self.accelerator.is_main_process and total_loss_count.item() > 0:
+            step_metrics["eval/action_loss/seconds"] = time.perf_counter() - eval_start
+            step_metrics["eval/action_loss/samples"] = total_loss_count.item()
             step_metrics["eval/loss"] = (total_loss_sum / total_loss_count.clamp_min(1.0)).item()
             for latency in sorted(latency_loss_sums):
                 count = latency_loss_counts[latency]
@@ -1253,16 +1256,12 @@ class VLATrainer(TrainerUtils):
             for flat_idx, step in enumerate(all_steps):
                 traj_id, base_idx = step
                 if cur and traj_id != cur_traj:
-                    episodes.append(
-                        (ds_task, dataset_index, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur)
-                    )
+                    episodes.append((ds_task, dataset_index, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
                     cur = []
                 cur_traj = traj_id
                 cur.append((int(flat_idx), int(base_idx)))
             if cur:
-                episodes.append(
-                    (ds_task, dataset_index, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur)
-                )
+                episodes.append((ds_task, dataset_index, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
         if not episodes:
             return step_metrics
 
@@ -1341,32 +1340,27 @@ class VLATrainer(TrainerUtils):
         frame_records = []
         for ep_task, dataset_index, episode_key, episode_latency_value, frames in assigned:
             for flat_idx, base_idx in frames:
-                frame_records.append(
-                    (
-                        int(dataset_index),
-                        int(flat_idx),
-                        str(episode_key),
-                        int(base_idx),
-                        str(ep_task),
-                        episode_latency_value,
-                    )
-                )
+                frame_records.append((
+                    int(dataset_index),
+                    int(flat_idx),
+                    str(episode_key),
+                    int(base_idx),
+                    str(ep_task),
+                    episode_latency_value,
+                ))
 
         eval_num_workers = getattr(self.config.datasets.vla_data, "eval_num_workers", None)
         if eval_num_workers is None:
             eval_num_workers = self.config.datasets.vla_data.num_workers
         eval_num_workers = int(eval_num_workers)
         dataloader_kwargs = {
-            "pin_memory": _as_bool(getattr(self.config.datasets.vla_data, "pin_memory", False)),
+            "pin_memory": _as_bool(self.config.datasets.vla_data.pin_memory),
         }
         if eval_num_workers > 0:
             dataloader_kwargs["multiprocessing_context"] = "spawn"
-            dataloader_kwargs["persistent_workers"] = _as_bool(
-                getattr(self.config.datasets.vla_data, "persistent_workers", True)
-            )
-            prefetch_factor = getattr(self.config.datasets.vla_data, "prefetch_factor", None)
-            if prefetch_factor is not None:
-                dataloader_kwargs["prefetch_factor"] = int(prefetch_factor)
+            dataloader_kwargs["persistent_workers"] = _as_bool(self.config.datasets.vla_data.persistent_workers)
+            if "prefetch_factor" in self.config.datasets.vla_data:
+                dataloader_kwargs["prefetch_factor"] = int(self.config.datasets.vla_data.prefetch_factor)
         frame_loader = DataLoader(
             _ActionCCF1FrameDataset(single_datasets, frame_records),
             batch_size=bs,

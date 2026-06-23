@@ -4,7 +4,7 @@ bash examples/rl_games/install/install_stack.sh gr00t deadly_corridor
 
 conda activate starvla_rl_games_gr00t
 
-pip install flash-attn --no-build-isolation
+bash examples/rl_games/install/flash_attn.sh --check >/dev/null 2>&1 || bash examples/rl_games/install/flash_attn.sh
 
 python examples/rl_games/scripts/launch_train.py \
     model=gr00t \

@@ -75,6 +75,23 @@ source "${CONDA_BASE}/etc/profile.d/conda.sh"
 # Keep uv's cache on the same filesystem as the conda envs so packages are
 # hardlinked into each env (download/disk dedup) instead of silently copied.
 export UV_CACHE_DIR="${UV_CACHE_DIR:-${CONDA_BASE}/.uv_cache}"
+# Some cloud images (e.g. vast.ai) export UV_NO_CACHE=1 (disables uv's wheel cache, so
+# every per-model env re-downloads the identical multi-GB torch/CUDA stack) and
+# UV_LINK_MODE=copy (defeats the cache->env hardlink dedup). Clear both so the first
+# build warms the shared cache and the rest hardlink from it.
+unset UV_NO_CACHE UV_LINK_MODE
+
+# Route torch + pypi through the fastest mirror. When launched via the repo install.sh
+# this is already chosen and exported; for a standalone bootstrap run, speed-test here
+# (the helper lives in the parent repo: starVLA is a submodule under it).
+if [[ -z "${STARVLA_TORCH_INDEX_BASE:-}" ]]; then
+  MIRRORS_HELPER="${REPO_ROOT}/../scripts/bash_scripts/_mirrors.sh"
+  if [[ -f "${MIRRORS_HELPER}" ]]; then
+    # shellcheck source=/dev/null
+    source "${MIRRORS_HELPER}"
+    export_mirror_env "${STARVLA_PROBE_PROFILE:-cu128}"
+  fi
+fi
 
 MODELS=(openvla pi0 pi05 gr00t)
 ENVS=(flappy demon_attack deadly_corridor)
