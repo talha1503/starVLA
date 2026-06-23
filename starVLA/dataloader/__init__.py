@@ -71,14 +71,12 @@ def build_dataloader(
             eval_num_workers = vla_dataset_cfg.get("eval_num_workers", None)
             if eval_num_workers is not None:
                 num_workers = int(eval_num_workers)
-        persistent_workers = num_workers > 0 and not _cfg_bool(
-            vla_dataset_cfg.get("sequential_step_sampling", False),
-            default=False,
-        )
-        dataloader_kwargs = {}
+        dataloader_kwargs = {
+            "pin_memory": _cfg_bool(vla_dataset_cfg.pin_memory),
+        }
         if num_workers > 0:
             dataloader_kwargs["multiprocessing_context"] = "spawn"
-            dataloader_kwargs["persistent_workers"] = persistent_workers
+            dataloader_kwargs["persistent_workers"] = _cfg_bool(vla_dataset_cfg.persistent_workers)
             if "prefetch_factor" in vla_dataset_cfg:
                 dataloader_kwargs["prefetch_factor"] = int(vla_dataset_cfg.prefetch_factor)
         
