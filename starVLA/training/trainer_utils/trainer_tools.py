@@ -135,6 +135,12 @@ def _llm_decoder_layers(model):
     return _llm_language_model(model).layers
 
 
+def _tied_embedding_modules(model):
+    language_model = _llm_language_model(model)
+    hf_model = _qwen_vl_interface(model).model
+    return language_model.embed_tokens, hf_model.lm_head
+
+
 def resolve_freeze_llm_layer_indices(model, cfg):
     """Translate ``trainer.freeze_llm_layers=[start,end]`` to an inclusive layer list."""
     freeze_llm_layers = cfg.trainer.freeze_llm_layers
@@ -149,11 +155,15 @@ def _module_param_ids(module):
 
 
 def vit_llm_frozen_param_ids(model, cfg):
-    """Parameter ids excluded from optimizer by trainer.freeze_vit/freeze_llm_layers."""
+    """Parameter ids excluded from optimizer by trainer freeze controls."""
     frozen_params = set()
     freeze_vit = cfg.trainer.freeze_vit
     if freeze_vit:
         frozen_params.update(_module_param_ids(_vit_module(model)))
+
+    if cfg.trainer.freeze_tied_embedding:
+        for module in _tied_embedding_modules(model):
+            frozen_params.update(_module_param_ids(module))
 
     frozen_layer_indices, _ = resolve_freeze_llm_layer_indices(model, cfg)
     layers = list(_llm_decoder_layers(model))
@@ -198,8 +208,8 @@ def build_param_lr_groups(model, cfg):
             print(f"⚠️ freeze module path does not exist: {freeze_path}")
             continue
 
-    # Exclude trainer.freeze_vit / trainer.freeze_llm_layers parameters so they
-    # never enter an optimizer param group.
+    # Exclude trainer freeze controls so frozen parameters never enter an
+    # optimizer param group.
     frozen_params.update(vit_llm_frozen_param_ids(model, cfg))
 
     for module_name, lr in lr_cfg.items():
@@ -340,7 +350,7 @@ class TrainerUtils:
 
     @staticmethod
     def freeze_vit_and_llm_layers(model, cfg):
-        """Apply trainer.freeze_vit and trainer.freeze_llm_layers.
+        """Apply trainer.freeze_vit/freeze_tied_embedding/freeze_llm_layers.
 
         trainer.freeze_vit freezes Qwen-VL's visual module, including the
         vision-to-language connector/merger it contains.
@@ -349,6 +359,12 @@ class TrainerUtils:
         if freeze_vit:
             for param in _vit_module(model).parameters():
                 param.requires_grad = False
+
+        freeze_tied_embedding = cfg.trainer.freeze_tied_embedding
+        if freeze_tied_embedding:
+            for module in _tied_embedding_modules(model):
+                for param in module.parameters():
+                    param.requires_grad = False
 
         frozen_layer_indices, total = resolve_freeze_llm_layer_indices(model, cfg)
         layers = list(_llm_decoder_layers(model))
@@ -359,7 +375,8 @@ class TrainerUtils:
         if not dist.is_initialized() or dist.get_rank() == 0:
             print(
                 "🔒 freeze_vit="
-                f"{freeze_vit}, freeze_llm_layers={list(frozen_layer_indices)}"
+                f"{freeze_vit}, freeze_tied_embedding={freeze_tied_embedding}, "
+                f"freeze_llm_layers={list(frozen_layer_indices)}"
                 f" / total={total}"
             )
         return model

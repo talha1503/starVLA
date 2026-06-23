@@ -6,7 +6,8 @@ set -euo pipefail
 # 这样无论从哪个 cwd `bash` 本脚本都不会 file-not-found。
 cd "$(dirname "$0")/../.."
 
-# v2: freeze llm bottom layer, and freeze vit
+# v2: freeze ViT/connector, tied embedding/lm_head, and LLM bottom layers.
+# OpenVLA action head uses hidden states, not lm_head logits.
 python examples/rl_games/scripts/launch_train.py \
   model=openvla \
   env=flappy \
@@ -16,6 +17,7 @@ python examples/rl_games/scripts/launch_train.py \
   trainer.distributed_backend=none \
   trainer.gradient_accumulation_steps=2 \
   trainer.freeze_vit=true \
+  trainer.freeze_tied_embedding=true \
   trainer.freeze_llm_layers=[0,27] \
   datasets.vla_data.per_device_batch_size=64 \
   datasets.vla_data.image_mode=single \

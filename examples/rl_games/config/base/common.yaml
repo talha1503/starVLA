@@ -109,6 +109,8 @@ trainer:
   freeze_modules: ''
   # Freeze Qwen-VL visual tower, including its vision-to-language connector/merger.
   freeze_vit: false
+  # Freeze tied token embedding / lm_head.
+  freeze_tied_embedding: false
   # Inclusive LLM decoder layer range to freeze, e.g. [0, 27].
   freeze_llm_layers: []
   loss_scale:
