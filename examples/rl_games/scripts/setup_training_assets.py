@@ -845,7 +845,7 @@ def setup_assets(args) -> dict[str, Any]:
         "action_carrier": _action_carrier(args),
     }
 
-    supported_models = {"openvla", "pi0", "pi05", "gr00t"}
+    supported_models = {"openvla", "pi0", "pi05", "gr00t", "cosmo_predict_gr00t"}
     if args.model in supported_models and str(getattr(args, "env", "")) == "cross_task":
         result.update(_ensure_cross_task_datasets(args))
     elif args.model in supported_models and args.env == "flappy":

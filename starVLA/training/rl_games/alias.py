@@ -9,6 +9,7 @@ MODEL_ALIAS_TO_FRAMEWORK: Dict[str, str] = {
     "pi-0.5": "QwenPI_v3",
     "gr00t": "QwenGR00T",
     "wan_oft": "WanOFT",
+    "cosmo_predict_gr00t": "CosmoPredict2GR00T",
 }
 
 
