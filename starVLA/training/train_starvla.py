@@ -1541,8 +1541,6 @@ class VLATrainer(TrainerUtils):
     def _train_step(self, batch_vla, batch_vlm=None):
         """Execute single training step."""
         with self.accelerator.accumulate(self.model):
-            self.optimizer.zero_grad()
-
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
                 action_loss = output_dict["action_loss"]
@@ -1551,9 +1549,10 @@ class VLATrainer(TrainerUtils):
             self.accelerator.backward(total_loss)
 
             grad_norm = None
-            if self.config.trainer.gradient_clipping is not None:
+            gradients_synced = self.accelerator.sync_gradients
+            if gradients_synced and self.config.trainer.gradient_clipping is not None:
                 grad_norm = self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
-            elif self.accelerator.sync_gradients:
+            elif gradients_synced:
                 grad_norm = self._total_grad_norm(self.model.parameters())
 
             self.optimizer.step()
@@ -1562,9 +1561,12 @@ class VLATrainer(TrainerUtils):
             # runs gradient_accumulation_steps times faster than intended,
             # causing warmup to end too early and cosine decay to bottom out
             # at min_lr well before max_train_steps is reached.
-            if self.accelerator.sync_gradients:
+            if gradients_synced:
                 self.lr_scheduler.step()
+            self.optimizer.zero_grad()
 
+        if not gradients_synced:
+            return {}
         action_loss_value = action_loss.item()
         metrics = {
             "train/loss": action_loss_value,
