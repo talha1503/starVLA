@@ -29,7 +29,7 @@ import wandb
 from accelerate import Accelerator, DeepSpeedPlugin
 from accelerate.utils import set_seed
 from omegaconf import OmegaConf
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import AutoProcessor, get_scheduler
 
@@ -170,6 +170,25 @@ def _episode_latency(ds, trajectory_id: int) -> int | None:
         if values:
             return int(values[0])
     return None
+
+
+def _identity_collate(batch):
+    return batch
+
+
+class _ActionCCF1FrameDataset(Dataset):
+    def __init__(self, single_datasets: list, frame_records: list[tuple[int, int, str, int, str, int | None]]):
+        self.single_datasets = single_datasets
+        self.frame_records = frame_records
+
+    def __len__(self) -> int:
+        return len(self.frame_records)
+
+    def __getitem__(self, index: int):
+        dataset_index, flat_idx, episode_key, base_idx, ep_task, _episode_latency_value = self.frame_records[index]
+        sample = self.single_datasets[dataset_index][flat_idx]
+        sample_task = _sample_task(sample) or ep_task
+        return sample_task, episode_key, base_idx, _sample_latency(sample), sample
 
 
 def load_fast_tokenizer():
@@ -953,6 +972,7 @@ class VLATrainer(TrainerUtils):
 
         was_training = self.model.training
         self.model.eval()
+        eval_start = time.perf_counter()
         total_loss_sum = torch.zeros((), device=self.accelerator.device, dtype=torch.float32)
         total_loss_count = torch.zeros((), device=self.accelerator.device, dtype=torch.float32)
         latency_loss_sums: dict[int, torch.Tensor] = {}
@@ -1136,6 +1156,8 @@ class VLATrainer(TrainerUtils):
                 task_latency_loss_counts[task_latency_key] = loss_count
 
         if self.accelerator.is_main_process and total_loss_count.item() > 0:
+            step_metrics["eval/action_loss/seconds"] = time.perf_counter() - eval_start
+            step_metrics["eval/action_loss/samples"] = total_loss_count.item()
             step_metrics["eval/loss"] = (total_loss_sum / total_loss_count.clamp_min(1.0)).item()
             for latency in sorted(latency_loss_sums):
                 count = latency_loss_counts[latency]
@@ -1219,9 +1241,9 @@ class VLATrainer(TrainerUtils):
         single_datasets = list(getattr(dataset, "datasets", None) or [dataset])
 
         # Enumerate episodes as contiguous same-trajectory runs of all_steps.
-        # episodes: list of (task, single_ds, episode_key, latency, [(flat_idx, base_index), ...]).
+        # episodes: list of (task, dataset_index, episode_key, latency, [(flat_idx, base_index), ...]).
         episodes = []
-        for ds in single_datasets:
+        for dataset_index, ds in enumerate(single_datasets):
             ds_task = str(getattr(ds, "rl_games_task", task) or task)
             if ds_task not in action_cc_f1.SUPPORTED_TASKS:
                 continue
@@ -1234,12 +1256,12 @@ class VLATrainer(TrainerUtils):
             for flat_idx, step in enumerate(all_steps):
                 traj_id, base_idx = step
                 if cur and traj_id != cur_traj:
-                    episodes.append((ds_task, ds, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
+                    episodes.append((ds_task, dataset_index, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
                     cur = []
                 cur_traj = traj_id
                 cur.append((int(flat_idx), int(base_idx)))
             if cur:
-                episodes.append((ds_task, ds, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
+                episodes.append((ds_task, dataset_index, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
         if not episodes:
             return step_metrics
 
@@ -1303,26 +1325,61 @@ class VLATrainer(TrainerUtils):
         unwrapped = self.accelerator.unwrap_model(self.model)
         counts = action_cc_f1.new_counts(spec) if spec is not None else None
 
-        # Materialize assigned frames (tagged with their episode), batch for inference.
-        tagged = []  # (task, episode_key, base_index, latency, packed_sample)
-        for ep_task, ds, episode_key, _episode_latency_value, frames in assigned:
-            for flat_idx, base_idx in frames:
-                sample = ds[flat_idx]
-                sample_task = _sample_task(sample) or ep_task
-                tagged.append((sample_task, episode_key, base_idx, _sample_latency(sample), sample))
-
         per_ep = {}  # episode_key -> list of (base_index, teacher_components, model_components)
+
+        def flush_chunk(chunk):
+            normalized = unwrapped.predict_action(examples=[c[4] for c in chunk])["normalized_actions"]
+            for i, (sample_task, episode_key, base_idx, latency, sample) in enumerate(chunk):
+                sample_task = str(sample_task)
+                sample_spec = _spec_for_task(sample_task)
+                teacher_vec = np.asarray(sample["action"])[0, :]
+                model_vec = normalized[i, 0, :]
+                entry = per_ep.setdefault(episode_key, {"task": sample_task, "latency": latency, "items": []})
+                entry["items"].append((base_idx, sample_spec.comp_fn(teacher_vec), sample_spec.comp_fn(model_vec)))
+
+        frame_records = []
+        for ep_task, dataset_index, episode_key, episode_latency_value, frames in assigned:
+            for flat_idx, base_idx in frames:
+                frame_records.append((
+                    int(dataset_index),
+                    int(flat_idx),
+                    str(episode_key),
+                    int(base_idx),
+                    str(ep_task),
+                    episode_latency_value,
+                ))
+
+        eval_num_workers = getattr(self.config.datasets.vla_data, "eval_num_workers", None)
+        if eval_num_workers is None:
+            eval_num_workers = self.config.datasets.vla_data.num_workers
+        eval_num_workers = int(eval_num_workers)
+        dataloader_kwargs = {}
+        if eval_num_workers > 0:
+            dataloader_kwargs["multiprocessing_context"] = "spawn"
+            if "prefetch_factor" in self.config.datasets.vla_data:
+                dataloader_kwargs["prefetch_factor"] = int(self.config.datasets.vla_data.prefetch_factor)
+        frame_loader = DataLoader(
+            _ActionCCF1FrameDataset(single_datasets, frame_records),
+            batch_size=bs,
+            shuffle=False,
+            collate_fn=_identity_collate,
+            num_workers=eval_num_workers,
+            **dataloader_kwargs,
+        )
+
+        data_wait_seconds = 0.0
+        predict_seconds = 0.0
+        processed_frames = 0
         with torch.no_grad():
-            for start in range(0, len(tagged), bs):
-                chunk = tagged[start : start + bs]
-                normalized = unwrapped.predict_action(examples=[c[4] for c in chunk])["normalized_actions"]
-                for i, (sample_task, episode_key, base_idx, latency, sample) in enumerate(chunk):
-                    sample_task = str(sample_task)
-                    sample_spec = _spec_for_task(sample_task)
-                    teacher_vec = np.asarray(sample["action"])[0, :]
-                    model_vec = normalized[i, 0, :]
-                    entry = per_ep.setdefault(episode_key, {"task": sample_task, "latency": latency, "items": []})
-                    entry["items"].append((base_idx, sample_spec.comp_fn(teacher_vec), sample_spec.comp_fn(model_vec)))
+            t_data_start = time.perf_counter()
+            for chunk in frame_loader:
+                t_data_end = time.perf_counter()
+                data_wait_seconds += t_data_end - t_data_start
+                t_predict_start = time.perf_counter()
+                flush_chunk(chunk)
+                predict_seconds += time.perf_counter() - t_predict_start
+                processed_frames += len(chunk)
+                t_data_start = time.perf_counter()
 
         if was_training:
             self.model.train()
@@ -1451,6 +1508,18 @@ class VLATrainer(TrainerUtils):
                         else:
                             key = f"eval/{task_name}/latency_{int(latency)}/{key}"
                         step_metrics[key] = value
+
+        data_wait_t = torch.tensor(data_wait_seconds, device=self.accelerator.device, dtype=torch.float32)
+        predict_t = torch.tensor(predict_seconds, device=self.accelerator.device, dtype=torch.float32)
+        frames_t = torch.tensor(float(processed_frames), device=self.accelerator.device, dtype=torch.float32)
+        if dist.is_initialized():
+            dist.all_reduce(data_wait_t, op=dist.ReduceOp.MAX)
+            dist.all_reduce(predict_t, op=dist.ReduceOp.MAX)
+            dist.all_reduce(frames_t, op=dist.ReduceOp.SUM)
+        if self.accelerator.is_main_process:
+            step_metrics["eval/action_classification/data_wait_seconds"] = data_wait_t.item()
+            step_metrics["eval/action_classification/predict_seconds"] = predict_t.item()
+            step_metrics["eval/action_classification/frames"] = frames_t.item()
 
         if dist.is_initialized():
             dist.barrier()
