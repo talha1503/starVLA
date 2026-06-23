@@ -2245,6 +2245,17 @@ def get_used_modality_keys(modality_keys: dict) -> tuple[list, list]:
     
     return used_action_keys, used_state_keys
 
+
+def _strip_fps(obj):
+    """Recursively drop "fps" keys so modality configs can be compared while
+    ignoring source-capture frame rate, which legitimately differs across tasks."""
+    if isinstance(obj, dict):
+        return {key: _strip_fps(value) for key, value in obj.items() if key != "fps"}
+    if isinstance(obj, list):
+        return [_strip_fps(value) for value in obj]
+    return obj
+
+
 class LeRobotMixtureDataset(Dataset):
     """
     A mixture of multiple datasets. This class samples a single dataset based on the dataset weights and then calls the `__getitem__` method of the sampled dataset.
@@ -2860,17 +2871,21 @@ class LeRobotMixtureDataset(Dataset):
         merged_metadata["statistics"] = dataset_statistics
 
         # Merge the modality configs
-        modality_configs = defaultdict(set)
+        modality_configs = defaultdict(list)
         for metadata in metadata_dicts:
             for modality, configs in metadata["modalities"].items():
-                modality_configs[modality].add(json.dumps(configs))
+                modality_configs[modality].append(configs)
         merged_metadata["modalities"] = {}
         for modality, configs in modality_configs.items():
-            # Check that all modality configs correspond to the same tag matches
+            # "fps" is purely descriptive source-capture metadata (not consumed by
+            # any transform/time-windowing logic) and legitimately differs across
+            # tasks in a cross-task mixture with different native environment
+            # rates. Ignore it when checking that configs are otherwise compatible.
+            comparable = {json.dumps(_strip_fps(config), sort_keys=True) for config in configs}
             assert (
-                len(configs) == 1
-            ), f"Multiple modality configs for modality {modality}: {list(configs)}"
-            merged_metadata["modalities"][modality] = json.loads(configs.pop())
+                len(comparable) == 1
+            ), f"Multiple modality configs for modality {modality}: {configs}"
+            merged_metadata["modalities"][modality] = configs[0]
 
         return DatasetMetadata.model_validate(merged_metadata)
 
