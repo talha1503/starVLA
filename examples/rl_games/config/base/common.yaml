@@ -107,14 +107,20 @@ trainer:
   scheduler_specific_kwargs:
     min_lr: 1.0e-06
   freeze_modules: ''
-  # freeze bottom llm module
-  freeze_llm_bottom_ratio: 0.0
+  # Freeze Qwen-VL visual tower, including its vision-to-language connector/merger.
+  freeze_vit: false
+  # Inclusive LLM decoder layer range to freeze, e.g. [0, 27].
+  freeze_llm_layers: []
   loss_scale:
     vla: 1.0
     vlm: 0.1
   max_grad_norm: 1.0
   weight_decay: 0.0
   logging_frequency: 1
+  # use this for bottleneck profiling
+  profile_timing:
+    enabled: false
+    log_interval: 10
   gradient_clipping: 1.0
   gradient_accumulation_steps: 1
   distributed_backend: deepspeed

@@ -2,7 +2,7 @@
 # QwenOFT on flappy with TEMPORAL multi-image input (per-frame tokenized).
 # num_obs_frames=4 -> the dataloader emits the last 4 frames (oldest..newest) and
 # each is tokenized as its own image. Set the eval env's frame_stack to 4 to match.
-# Also shows trainer.freeze_llm_bottom_ratio: freeze the bottom 50% of LLM layers.
+# Also shows trainer.freeze_llm_layers: freeze the bottom 50% of Qwen3-VL LLM layers.
 
 # export WANDB_MODE=offline
 export HF_DATASETS_OFFLINE=1
@@ -17,7 +17,8 @@ python examples/rl_games/scripts/launch_train.py \
   paths.dataset_local_dir=data/flappy_fix_latency_0_200ep \
   datasets.vla_data.num_obs_frames=4 \
   datasets.vla_data.image_mode=multiframe \
-  trainer.freeze_llm_bottom_ratio=0.5 \
+  trainer.freeze_vit=true \
+  trainer.freeze_llm_layers=[0,27] \
   trainer.distributed_backend=none \
   trainer.gradient_accumulation_steps=4 \
   datasets.vla_data.per_device_batch_size=16 \

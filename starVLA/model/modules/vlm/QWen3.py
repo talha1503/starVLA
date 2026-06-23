@@ -2,6 +2,7 @@
 # Licensed under the MIT License, Version 1.0 (the "License");
 # Implemented by [Jinhui YE / HKUST University] in [2025].
 
+import time
 from typing import Optional
 
 import torch
@@ -99,6 +100,14 @@ class _QWen3_VL_Interface(nn.Module):
         self.model = model
         self.processor = processor
         self.config = config
+        self._last_build_timing = {}
+
+    def _profile_timing_enabled(self) -> bool:
+        return self.config.trainer.profile_timing.enabled
+
+    def _profile_sync(self) -> None:
+        if self._profile_timing_enabled() and torch.cuda.is_available():
+            torch.cuda.synchronize()
 
         # alin qwen3 with qwen2.5
         self.model.config.hidden_size = self.model.config.text_config.hidden_size
@@ -237,11 +246,15 @@ class _QWen3_VL_Interface(nn.Module):
                 msg.append({"role": "assistant", "content": [{"type": "text", "text": solution}]})
             messages.append(msg)
 
-        # Preparation for inference
+        profile_timing = self._profile_timing_enabled()
+        build_timing = {}
 
+        t_processor = time.perf_counter() if profile_timing else None
         batch_inputs = self.processor.apply_chat_template(
             messages, tokenize=True, padding=True, add_generation_prompt=True, return_dict=True, return_tensors="pt"
         )
+        if profile_timing:
+            build_timing["timing/qwen_processor"] = time.perf_counter() - t_processor
 
         # if solutions, mask out the solution tokens in labels
         if solutions is not None:  #  here only for fast_tokenizer now.
@@ -268,7 +281,13 @@ class _QWen3_VL_Interface(nn.Module):
             labels[labels == self.processor.tokenizer.pad_token_id] = -100  ## mask out pad tokens as well
             batch_inputs["labels"] = labels
 
-        return batch_inputs.to(self.model.device)
+        t_h2d = time.perf_counter() if profile_timing else None
+        batch_inputs = batch_inputs.to(self.model.device)
+        if profile_timing:
+            self._profile_sync()
+            build_timing["timing/qwen_h2d"] = time.perf_counter() - t_h2d
+        self._last_build_timing = build_timing
+        return batch_inputs
 
 
 if __name__ == "__main__":

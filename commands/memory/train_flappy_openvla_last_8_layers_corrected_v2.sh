@@ -6,17 +6,16 @@ set -euo pipefail
 # 这样无论从哪个 cwd `bash` 本脚本都不会 file-not-found。
 cd "$(dirname "$0")/../.."
 
-# Freeze ViT/visual connector and freeze LLM layers [0,27], leaving LLM top 8 layers + action head trainable.
-# Qwen3-VL-4B text decoder total=36.
+# v2: freeze llm bottom layer, and freeze vit
 python examples/rl_games/scripts/launch_train.py \
   model=openvla \
   env=flappy \
   init=bridge \
-  run_id=flappy_fix_latency_2_200ep_last_8_layers \
+  run_id=flappy_fix_latency_2_200ep_last_8_layers_corrected \
   paths.dataset_local_dir=data/flappy_fix_latency_2_200ep \
   trainer.distributed_backend=none \
   trainer.gradient_accumulation_steps=2 \
-  trainer.freeze_vit=false \
+  trainer.freeze_vit=true \
   trainer.freeze_llm_layers=[0,27] \
   datasets.vla_data.per_device_batch_size=64 \
   datasets.vla_data.image_mode=single \

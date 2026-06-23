@@ -21,6 +21,7 @@ Note: How to add special tokens to Qwen2.5:
 """
 
 from dataclasses import dataclass, field
+import time
 from typing import Any, List, Optional, Tuple
 
 import numpy as np
@@ -152,6 +153,21 @@ class Qwenvl_OFT(baseframework):
 
         # L1 loss
         self.l1_loss = nn.L1Loss()
+
+    def _profile_timing_enabled(self) -> bool:
+        return self.config.trainer.profile_timing.enabled
+
+    def _profile_sync(self) -> None:
+        if self._profile_timing_enabled() and torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+    def _profile_start(self) -> float:
+        self._profile_sync()
+        return time.perf_counter()
+
+    def _profile_elapsed(self, start: float) -> float:
+        self._profile_sync()
+        return time.perf_counter() - start
 
     @staticmethod
     def _to_plain_dict(value: Any) -> dict[str, Any]:
@@ -353,15 +369,40 @@ class Qwenvl_OFT(baseframework):
         prompt_suffix = f" Please predict the next {self.chunk_len} robot actions: <action>{action_tokens}<action>."
         instructions = [instruction + prompt_suffix for instruction in instructions]
 
+        profile_timing = self._profile_timing_enabled()
+        timing_metrics = {}
+        batch_stats = {}
+
         # Step 1: QWenVL input format
+        t_inputs = self._profile_start() if profile_timing else None
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
+        if profile_timing:
+            timing_metrics["timing/qwen_input_build_total"] = self._profile_elapsed(t_inputs)
+            timing_metrics.update(self.qwen_vl_interface._last_build_timing)
+            input_ids = qwen_inputs["input_ids"]
+            attention_mask = qwen_inputs["attention_mask"]
+            effective_tokens = attention_mask.sum()
+            effective_token_count = effective_tokens.detach().float().item()
+            batch_stats["batch/size"] = float(len(examples))
+            batch_stats["batch/input_len_max"] = float(input_ids.shape[1])
+            batch_stats["batch/input_len_mean"] = float(effective_token_count / input_ids.shape[0])
+            batch_stats["batch/padding_ratio"] = float(1.0 - effective_token_count / float(attention_mask.numel()))
+            batch_stats["batch/effective_tokens"] = float(effective_token_count)
+            batch_stats["batch/image_count"] = float(sum(len(images) for images in batch_images))
+            if "pixel_values" in qwen_inputs:
+                batch_stats["batch/pixel_values_rows"] = float(qwen_inputs["pixel_values"].shape[0])
+
+        t_vlm = self._profile_start() if profile_timing else None
         with torch.autocast("cuda", dtype=torch.bfloat16):
             last_hidden = self._forward_qwen_last_hidden(qwen_inputs)  # [B, L, H]
+        if profile_timing:
+            timing_metrics["timing/vlm_forward"] = self._profile_elapsed(t_vlm)
 
         # Step 4: Action Expert Forward and Loss
+        t_action = self._profile_start() if profile_timing else None
         with torch.autocast("cuda", dtype=torch.float32):
             # Extract action token embeddings as action prediction queries
-            input_ids = qwen_inputs.get("input_ids", None)
+            input_ids = qwen_inputs["input_ids"]
             action_queries = self._gather_action_token_embeddings(
                 last_hidden, input_ids, action_token_id=self.action_token_id
             )  # [B, chunk_len, H]
@@ -379,8 +420,10 @@ class Qwenvl_OFT(baseframework):
                 action_env_dims=action_env_dims,
                 rl_games_tasks=rl_games_tasks,
             )
+        if profile_timing:
+            timing_metrics["timing/action_head_loss"] = self._profile_elapsed(t_action)
 
-        return {"action_loss": action_loss}
+        return {"action_loss": action_loss, "timing": timing_metrics, "batch_stats": batch_stats}
 
     @torch.inference_mode()
     def predict_action(
@@ -433,7 +476,7 @@ class Qwenvl_OFT(baseframework):
         # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):
             # Extract action token embeddings as action prediction queries
-            input_ids = qwen_inputs.get("input_ids", None)
+            input_ids = qwen_inputs["input_ids"]
             action_queries = self._gather_action_token_embeddings(
                 last_hidden, input_ids, action_token_id=self.action_token_id
             )  # [B, chunk_len, H]

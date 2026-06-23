@@ -374,7 +374,7 @@ class VLATrainer(TrainerUtils):
             else None
         )
         self.model = self.freeze_backbones(self.model, freeze_modules=freeze_modules)
-        self.model = self.freeze_llm_bottom_layers(self.model, self.config)
+        self.model = self.freeze_vit_and_llm_layers(self.model, self.config)
         self.print_trainable_parameters(self.model)
 
         if self.vla_eval_dataloader is not None:
@@ -739,6 +739,30 @@ class VLATrainer(TrainerUtils):
         """Create data iterators."""
         self.vla_iter = iter(self.vla_train_dataloader)
 
+    def _profile_timing_enabled(self) -> bool:
+        return self.config.trainer.profile_timing.enabled
+
+    def _profile_timing_log_interval(self) -> int:
+        return self.config.trainer.profile_timing.log_interval
+
+    def _profile_timing_should_log(self, step: int | None = None) -> bool:
+        if not self._profile_timing_enabled():
+            return False
+        step = self.completed_steps if step is None else step
+        return step % self._profile_timing_log_interval() == 0
+
+    def _profile_sync(self) -> None:
+        if self._profile_timing_enabled() and torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+    def _profile_start(self) -> float:
+        self._profile_sync()
+        return time.perf_counter()
+
+    def _profile_elapsed(self, start: float) -> float:
+        self._profile_sync()
+        return time.perf_counter() - start
+
     def _latency_curriculum_cfg(self):
         vla_data = getattr(getattr(self.config, "datasets", None), "vla_data", None)
         if vla_data is None:
@@ -857,13 +881,18 @@ class VLATrainer(TrainerUtils):
         )
 
         while self.completed_steps < self.config.trainer.max_train_steps:
+            profile_enabled = self._profile_timing_enabled()
+            t_profile_data = self._profile_start() if profile_enabled else None
             t_start_data = time.perf_counter()
             batch_vla = self._get_next_batch()
             t_end_data = time.perf_counter()
+            profile_data_seconds = self._profile_elapsed(t_profile_data) if profile_enabled else None
 
+            t_profile_model = self._profile_start() if profile_enabled else None
             t_start_model = time.perf_counter()
             step_metrics = self._train_step(batch_vla)
             t_end_model = time.perf_counter()
+            profile_model_seconds = self._profile_elapsed(t_profile_model) if profile_enabled else None
 
             if self.accelerator.sync_gradients:
                 progress_bar.update(1)
@@ -871,6 +900,15 @@ class VLATrainer(TrainerUtils):
                 curriculum_metrics = self._apply_latency_curriculum()
                 if curriculum_metrics:
                     step_metrics.update(curriculum_metrics)
+                if self._profile_timing_should_log():
+                    step_metrics["timing/dataloader_next"] = profile_data_seconds
+                    step_metrics["timing/train_step_total"] = profile_model_seconds
+                    if "batch/size" in step_metrics:
+                        step_metrics["throughput/samples_per_sec"] = step_metrics["batch/size"] / profile_model_seconds
+                    if "batch/effective_tokens" in step_metrics:
+                        step_metrics["throughput/effective_tokens_per_sec"] = (
+                            step_metrics["batch/effective_tokens"] / profile_model_seconds
+                        )
 
             if self.accelerator.is_local_main_process:
                 progress_bar.set_postfix(
@@ -889,7 +927,10 @@ class VLATrainer(TrainerUtils):
                 ):
                     if self.accelerator.is_main_process:
                         logger.info("Starting held-out action loss eval at step %s", self.completed_steps)
+                    t_profile_eval = self._profile_start()
                     step_metrics = self.eval_action_loss(step_metrics)
+                    if self._profile_timing_should_log():
+                        step_metrics["timing/eval_action_loss_total"] = self._profile_elapsed(t_profile_eval)
                     if self.accelerator.is_main_process:
                         logger.info("Finished held-out action loss eval at step %s", self.completed_steps)
                 action_classification_interval = getattr(
@@ -906,7 +947,10 @@ class VLATrainer(TrainerUtils):
                 ):
                     if self.accelerator.is_main_process:
                         logger.info("Starting held-out action classification eval at step %s", self.completed_steps)
+                    t_profile_eval = self._profile_start()
                     step_metrics = self.eval_action_cc_f1(step_metrics)
+                    if self._profile_timing_should_log():
+                        step_metrics["timing/eval_action_classification_total"] = self._profile_elapsed(t_profile_eval)
                     if self.accelerator.is_main_process:
                         logger.info("Finished held-out action classification eval at step %s", self.completed_steps)
                 if self._rl_games_eval_runner is not None:
@@ -917,6 +961,7 @@ class VLATrainer(TrainerUtils):
                         gradients_synced=gradients_synced,
                     ):
                         if self._rl_games_eval_runner.is_enabled(stage="mid_train"):
+                            t_profile_eval = self._profile_start()
                             if self._distributed_rl_games_eval_enabled():
                                 eval_result = self._run_distributed_rl_games_eval(stage="mid_train")
                             else:
@@ -930,6 +975,8 @@ class VLATrainer(TrainerUtils):
                                 eval_result=eval_result,
                                 stage="mid_train",
                             )
+                            if self._profile_timing_should_log():
+                                step_metrics["timing/rl_games_mid_train_eval_total"] = self._profile_elapsed(t_profile_eval)
                             eval_score = self._rl_games_best_score(eval_result)
                             is_new_best = self._save_best_checkpoint(
                                 eval_result=eval_result,
@@ -953,14 +1000,26 @@ class VLATrainer(TrainerUtils):
                 interval=self.config.trainer.logging_frequency,
                 gradients_synced=gradients_synced,
             ):
+                t_profile_log = self._profile_start() if self._profile_timing_should_log() else None
                 self._log_metrics(step_metrics)
+                if self._profile_timing_should_log() and self.accelerator.is_main_process:
+                    wandb.log(
+                        {"timing/log_metrics_total": self._profile_elapsed(t_profile_log)},
+                        step=self.completed_steps,
+                    )
 
             if self._save_periodic_checkpoints_enabled() and should_run_step_interval_event(
                 completed_steps=self.completed_steps,
                 interval=self.config.trainer.save_interval,
                 gradients_synced=gradients_synced,
             ):
+                t_profile_checkpoint = self._profile_start() if self._profile_timing_should_log() else None
                 self._save_checkpoint()
+                if self._profile_timing_should_log() and self.accelerator.is_main_process:
+                    wandb.log(
+                        {"timing/checkpoint_total": self._profile_elapsed(t_profile_checkpoint)},
+                        step=self.completed_steps,
+                    )
 
             if self.completed_steps >= self.config.trainer.max_train_steps:
                 break
@@ -1546,30 +1605,53 @@ class VLATrainer(TrainerUtils):
 
     def _train_step(self, batch_vla, batch_vlm=None):
         """Execute single training step."""
+        profile_next_step = self.completed_steps + 1
+        profile_log = self._profile_timing_should_log(profile_next_step)
+        profile_metrics = {}
         with self.accelerator.accumulate(self.model):
+            t_forward = self._profile_start() if profile_log else None
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
                 action_loss = output_dict["action_loss"]
                 total_loss = action_loss
+            if profile_log:
+                profile_metrics["timing/forward"] = self._profile_elapsed(t_forward)
+                profile_metrics.update(output_dict["timing"])
+                profile_metrics.update(output_dict["batch_stats"])
 
+            t_backward = self._profile_start() if profile_log else None
             self.accelerator.backward(total_loss)
+            if profile_log:
+                profile_metrics["timing/backward"] = self._profile_elapsed(t_backward)
 
             grad_norm = None
             gradients_synced = self.accelerator.sync_gradients
+            t_grad = self._profile_start() if profile_log else None
             if gradients_synced and self.config.trainer.gradient_clipping is not None:
                 grad_norm = self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
             elif gradients_synced:
                 grad_norm = self._total_grad_norm(self.model.parameters())
+            if profile_log:
+                profile_metrics["timing/grad_clip_or_norm"] = self._profile_elapsed(t_grad)
 
+            t_optimizer = self._profile_start() if profile_log else None
             self.optimizer.step()
+            if profile_log:
+                profile_metrics["timing/optimizer_step"] = self._profile_elapsed(t_optimizer)
             # Only step the LR scheduler when gradients are actually synced
             # (i.e., not mid-accumulation). Without this guard the scheduler
             # runs gradient_accumulation_steps times faster than intended,
             # causing warmup to end too early and cosine decay to bottom out
             # at min_lr well before max_train_steps is reached.
+            t_scheduler = self._profile_start() if profile_log else None
             if gradients_synced:
                 self.lr_scheduler.step()
+            if profile_log:
+                profile_metrics["timing/lr_scheduler"] = self._profile_elapsed(t_scheduler)
+            t_zero_grad = self._profile_start() if profile_log else None
             self.optimizer.zero_grad()
+            if profile_log:
+                profile_metrics["timing/zero_grad"] = self._profile_elapsed(t_zero_grad)
 
         if not gradients_synced:
             return {}
@@ -1577,6 +1659,7 @@ class VLATrainer(TrainerUtils):
         metrics = {
             "train/loss": action_loss_value,
         }
+        metrics.update(profile_metrics)
         if grad_norm is not None:
             if isinstance(grad_norm, torch.Tensor):
                 grad_norm = grad_norm.detach().float().item()

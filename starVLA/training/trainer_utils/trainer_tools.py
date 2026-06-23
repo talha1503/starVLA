@@ -117,34 +117,50 @@ def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, to
     return optimizer, lr_scheduler
 
 
+def _qwen_vl_interface(model):
+    return model.qwen_vl_interface
+
+
+def _llm_language_model(model):
+    return _qwen_vl_interface(model).model.model.language_model
+
+
+def _vit_module(model):
+    # Qwen-VL keeps the visual tower and its vision-to-language connector/merger
+    # under this module.
+    return _qwen_vl_interface(model).model.model.visual
+
+
 def _llm_decoder_layers(model):
-    """The Qwen3-VL language-model decoder ``ModuleList``.
-
-    Only reached when ``freeze_llm_bottom_ratio > 0``, i.e. the user explicitly
-    asked to freeze LLM layers, so a non-Qwen framework raises AttributeError
-    here, which is the correct signal for that misconfiguration.
-    """
-    return model.qwen_vl_interface.model.model.language_model.layers
+    return _llm_language_model(model).layers
 
 
-def resolve_freeze_llm_bottom_n(model, cfg):
-    """Translate ``trainer.freeze_llm_bottom_ratio`` into ``(n, total)`` layers."""
-    ratio = float(cfg.trainer.get("freeze_llm_bottom_ratio", 0) or 0)
-    if ratio <= 0:
-        return 0, 0
-    total = len(_llm_decoder_layers(model))
-    return min(int(round(ratio * total)), total), total
+def resolve_freeze_llm_layer_indices(model, cfg):
+    """Translate ``trainer.freeze_llm_layers=[start,end]`` to an inclusive layer list."""
+    freeze_llm_layers = cfg.trainer.freeze_llm_layers
+    if not freeze_llm_layers:
+        return [], len(_llm_decoder_layers(model))
+    start, end = [int(value) for value in freeze_llm_layers]
+    return list(range(start, end + 1)), len(_llm_decoder_layers(model))
 
 
-def llm_bottom_frozen_param_ids(model, cfg):
-    """Parameter ids of the bottom-N LLM layers to exclude from optimizer groups."""
-    n, _ = resolve_freeze_llm_bottom_n(model, cfg)
-    if n <= 0:
-        return set()
-    ids = set()
-    for layer in list(_llm_decoder_layers(model))[:n]:
-        ids.update(id(p) for p in layer.parameters())
-    return ids
+def _module_param_ids(module):
+    return {id(param) for param in module.parameters()}
+
+
+def vit_llm_frozen_param_ids(model, cfg):
+    """Parameter ids excluded from optimizer by trainer.freeze_vit/freeze_llm_layers."""
+    frozen_params = set()
+    freeze_vit = cfg.trainer.freeze_vit
+    if freeze_vit:
+        frozen_params.update(_module_param_ids(_vit_module(model)))
+
+    frozen_layer_indices, _ = resolve_freeze_llm_layer_indices(model, cfg)
+    layers = list(_llm_decoder_layers(model))
+    for layer_index in frozen_layer_indices:
+        frozen_params.update(_module_param_ids(layers[layer_index]))
+
+    return frozen_params
 
 
 def build_param_lr_groups(model, cfg):
@@ -182,9 +198,9 @@ def build_param_lr_groups(model, cfg):
             print(f"⚠️ freeze module path does not exist: {freeze_path}")
             continue
 
-    # Exclude bottom-N LLM decoder layers (trainer.freeze_llm_bottom_ratio) so
-    # they never enter an optimizer param group.
-    frozen_params.update(llm_bottom_frozen_param_ids(model, cfg))
+    # Exclude trainer.freeze_vit / trainer.freeze_llm_layers parameters so they
+    # never enter an optimizer param group.
+    frozen_params.update(vit_llm_frozen_param_ids(model, cfg))
 
     for module_name, lr in lr_cfg.items():
         if module_name == "base":
@@ -323,22 +339,29 @@ class TrainerUtils:
         return model
 
     @staticmethod
-    def freeze_llm_bottom_layers(model, cfg):
-        """Freeze the bottom ``round(ratio * num_layers)`` VLM decoder layers.
+    def freeze_vit_and_llm_layers(model, cfg):
+        """Apply trainer.freeze_vit and trainer.freeze_llm_layers.
 
-        Driven by ``cfg.trainer.freeze_llm_bottom_ratio`` (0~1). The total layer
-        count is read at runtime from the loaded model, so the caller never needs
-        to know it in advance. No-op when the ratio is 0 or no LLM layers exist.
+        trainer.freeze_vit freezes Qwen-VL's visual module, including the
+        vision-to-language connector/merger it contains.
         """
-        n, total = resolve_freeze_llm_bottom_n(model, cfg)
-        if n <= 0:
-            return model
-        for layer in list(_llm_decoder_layers(model))[:n]:
-            for param in layer.parameters():
+        freeze_vit = cfg.trainer.freeze_vit
+        if freeze_vit:
+            for param in _vit_module(model).parameters():
                 param.requires_grad = False
+
+        frozen_layer_indices, total = resolve_freeze_llm_layer_indices(model, cfg)
+        layers = list(_llm_decoder_layers(model))
+        for layer_index in frozen_layer_indices:
+            for param in layers[layer_index].parameters():
+                param.requires_grad = False
+
         if not dist.is_initialized() or dist.get_rank() == 0:
-            ratio = float(cfg.trainer.get("freeze_llm_bottom_ratio", 0) or 0)
-            print(f"🔒 freezing {n}/{total} bottom LLM layers (ratio={ratio})")
+            print(
+                "🔒 freeze_vit="
+                f"{freeze_vit}, freeze_llm_layers={list(frozen_layer_indices)}"
+                f" / total={total}"
+            )
         return model
 
     @staticmethod

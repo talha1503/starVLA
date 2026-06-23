@@ -162,6 +162,29 @@ def test_launcher_forwards_canonical_per_device_batch_size_override(tmp_path: Pa
     assert "datasets.vla_data.per_device_batch_size=16" in cmd
 
 
+def test_launcher_forwards_vit_and_llm_freeze_overrides(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("WANDB_ENTITY", "test")
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="flappy",
+        init="bridge",
+        mode="single",
+        overrides=["trainer.freeze_vit=true", "trainer.freeze_llm_layers=[0,27]"],
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "base_model"),
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert "trainer.freeze_vit=true" in cmd
+    assert "trainer.freeze_llm_layers=[0,27]" in cmd
+    assert "trainer.freeze_llm_bottom_ratio=" not in cmd
+
+
 def test_deadly_corridor_loss_selector_forwards_l1(tmp_path: Path) -> None:
     cfg = launch_train.compose_training_config(
         config_name="train",

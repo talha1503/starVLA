@@ -6,7 +6,7 @@ set -euo pipefail
 # 这样无论从哪个 cwd `bash` 本脚本都不会 file-not-found。
 cd "$(dirname "$0")/../.."
 
-# full tuning：不设置 freeze_llm_bottom_ratio，保持 LLM 全量参与训练。
+# full tuning: no freeze_vit/freeze_llm_layers overrides.
 python examples/rl_games/scripts/launch_train.py \
   model=openvla \
   env=flappy \
