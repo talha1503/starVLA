@@ -87,7 +87,7 @@ def test_wan_oft_single_gpu_command_enables_held_out_eval_mix() -> None:
     assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in command_text
 
 
-def test_wan_oft_horizon1_command_supervises_one_action() -> None:
+def test_wan_oft_chunk8_command_matches_released_checkpoint() -> None:
     command_path = REPO_ROOT / "commands" / "train_flappy_wan_oft_horizon1.sh"
     command_text = command_path.read_text(encoding="utf-8")
 
@@ -96,11 +96,13 @@ def test_wan_oft_horizon1_command_supervises_one_action() -> None:
     assert "model=wan_oft" in command_text
     assert "env=flappy" in command_text
     assert "init=wan_oft_libero" in command_text
-    assert "framework.action_model.action_horizon=1" in command_text
-    assert "framework.action_model.future_action_window_size=0" in command_text
+    assert "run_id=wan_oft_flappy_fix_latency_0_context4_chunk8" in command_text
+    assert "horizon1" not in command_text
+    assert "framework.action_model.action_horizon=8" in command_text
+    assert "framework.action_model.future_action_window_size=7" in command_text
     assert "framework.action_model.past_action_window_size=0" in command_text
-    assert "datasets.vla_data.action_indices=[0]" in command_text
-    assert "trainer.reload_modules=[backbone,action_model]" in command_text
+    assert "datasets.vla_data.action_indices=[0,1,2,3,4,5,6,7]" in command_text
+    assert "trainer.reload_modules=" not in command_text
     assert "datasets.vla_data.data_mix=flappy_train__bridge" in command_text
     assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in command_text
 
