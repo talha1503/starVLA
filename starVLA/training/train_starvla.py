@@ -346,6 +346,8 @@ class VLATrainer(TrainerUtils):
         self._best_state_path = None
         self._best_metadata_path = None
         self._latency_curriculum_phase = None
+        self._action_cc_f1_frame_loader = None
+        self._action_cc_f1_frame_loader_key = None
         if hasattr(self.config, "rl_games") and hasattr(self.config.rl_games, "env_eval"):
             enabled = bool(getattr(self.config.rl_games.env_eval, "enabled", False))
             if enabled:
@@ -1362,14 +1364,18 @@ class VLATrainer(TrainerUtils):
             dataloader_kwargs["persistent_workers"] = _as_bool(self.config.datasets.vla_data.persistent_workers)
             if "prefetch_factor" in self.config.datasets.vla_data:
                 dataloader_kwargs["prefetch_factor"] = int(self.config.datasets.vla_data.prefetch_factor)
-        frame_loader = DataLoader(
-            _ActionCCF1FrameDataset(single_datasets, frame_records),
-            batch_size=bs,
-            shuffle=False,
-            collate_fn=_identity_collate,
-            num_workers=eval_num_workers,
-            **dataloader_kwargs,
-        )
+        frame_loader_key = (tuple(frame_records), bs, eval_num_workers)
+        if self._action_cc_f1_frame_loader_key != frame_loader_key:
+            self._action_cc_f1_frame_loader = DataLoader(
+                _ActionCCF1FrameDataset(single_datasets, frame_records),
+                batch_size=bs,
+                shuffle=False,
+                collate_fn=_identity_collate,
+                num_workers=eval_num_workers,
+                **dataloader_kwargs,
+            )
+            self._action_cc_f1_frame_loader_key = frame_loader_key
+        frame_loader = self._action_cc_f1_frame_loader
 
         data_wait_seconds = 0.0
         predict_seconds = 0.0

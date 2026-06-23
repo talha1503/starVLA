@@ -281,6 +281,7 @@ class VLAMTrainer(TrainerUtils):
                 progress_bar.update(1)
                 self.completed_steps += 1
 
+            gradients_synced = bool(self.accelerator.sync_gradients)
             if self.accelerator.is_local_main_process:
                 progress_bar.set_postfix(
                     {
@@ -289,14 +290,15 @@ class VLAMTrainer(TrainerUtils):
                     }
                 )
 
-            if self.completed_steps % self.config.trainer.eval_interval == 0:
+            if gradients_synced and self.completed_steps % self.config.trainer.eval_interval == 0:
                 step_metrics = self.eval_action_model(step_metrics)
 
             step_metrics["timing/data"] = t_end_data - t_start_data
             step_metrics["timing/model"] = t_end_model - t_start_model
-            self._log_metrics(step_metrics)
+            if gradients_synced:
+                self._log_metrics(step_metrics)
 
-            if self.completed_steps % self.config.trainer.save_interval == 0 and self.completed_steps > 0:
+            if gradients_synced and self.completed_steps % self.config.trainer.save_interval == 0 and self.completed_steps > 0:
                 self._save_checkpoint()
                 dist.barrier()
 
