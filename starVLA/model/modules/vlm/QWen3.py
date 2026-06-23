@@ -100,7 +100,14 @@ class _QWen3_VL_Interface(nn.Module):
         self.model = model
         self.processor = processor
         self.config = config
+        # align qwen3 with qwen2.5
+        self.model.config.hidden_size = self.model.config.text_config.hidden_size
         self._last_build_timing = {}
+
+        # only for fast base model
+        if "-Action" in model_id:
+            self._ACTION_TOKEN_MIN = _ACTION_TOKEN_MIN
+            self._ACTION_TOKEN_MAX = _ACTION_TOKEN_MAX
 
     def _profile_timing_enabled(self) -> bool:
         return self.config.trainer.profile_timing.enabled
@@ -108,14 +115,6 @@ class _QWen3_VL_Interface(nn.Module):
     def _profile_sync(self) -> None:
         if self._profile_timing_enabled() and torch.cuda.is_available():
             torch.cuda.synchronize()
-
-        # alin qwen3 with qwen2.5
-        self.model.config.hidden_size = self.model.config.text_config.hidden_size
-
-        # only for fast base model
-        if "-Action" in model_id:
-            self._ACTION_TOKEN_MIN = _ACTION_TOKEN_MIN
-            self._ACTION_TOKEN_MAX = _ACTION_TOKEN_MAX
 
     def forward(
         self,
