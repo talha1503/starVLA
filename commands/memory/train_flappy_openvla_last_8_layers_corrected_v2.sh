@@ -12,7 +12,7 @@ python examples/rl_games/scripts/launch_train.py \
   model=openvla \
   env=flappy \
   init=bridge \
-  run_id=flappy_fix_latency_2_200ep_last_8_layers_corrected \
+  run_id=flappy_fix_latency_2_200ep_last_8_layers_corrected_v2 \
   paths.dataset_local_dir=data/flappy_fix_latency_2_200ep \
   trainer.distributed_backend=none \
   trainer.gradient_accumulation_steps=2 \
