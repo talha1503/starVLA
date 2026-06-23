@@ -21,8 +21,10 @@ python examples/rl_games/scripts/launch_train.py \
   datasets.vla_data.image_mode=single \
   datasets.vla_data.num_obs_frames=1 \
   trainer.max_train_steps=5000 \
-  trainer.save_interval=100 \
+  trainer.save_interval=500 \
   rl_games.env_eval.mid_train.enabled=true \
+  rl_games.env_eval.mid_train.latencies=[2] \
+  rl_games.env_eval.mid_train.interval_steps=250 \
   rl_games.env_eval.post_train.enabled=false \
   checkpoint.save_pt_file=false \
   checkpoint.save_best_model=false \
