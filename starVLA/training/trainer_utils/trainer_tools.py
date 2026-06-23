@@ -14,6 +14,7 @@ import torch.distributed as dist
 from transformers import get_scheduler
 
 from accelerate.logging import get_logger
+from starVLA.training.trainer_utils.config_tracker import reload_module_paths
 
 logger = get_logger(__name__)
 
@@ -303,13 +304,13 @@ class TrainerUtils:
 
         loaded_modules = []
 
-        if reload_modules:  # partial load
-            module_paths = [p.strip() for p in reload_modules.split(",") if p.strip()]
+        module_paths = reload_module_paths(reload_modules)
+        if module_paths:  # partial load
             for path in module_paths:
-                reload_modules = path.split(".")
+                reload_path = path.split(".")
                 module = model
                 try:
-                    for module_name in reload_modules:  # find the module to modify level by level
+                    for module_name in reload_path:  # find the module to modify level by level
                         module = getattr(module, module_name)
                     prefix = path + "."
                     sub_state_dict = {k[len(prefix) :]: v for k, v in checkpoint.items() if k.startswith(prefix)}

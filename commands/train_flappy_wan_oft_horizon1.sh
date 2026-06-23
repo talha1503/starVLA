@@ -13,7 +13,7 @@ python examples/rl_games/scripts/launch_train.py \
   paths.dataset_local_dir=data/flappy_fix_latency_0_200ep_context4 \
   trainer.distributed_backend=none \
   trainer.gradient_accumulation_steps=16 \
-  trainer.reload_modules="'backbone,action_model'" \
+  trainer.reload_modules=[backbone,action_model] \
   datasets.vla_data.per_device_batch_size=8 \
   datasets.vla_data.data_mix=flappy_train__bridge \
   datasets.vla_data.eval_data_mix=flappy_train__bridge__val \

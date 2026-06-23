@@ -128,7 +128,7 @@ def _hydra_value(value: Any) -> str:
     if isinstance(value, list):
         return "[" + ",".join(_hydra_value(item) for item in value) + "]"
     if isinstance(value, str) and any(ch.isspace() or ch in {",", ":", "{", "}", "[", "]"} for ch in value):
-        return shlex.quote(value)
+        return "'" + value.replace("'", "\\'") + "'"
     return str(value)
 
 

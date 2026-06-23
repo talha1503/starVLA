@@ -100,9 +100,28 @@ def test_wan_oft_horizon1_command_supervises_one_action() -> None:
     assert "framework.action_model.future_action_window_size=0" in command_text
     assert "framework.action_model.past_action_window_size=0" in command_text
     assert "datasets.vla_data.action_indices=[0]" in command_text
-    assert "trainer.reload_modules=\"'backbone,action_model'\"" in command_text
+    assert "trainer.reload_modules=[backbone,action_model]" in command_text
     assert "datasets.vla_data.data_mix=flappy_train__bridge" in command_text
     assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in command_text
+
+
+def test_launcher_quotes_comma_separated_reload_modules_for_hydra() -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="wan_oft",
+        env="flappy",
+        init="wan_oft_libero",
+        mode="single",
+        overrides=["trainer.reload_modules='backbone,action_model'"],
+    )
+    setup = {
+        "pretrained_checkpoint": "/tmp/checkpoint.pt",
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, Path("/tmp/workspace"), "results/Checkpoints")
+
+    assert "trainer.reload_modules='backbone,action_model'" in cmd
 
 
 def test_launcher_does_not_translate_trainer_batch_size_alias() -> None:

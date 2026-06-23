@@ -14,6 +14,8 @@ python examples/rl_games/scripts/launch_train.py \
   trainer.distributed_backend=none \
   trainer.gradient_accumulation_steps=16 \
   datasets.vla_data.per_device_batch_size=8 \
+  datasets.vla_data.data_mix=flappy_train__bridge \
+  datasets.vla_data.eval_data_mix=flappy_train__bridge__val \
   trainer.max_train_steps=5000 \
   trainer.save_interval=100 \
   rl_games.env_eval.mid_train.enabled=false \
