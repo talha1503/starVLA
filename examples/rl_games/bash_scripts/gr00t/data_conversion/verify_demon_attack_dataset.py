@@ -38,6 +38,7 @@ def verify_dataset(
     dataset_source_subdir: str | None = None,
     strict: bool = False,
     allow_mixed_latency_prompts: bool = False,
+    latencies: list[int] | None = None,
 ) -> bool:
     try:
         for columns in (
@@ -54,6 +55,7 @@ def verify_dataset(
                     columns=columns,
                     dataset_config_name=dataset_config_name,
                     dataset_source_subdir=dataset_source_subdir,
+                    latencies=latencies,
                 )
                 break
             except Exception:
@@ -81,6 +83,8 @@ def verify_dataset(
     if allow_mixed_latency_prompts:
         try:
             mapping = build_latency_prompt_map(ds, frameskip=LATENCY_FRAMESKIP)
+            if latencies and len({int(v) for v in latencies}) > 1 and len(mapping) <= 1:
+                raise ValueError(f"expected more than one latency prompt, got {len(mapping)}")
             print("Latency prompt map:")
             print(json.dumps(mapping, indent=2))
         except Exception as exc:

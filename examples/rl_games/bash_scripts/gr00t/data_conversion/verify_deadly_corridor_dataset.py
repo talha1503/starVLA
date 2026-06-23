@@ -48,6 +48,7 @@ def _load_first_available(
     column_options: tuple[list[str] | None, ...],
     dataset_config_name: str | None = None,
     dataset_source_subdir: str | None = None,
+    latencies: list[int] | None = None,
 ):
     last_exc: Exception | None = None
     for columns in column_options:
@@ -58,6 +59,7 @@ def _load_first_available(
                 columns=columns,
                 dataset_config_name=dataset_config_name,
                 dataset_source_subdir=dataset_source_subdir,
+                latencies=latencies,
             )
         except Exception as exc:
             last_exc = exc
@@ -126,6 +128,7 @@ def verify_dataset(
     strict: bool = False,
     allow_mixed_latency_prompts: bool = False,
     action_layout: str = ACTION_LAYOUT_MULTIBINARY_7,
+    latencies: list[int] | None = None,
 ) -> bool:
     action_layout = _normalize_action_layout(action_layout)
     if action_layout == ACTION_LAYOUT_FACTORIZED_11:
@@ -161,6 +164,7 @@ def verify_dataset(
             column_options,
             dataset_config_name=dataset_config_name,
             dataset_source_subdir=dataset_source_subdir,
+            latencies=latencies,
         )
     except Exception as exc:
         print(f"ERROR: could not load dataset {dataset_name}: {exc}")
@@ -195,6 +199,7 @@ def verify_dataset(
                 ),
                 dataset_config_name=dataset_config_name,
                 dataset_source_subdir=dataset_source_subdir,
+                latencies=latencies,
             )
             mapping = build_latency_prompt_map(prompt_ds, frameskip=LATENCY_FRAMESKIP)
             if len(mapping) <= 1:
