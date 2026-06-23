@@ -5,6 +5,9 @@ rl_games:
   env_eval:
     image_size: 224
     frameskip: 1
+    deadly:
+      action_layout: multibinary_7
+      multibinary_threshold: null
   cross_task:
     train_tasks: []
     loss_by_task:
