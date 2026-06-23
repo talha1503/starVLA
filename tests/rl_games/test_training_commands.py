@@ -74,6 +74,37 @@ def test_wan_oft_multigpu_command_enables_distributed_eval() -> None:
     assert "rl_games.env_eval.post_train.latencies=[0,1,2,3,4]" in command_text
 
 
+def test_wan_oft_single_gpu_command_enables_held_out_eval_mix() -> None:
+    command_path = REPO_ROOT / "commands" / "train_flappy_wan_oft.sh"
+    command_text = command_path.read_text(encoding="utf-8")
+
+    subprocess.run(["bash", "-n", str(command_path)], check=True, cwd=REPO_ROOT)
+
+    assert "model=wan_oft" in command_text
+    assert "env=flappy" in command_text
+    assert "init=wan_oft_libero" in command_text
+    assert "datasets.vla_data.data_mix=flappy_train__bridge" in command_text
+    assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in command_text
+
+
+def test_wan_oft_horizon1_command_supervises_one_action() -> None:
+    command_path = REPO_ROOT / "commands" / "train_flappy_wan_oft_horizon1.sh"
+    command_text = command_path.read_text(encoding="utf-8")
+
+    subprocess.run(["bash", "-n", str(command_path)], check=True, cwd=REPO_ROOT)
+
+    assert "model=wan_oft" in command_text
+    assert "env=flappy" in command_text
+    assert "init=wan_oft_libero" in command_text
+    assert "framework.action_model.action_horizon=1" in command_text
+    assert "framework.action_model.future_action_window_size=0" in command_text
+    assert "framework.action_model.past_action_window_size=0" in command_text
+    assert "datasets.vla_data.action_indices=[0]" in command_text
+    assert "trainer.reload_modules=\"'backbone,action_model'\"" in command_text
+    assert "datasets.vla_data.data_mix=flappy_train__bridge" in command_text
+    assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in command_text
+
+
 def test_launcher_does_not_translate_trainer_batch_size_alias() -> None:
     launcher_text = (REPO_ROOT / "examples" / "rl_games" / "scripts" / "launch_train.py").read_text(
         encoding="utf-8"
