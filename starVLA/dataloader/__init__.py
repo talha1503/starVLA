@@ -79,6 +79,8 @@ def build_dataloader(
         if num_workers > 0:
             dataloader_kwargs["multiprocessing_context"] = "spawn"
             dataloader_kwargs["persistent_workers"] = persistent_workers
+            if "prefetch_factor" in vla_dataset_cfg:
+                dataloader_kwargs["prefetch_factor"] = int(vla_dataset_cfg.prefetch_factor)
         
         vla_train_dataloader = DataLoader(
             vla_dataset,

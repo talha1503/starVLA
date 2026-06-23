@@ -23,8 +23,9 @@ datasets:
     action_type: discrete
     sequential_step_sampling: false
     eval_sequential_step_sampling: null
-    num_workers: 4
-    eval_num_workers: null
+    num_workers: 8
+    eval_num_workers: 8
+    prefetch_factor: 4
     shuffle: true
     action_balance:
       enabled: false
