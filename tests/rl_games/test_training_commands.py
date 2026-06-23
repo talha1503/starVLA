@@ -5,7 +5,7 @@ from pathlib import Path
 
 from omegaconf import OmegaConf
 
-from examples.rl_games.scripts import launch_train
+from examples.rl_games.scripts import launch_train, run_experiment
 from examples.rl_games.scripts.setup_training_assets import _resolve_explicit_resume_checkpoint, _task_converter_and_verifier
 
 
@@ -44,9 +44,9 @@ def test_training_command_matrix_targets_hydra_launcher() -> None:
             assert "wandb_entity=" not in command_text
             assert "rl_games.env_eval.post_train.latencies=" not in command_text
             assert "trainer.batch_size=" not in command_text
-            assert "datasets.vla_data.per_device_batch_size=16" in command_text
+            assert "datasets.vla_data.per_device_batch_size=" in command_text
             assert "dataset.source_hf=data/" not in command_text
-            assert "checkpoint.save_pt_file=false" in command_text
+            assert "checkpoint.save_pt_file=true" not in command_text
 
 
 def test_training_commands_are_valid_bash() -> None:
@@ -130,8 +130,8 @@ def test_openvla_three_env_cross_task_forwards_deadly_threshold(tmp_path: Path) 
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "rl_games.env_eval.deadly.action_layout=multibinary_7" in cmd
-    assert "rl_games.env_eval.deadly.multibinary_threshold=0.0" in cmd
+    assert "++rl_games.env_eval.deadly.action_layout=multibinary_7" in cmd
+    assert "++rl_games.env_eval.deadly.multibinary_threshold=0.0" in cmd
 
 
 def test_launcher_does_not_translate_trainer_batch_size_alias() -> None:
@@ -159,7 +159,102 @@ def test_launcher_forwards_canonical_per_device_batch_size_override(tmp_path: Pa
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "datasets.vla_data.per_device_batch_size=16" in cmd
+    assert "++datasets.vla_data.per_device_batch_size=16" in cmd
+
+
+def test_launcher_auto_forwards_new_nested_config_fields(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="flappy",
+        init="bridge",
+        mode="single",
+        overrides=[
+            "+trainer.optimizer.extra_flag=true",
+            "+datasets.vla_data.synthetic_cache.enabled=true",
+        ],
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "base_model"),
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert "++trainer.optimizer.extra_flag=true" in cmd
+    assert "++datasets.vla_data.synthetic_cache.enabled=true" in cmd
+
+
+def test_launcher_runtime_overrides_are_last(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="flappy",
+        init="bridge",
+        mode="single",
+        overrides=[
+            "datasets.vla_data.data_root_dir=config_root",
+            "framework.qwenvl.base_vlm=config_base",
+        ],
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "resolved_datasets"),
+        "base_model_dir": str(tmp_path / "resolved_base_model"),
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    data_root_overrides = [item for item in cmd if item.endswith("datasets.vla_data.data_root_dir=config_root") or "datasets.vla_data.data_root_dir=" in item]
+    base_vlm_overrides = [item for item in cmd if item.endswith("framework.qwenvl.base_vlm=config_base") or "framework.qwenvl.base_vlm=" in item]
+
+    assert data_root_overrides[-1] == f"++datasets.vla_data.data_root_dir={tmp_path / 'resolved_datasets'}"
+    assert base_vlm_overrides[-1] == f"++framework.qwenvl.base_vlm={tmp_path / 'resolved_base_model'}"
+
+
+def test_run_experiment_auto_forwards_canonical_nested_fields(tmp_path: Path) -> None:
+    cfg = {
+        "config_name": "train",
+        "model": "openvla",
+        "env": "flappy",
+        "init": "bridge",
+        "mode": "single",
+        "run_id": "run_experiment_test",
+        "seed": 42,
+        "wandb_entity": "entity",
+        "wandb_project": "project",
+        "paths": {"dataset_local_dir": "datasets", "base_model_dir": "base_model"},
+        "checkpoint": {
+            "load": "none",
+            "hf_repo_id": None,
+            "sync": {"enabled": False, "keep_last_n": 0, "repo_id": None},
+            "local": {"keep_last_n": 1},
+            "save_best_model": False,
+            "save_pt_file": False,
+        },
+        "trainer": {"optimizer": {"extra_flag": True}},
+        "datasets": {"vla_data": {"per_device_batch_size": 8, "synthetic_cache": {"enabled": True}}},
+        "framework": {"qwenvl": {"base_vlm": "config_base"}},
+        "rl_games": {"env_eval": {"enabled": False, "latency": {"values": [0]}}},
+    }
+    setup = {
+        "dataset_local_dir": str(tmp_path / "resolved_datasets"),
+        "base_model_dir": str(tmp_path / "resolved_base_model"),
+        "resume_found": False,
+    }
+
+    cmd = run_experiment._trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert "++trainer.optimizer.extra_flag=true" in cmd
+    assert "++datasets.vla_data.synthetic_cache.enabled=true" in cmd
+    assert "trainer.batch_size=" not in " ".join(cmd)
+    assert [item for item in cmd if "datasets.vla_data.data_root_dir=" in item][-1] == (
+        f"++datasets.vla_data.data_root_dir={tmp_path / 'resolved_datasets'}"
+    )
+    assert [item for item in cmd if "framework.qwenvl.base_vlm=" in item][-1] == (
+        f"++framework.qwenvl.base_vlm={tmp_path / 'resolved_base_model'}"
+    )
 
 
 def test_launcher_forwards_vit_and_llm_freeze_overrides(tmp_path: Path, monkeypatch) -> None:
@@ -180,8 +275,8 @@ def test_launcher_forwards_vit_and_llm_freeze_overrides(tmp_path: Path, monkeypa
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "trainer.freeze_vit=true" in cmd
-    assert "trainer.freeze_llm_layers=[0,27]" in cmd
+    assert "++trainer.freeze_vit=true" in cmd
+    assert "++trainer.freeze_llm_layers=[0,27]" in cmd
     assert "trainer.freeze_llm_bottom_ratio=" not in cmd
 
 
@@ -203,7 +298,7 @@ def test_deadly_corridor_loss_selector_forwards_l1(tmp_path: Path) -> None:
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
     assert cfg.framework.action_model.loss_type == "l1"
-    assert "framework.action_model.loss_type=l1" in cmd
+    assert "++framework.action_model.loss_type=l1" in cmd
 
 
 def test_launcher_setup_namespace_forwards_episodes_per_latency(tmp_path: Path) -> None:
@@ -247,7 +342,7 @@ def test_deadly_corridor_loss_selector_accepts_multibinary_ce_alias(tmp_path: Pa
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
     assert cfg.framework.action_model.loss_type == "multibinary_bce"
-    assert "framework.action_model.loss_type=multibinary_bce" in cmd
+    assert "++framework.action_model.loss_type=multibinary_bce" in cmd
 
 
 def test_launcher_defaults_to_one_last_checkpoint_and_no_pt_file(tmp_path: Path) -> None:
@@ -267,9 +362,9 @@ def test_launcher_defaults_to_one_last_checkpoint_and_no_pt_file(tmp_path: Path)
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "checkpoint.local.keep_last_n=1" in cmd
-    assert "checkpoint.save_best_model=true" in cmd
-    assert "checkpoint.save_pt_file=false" in cmd
+    assert "++checkpoint.local.keep_last_n=1" in cmd
+    assert "++checkpoint.save_best_model=true" in cmd
+    assert "++checkpoint.save_pt_file=false" in cmd
 
 
 def test_run_train_exposes_deadly_loss_type_option() -> None:
@@ -378,18 +473,18 @@ def test_launcher_forwards_cross_task_setup_outputs(tmp_path: Path) -> None:
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "datasets.vla_data.data_mix=cross__flappy__demon" in cmd
-    assert "datasets.vla_data.eval_data_mix=cross__flappy__demon__val" in cmd
-    assert f"datasets.vla_data.custom_mixtures_path={setup['custom_mixtures_path']}" in cmd
-    assert "rl_games.env_eval.distributed_mode=rank_sharded" in cmd
-    assert f"rl_games.cross_task.eval_tasks.flappy.prompt_map_path={setup['cross_task_prompt_maps']['flappy']}" in cmd
+    assert "++datasets.vla_data.data_mix=cross__flappy__demon" in cmd
+    assert "++datasets.vla_data.eval_data_mix=cross__flappy__demon__val" in cmd
+    assert f"++datasets.vla_data.custom_mixtures_path={setup['custom_mixtures_path']}" in cmd
+    assert "++rl_games.env_eval.distributed_mode=rank_sharded" in cmd
+    assert f"++rl_games.cross_task.eval_tasks.flappy.prompt_map_path={setup['cross_task_prompt_maps']['flappy']}" in cmd
     assert (
-        f"rl_games.cross_task.eval_tasks.demon_attack.prompt_map_path="
+        f"++rl_games.cross_task.eval_tasks.demon_attack.prompt_map_path="
         f"{setup['cross_task_prompt_maps']['demon_attack']}"
     ) in cmd
-    assert "rl_games.cross_task.eval_tasks.flappy.mid_train.latencies=[0,1]" in cmd
-    assert "rl_games.cross_task.eval_tasks.flappy.mid_train.num_episodes=2" in cmd
-    assert "rl_games.cross_task.eval_tasks.demon_attack.mid_train.max_steps_per_episode=300" in cmd
+    assert "++rl_games.cross_task.eval_tasks.flappy.mid_train.latencies=[0,1]" in cmd
+    assert "++rl_games.cross_task.eval_tasks.flappy.mid_train.num_episodes=2" in cmd
+    assert "++rl_games.cross_task.eval_tasks.demon_attack.mid_train.max_steps_per_episode=300" in cmd
 
 
 def test_cross_task_mode_does_not_override_initialization_group() -> None:

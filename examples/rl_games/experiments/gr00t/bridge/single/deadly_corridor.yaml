@@ -16,9 +16,8 @@ mode: single
 run_id: gr00t_deadly_corridor_bridge_single
 seed: 42
 
-wandb:
-  entity: your_wandb_entity
-  project: starVLA_rl_games
+wandb_entity: your_wandb_entity
+wandb_project: starVLA_rl_games
 
 paths:
   run_root_dir: results/Checkpoints
@@ -51,23 +50,27 @@ base_model:
 checkpoint:
   load: auto
   hf_repo_id: null
-  sync_enabled: false
-  sync_repo_id: null
-  hf_keep_last_n: 0
-  local_keep_last_n: 3
+  sync:
+    enabled: false
+    repo_id: null
+    keep_last_n: 0
+  local:
+    keep_last_n: 3
 
 launch:
   use_accelerate: true
   gpus: null
   num_processes: 1
 
-train_data:
-  include_state: true
-  action_type: discrete
-  sequential_step_sampling: false
-  load_all_data_for_training: true
-  obs_image_size: [224, 224]
-  video_backend: torchvision_av
+datasets:
+  vla_data:
+    include_state: true
+    action_type: discrete
+    sequential_step_sampling: false
+    load_all_data_for_training: true
+    obs_image_size: [224, 224]
+    video_backend: torchvision_av
+    per_device_batch_size: 1
 
 framework:
   name: QwenGR00T
@@ -112,7 +115,6 @@ trainer:
   eval_num_batches: 100
   logging_frequency: 10
   gradient_accumulation_steps: 1
-  batch_size: 1
   learning_rate:
     base: 2.0e-06
     qwen_vl_interface: 2.0e-06
@@ -139,25 +141,25 @@ rl_games:
   model_alias: gr00t
   initialization_mode: bridge
   action_carrier: bridge
-  task_description: "You are playing Deadly Corridor in VizDoom. Choose actions from MOVE_FORWARD, MOVE_BACKWARD, MOVE_LEFT, MOVE_RIGHT, TURN_LEFT, TURN_RIGHT, ATTACK."
-  frameskip: 4
-  image_size: 224
-  deadly_action_layout: multibinary_7
-  latency_prompt_map_path: null
-  env_eval_enabled: true
-
-  mid_train_eval:
+  env_eval:
     enabled: true
-    interval_steps: 100
-    latencies: [0]
-    num_episodes: 5
-    max_steps_per_episode: 2000
-
-  post_train_eval:
-    enabled: true
-    latencies: [0]
-    num_episodes: 5
-    max_steps_per_episode: 2000
-
-  latency_mode: single
-  latencies: [0]
+    frameskip: 4
+    image_size: 224
+    task_description: "You are playing Deadly Corridor in VizDoom. Choose actions from MOVE_FORWARD, MOVE_BACKWARD, MOVE_LEFT, MOVE_RIGHT, TURN_LEFT, TURN_RIGHT, ATTACK."
+    deadly:
+      action_layout: multibinary_7
+    latency:
+      mode: single
+      values: [0]
+      prompt_map_path: null
+    mid_train:
+      enabled: true
+      interval_steps: 100
+      latencies: [0]
+      num_episodes: 5
+      max_steps_per_episode: 2000
+    post_train:
+      enabled: true
+      latencies: [0]
+      num_episodes: 5
+      max_steps_per_episode: 2000

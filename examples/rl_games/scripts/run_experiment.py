@@ -112,15 +112,9 @@ def _load_auth_env(cfg: dict[str, Any], workspace_dir: Path) -> None:
     login_training_services(cfg, workspace_dir=workspace_dir, repo_root=REPO_ROOT)
 
 
-def _latencies_expr(values: Any) -> str | None:
-    if values in (None, ""):
-        return None
-    if isinstance(values, str):
-        values = [item.strip() for item in values.split(",") if item.strip()]
-    return "[" + ",".join(str(int(value)) for value in values) + "]"
-
-
 def _hydra_value(value: Any) -> str:
+    if value is None:
+        return "null"
     if isinstance(value, bool):
         return str(value).lower()
     if isinstance(value, dict):
@@ -132,83 +126,32 @@ def _hydra_value(value: Any) -> str:
     return str(value)
 
 
-def _append_override(
-    cmd: list[str],
-    cfg: dict[str, Any],
-    config_path: str,
-    hydra_path: str | None = None,
-    default: Any = None,
-) -> None:
-    value = _get(cfg, config_path, default)
-    if value is None or value == "":
+CONFIG_GROUP_KEYS = {"model", "env", "init", "mode"}
+TRAINER_COMMAND_EXCLUDED_ROOTS = {"config_name", "hydra", "launch", "conda", "preprocess_cmd"}
+
+
+def _iter_leaf_overrides(node: Any, prefix: str = ""):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            yield from _iter_leaf_overrides(value, path)
         return
-    cmd.append(f"{hydra_path or config_path}={_hydra_value(value)}")
+    yield prefix, node
 
 
-def _first_config_value(cfg: dict[str, Any], paths: list[str], default: Any = None) -> Any:
-    for path in paths:
-        value = _get(cfg, path)
-        if value not in (None, ""):
-            return value
-    return default
+def _is_trainer_command_leaf(path: str) -> bool:
+    root = path.split(".", 1)[0]
+    return root not in CONFIG_GROUP_KEYS and root not in TRAINER_COMMAND_EXCLUDED_ROOTS
 
 
-def _append_eval_stage_overrides(cmd: list[str], cfg: dict[str, Any], stage_name: str, hydra_name: str) -> None:
-    prefix = f"rl_games.{stage_name}"
-    hydra_prefix = f"rl_games.env_eval.{hydra_name}"
-
-    mappings = [
-        ("enabled", "enabled"),
-        ("interval_steps", "interval_steps"),
-        ("num_episodes", "num_episodes"),
-        ("max_steps_per_episode", "max_steps_per_episode"),
-    ]
-    for config_key, hydra_key in mappings:
-        value = _first_config_value(
-            cfg,
-            [
-                f"{prefix}.{config_key}",
-                f"rl_games.env_eval.{hydra_name}.{config_key}",
-            ],
-        )
-        if value not in (None, ""):
-            cmd.append(f"{hydra_prefix}.{hydra_key}={_hydra_value(value)}")
-
-    latencies = _first_config_value(
-        cfg,
-        [
-            f"{prefix}.latencies",
-            f"rl_games.env_eval.{hydra_name}.latencies",
-        ],
-    )
-    if latencies not in (None, ""):
-        cmd.append(f"{hydra_prefix}.latencies={_latencies_expr(latencies)}")
+def _append_leaf_override(cmd: list[str], path: str, value: Any) -> None:
+    cmd.append(f"++{path}={_hydra_value(value)}")
 
 
-def _append_cross_task_eval_overrides(cmd: list[str], cfg: dict[str, Any]) -> None:
-    eval_tasks = _get(cfg, "rl_games.cross_task.eval_tasks", {})
-    if not isinstance(eval_tasks, dict):
-        return
-    for task_name, task_cfg in eval_tasks.items():
-        if not isinstance(task_cfg, dict):
-            continue
-        base = f"rl_games.cross_task.eval_tasks.{task_name}"
-        for key in ("frameskip", "image_size", "task_description", "prompt_map_path"):
-            value = task_cfg.get(key)
-            if value not in (None, ""):
-                cmd.append(f"{base}.{key}={_hydra_value(value)}")
-        for stage in ("mid_train", "post_train"):
-            stage_cfg = task_cfg.get(stage, {})
-            if not isinstance(stage_cfg, dict):
-                continue
-            stage_base = f"{base}.{stage}"
-            for key in ("enabled", "num_episodes", "max_steps_per_episode"):
-                value = stage_cfg.get(key)
-                if value not in (None, ""):
-                    cmd.append(f"{stage_base}.{key}={_hydra_value(value)}")
-            latencies = stage_cfg.get("latencies")
-            if latencies not in (None, ""):
-                cmd.append(f"{stage_base}.latencies={_latencies_expr(latencies)}")
+def _append_config_leaf_overrides(cmd: list[str], cfg: dict[str, Any]) -> None:
+    for path, value in _iter_leaf_overrides(cfg):
+        if _is_trainer_command_leaf(path):
+            _append_leaf_override(cmd, path, value)
 
 
 def _safe_suffix(value: Any) -> str:
@@ -243,13 +186,7 @@ def _env_action_dim_from_cfg(cfg: dict[str, Any]) -> int | None:
     if task == "demon_attack":
         return 6
     if task == "deadly_corridor":
-        layout = str(
-            _get(
-                cfg,
-                "rl_games.deadly_action_layout",
-                _get(cfg, "rl_games.env_eval.deadly.action_layout", "multibinary_7"),
-            )
-        )
+        layout = str(_get(cfg, "rl_games.env_eval.deadly.action_layout", "multibinary_7"))
         if layout == "multibinary_7":
             return 7
         if layout == "factorized_11":
@@ -307,13 +244,13 @@ def _validate_bridge_cfg(cfg: dict[str, Any], config_path: Path) -> None:
             f"{config_path}: bridge framework.action_model.action_env_dim must be {env_dim}, got {action_env_dim}"
         )
     if model == "openvla":
-        if _as_bool(_get(cfg, "train_data.include_state", False)):
-            raise ValueError(f"{config_path}: openvla bridge train_data.include_state must be false")
+        if _as_bool(_get(cfg, "datasets.vla_data.include_state", False)):
+            raise ValueError(f"{config_path}: openvla bridge datasets.vla_data.include_state must be false")
     else:
         if state_dim not in (None, "") and int(state_dim) != 7:
             raise ValueError(f"{config_path}: bridge framework.action_model.state_dim must be 7, got {state_dim}")
-        if not _as_bool(_get(cfg, "train_data.include_state", False)):
-            raise ValueError(f"{config_path}: bridge train_data.include_state must be true")
+        if not _as_bool(_get(cfg, "datasets.vla_data.include_state", False)):
+            raise ValueError(f"{config_path}: bridge datasets.vla_data.include_state must be true")
 
 
 def _optional_int_list(value: Any) -> list[int] | None:
@@ -334,7 +271,7 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         mode=str(_get(cfg, "mode")),
         initialization_mode=str(_get(cfg, "rl_games.initialization_mode", "") or ""),
         action_carrier=str(_get(cfg, "rl_games.action_carrier", "") or ""),
-        latency_mode=str(_get(cfg, "rl_games.latency_mode", "") or ""),
+        latency_mode=str(_get(cfg, "rl_games.env_eval.latency.mode", "") or ""),
         source_dataset_hf=str(_get(cfg, "dataset.source_hf", "") or ""),
         source_dataset_config_name=(
             None
@@ -378,8 +315,8 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         ),
         initialization_hf_repo_id=str(_get(cfg, "initialization.checkpoint_hf_repo_id", "") or ""),
         initialization_checkpoint_filename=str(_get(cfg, "initialization.checkpoint_filename", "") or ""),
-        checkpoint_sync_enabled=str(_as_bool(_get(cfg, "checkpoint.sync_enabled", False))).lower(),
-        checkpoint_sync_repo_id=str(_get(cfg, "checkpoint.sync_repo_id", "") or ""),
+        checkpoint_sync_enabled=str(_as_bool(_get(cfg, "checkpoint.sync.enabled", False))).lower(),
+        checkpoint_sync_repo_id=str(_get(cfg, "checkpoint.sync.repo_id", "") or ""),
         hf_repo_id="",
     )
 
@@ -389,178 +326,37 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
         "starVLA/training/train_starvla_hydra.py",
         "--config-name",
         str(_get(cfg, "config_name", "train")),
-        f"model={_get(cfg, 'model')}",
-        f"env={_get(cfg, 'env')}",
-        f"mode={_get(cfg, 'mode')}",
-        f"run_id={_get(cfg, 'run_id')}",
-        f"run_root_dir={run_root_dir}",
-        f"seed={_get(cfg, 'seed', 42)}",
-        f"wandb_entity={_get(cfg, 'wandb.entity', 'your_wandb_entity')}",
-        f"wandb_project={_get(cfg, 'wandb.project', 'starVLA_rl_games')}",
-        f"rl_games.env_eval.enabled={str(_as_bool(_first_config_value(cfg, ['rl_games.env_eval_enabled'], True))).lower()}",
-        f"checkpoint.sync.enabled={str(_as_bool(_get(cfg, 'checkpoint.sync_enabled', False))).lower()}",
-        f"checkpoint.sync.keep_last_n={_get(cfg, 'checkpoint.hf_keep_last_n', 0)}",
-        f"checkpoint.local.keep_last_n={_get(cfg, 'checkpoint.local_keep_last_n', 1)}",
-        f"checkpoint.save_best_model={str(_as_bool(_get(cfg, 'checkpoint.save_best_model', True))).lower()}",
-        f"checkpoint.save_pt_file={str(_as_bool(_get(cfg, 'checkpoint.save_pt_file', False))).lower()}",
-        f"trainer.is_resume={str(bool(setup.get('resume_found'))).lower()}",
     ]
+    for group_key in ("model", "env", "init", "mode"):
+        value = _get(cfg, group_key)
+        if value not in (None, ""):
+            cmd.append(f"{group_key}={_hydra_value(value)}")
+    _append_config_leaf_overrides(cmd, cfg)
+    _append_leaf_override(cmd, "run_root_dir", run_root_dir)
+    _append_leaf_override(cmd, "trainer.is_resume", bool(setup.get("resume_found")))
     if setup.get("resume_checkpoint"):
-        cmd.append(f"trainer.pretrained_checkpoint={setup['resume_checkpoint']}")
-        cmd.append(f"trainer.resume_step={int(setup.get('resume_step') or 0)}")
+        _append_leaf_override(cmd, "trainer.pretrained_checkpoint", setup["resume_checkpoint"])
+        _append_leaf_override(cmd, "trainer.resume_step", int(setup.get("resume_step") or 0))
     elif setup.get("pretrained_checkpoint"):
-        cmd.append(f"trainer.pretrained_checkpoint={setup['pretrained_checkpoint']}")
-        cmd.append("trainer.resume_step=0")
-
-    trainer_overrides = [
-        "trainer.max_train_steps",
-        "trainer.num_warmup_steps",
-        "trainer.save_interval",
-        "trainer.eval_interval",
-        "trainer.eval_num_batches",
-        "trainer.per_latency_eval_num_batches",
-        "trainer.logging_frequency",
-        "trainer.gradient_accumulation_steps",
-        "trainer.distributed_backend",
-        ("trainer.batch_size", "datasets.vla_data.per_device_batch_size"),
-        "trainer.learning_rate.base",
-        "trainer.learning_rate.qwen_vl_interface",
-        "trainer.learning_rate.action_model",
-        "trainer.lr_scheduler_type",
-        "trainer.scheduler_specific_kwargs.min_lr",
-        "trainer.freeze_modules",
-        "trainer.freeze_vit",
-        "trainer.freeze_llm_layers",
-        "trainer.loss_scale.vla",
-        "trainer.loss_scale.vlm",
-        "trainer.max_grad_norm",
-        "trainer.weight_decay",
-        "trainer.gradient_clipping",
-        "trainer.profile_timing.enabled",
-        "trainer.profile_timing.log_interval",
-        "trainer.optimizer.name",
-        "trainer.optimizer.betas",
-        "trainer.optimizer.eps",
-        "trainer.optimizer.weight_decay",
-        "trainer.optimizer.fused",
-        "trainer.save_format",
-    ]
-    for override in trainer_overrides:
-        if isinstance(override, tuple):
-            _append_override(cmd, cfg, override[0], override[1])
-        else:
-            _append_override(cmd, cfg, override)
-
-    framework_overrides = [
-        "framework.name",
-        "framework.qwenvl.attn_implementation",
-        "framework.qwenvl.enable_gradient_checkpointing",
-        "framework.action_model.action_model_type",
-        "framework.action_model.action_dim",
-        "framework.action_model.action_env_dim",
-        "framework.action_model.state_dim",
-        "framework.action_model.loss_type",
-        "framework.action_model.action_horizon",
-        "framework.action_model.future_action_window_size",
-        "framework.action_model.past_action_window_size",
-        "framework.action_model.repeated_diffusion_steps",
-        "framework.action_model.num_inference_timesteps",
-        "framework.action_model.num_target_vision_tokens",
-        "framework.action_model.add_pos_embed",
-        "framework.action_model.max_seq_len",
-        "framework.action_model.hidden_size",
-        "framework.action_model.action_hidden_dim",
-        "framework.action_model.noise_beta_alpha",
-        "framework.action_model.noise_beta_beta",
-        "framework.action_model.noise_s",
-        "framework.action_model.num_timestep_buckets",
-        "framework.action_model.diffusion_model_cfg.action_dit_hidden_dim",
-        "framework.action_model.diffusion_model_cfg.cross_attention_dim",
-        "framework.action_model.diffusion_model_cfg.dropout",
-        "framework.action_model.diffusion_model_cfg.final_dropout",
-        "framework.action_model.diffusion_model_cfg.interleave_self_attention",
-        "framework.action_model.diffusion_model_cfg.norm_type",
-        "framework.action_model.diffusion_model_cfg.num_layers",
-        "framework.action_model.diffusion_model_cfg.output_dim",
-        "framework.action_model.diffusion_model_cfg.positional_embeddings",
-        "framework.action_model.diffusion_model_cfg.attention_head_dim",
-    ]
-    for override in framework_overrides:
-        _append_override(cmd, cfg, override)
-
-    data_overrides = [
-        ("train_data.include_state", "datasets.vla_data.include_state"),
-        ("train_data.action_type", "datasets.vla_data.action_type"),
-        ("train_data.sequential_step_sampling", "datasets.vla_data.sequential_step_sampling"),
-        ("train_data.shuffle", "datasets.vla_data.shuffle"),
-        ("train_data.action_balance.enabled", "datasets.vla_data.action_balance.enabled"),
-        ("train_data.action_balance.strategy", "datasets.vla_data.action_balance.strategy"),
-        ("train_data.action_balance.action_key", "datasets.vla_data.action_balance.action_key"),
-        ("train_data.action_balance.target_flap_fraction", "datasets.vla_data.action_balance.target_flap_fraction"),
-        ("train_data.action_balance.noop_id", "datasets.vla_data.action_balance.noop_id"),
-        ("train_data.action_balance.flap_id", "datasets.vla_data.action_balance.flap_id"),
-        ("train_data.latency_curriculum.enabled", "datasets.vla_data.latency_curriculum.enabled"),
-        ("train_data.latency_curriculum.strategy", "datasets.vla_data.latency_curriculum.strategy"),
-        ("train_data.latency_curriculum.latencies", "datasets.vla_data.latency_curriculum.latencies"),
-        ("train_data.latency_curriculum.phase_steps", "datasets.vla_data.latency_curriculum.phase_steps"),
-        ("train_data.load_all_data_for_training", "datasets.vla_data.load_all_data_for_training"),
-        ("train_data.obs_image_size", "datasets.vla_data.obs_image_size"),
-        ("train_data.video_backend", "datasets.vla_data.video_backend"),
-    ]
-    for config_path, hydra_path in data_overrides:
-        _append_override(cmd, cfg, config_path, hydra_path)
-
-    sync_repo = _get(cfg, "checkpoint.sync_repo_id")
-    if sync_repo:
-        cmd.append(f"checkpoint.sync.repo_id={sync_repo}")
+        _append_leaf_override(cmd, "trainer.pretrained_checkpoint", setup["pretrained_checkpoint"])
+        _append_leaf_override(cmd, "trainer.resume_step", 0)
 
     data_root = setup.get("dataset_local_dir") or _resolve_path(_get(cfg, "paths.dataset_local_dir"), workspace_dir)
-    cmd.append(f"datasets.vla_data.data_root_dir={data_root}")
+    _append_leaf_override(cmd, "datasets.vla_data.data_root_dir", data_root)
     if setup.get("data_mix"):
-        cmd.append(f"datasets.vla_data.data_mix={setup['data_mix']}")
+        _append_leaf_override(cmd, "datasets.vla_data.data_mix", setup["data_mix"])
     if setup.get("eval_data_mix"):
-        cmd.append(f"datasets.vla_data.eval_data_mix={setup['eval_data_mix']}")
+        _append_leaf_override(cmd, "datasets.vla_data.eval_data_mix", setup["eval_data_mix"])
     if setup.get("custom_mixtures_path"):
-        cmd.append(f"datasets.vla_data.custom_mixtures_path={setup['custom_mixtures_path']}")
+        _append_leaf_override(cmd, "datasets.vla_data.custom_mixtures_path", setup["custom_mixtures_path"])
     if setup.get("base_model_dir"):
-        cmd.append(f"framework.qwenvl.base_vlm={setup['base_model_dir']}")
+        _append_leaf_override(cmd, "framework.qwenvl.base_vlm", setup["base_model_dir"])
 
-    optional = {
-        "rl_games.task": _get(cfg, "rl_games.task"),
-        "rl_games.model_alias": _get(cfg, "rl_games.model_alias"),
-        "rl_games.initialization_mode": _get(cfg, "rl_games.initialization_mode"),
-        "rl_games.action_carrier": _get(cfg, "rl_games.action_carrier"),
-        "rl_games.cross_task.loss_by_task": _get(cfg, "rl_games.cross_task.loss_by_task"),
-        "rl_games.cross_task.loss_weight_by_task": _get(cfg, "rl_games.cross_task.loss_weight_by_task"),
-        "rl_games.env_eval.latency.mode": _get(cfg, "rl_games.latency_mode"),
-        "rl_games.env_eval.frameskip": _get(cfg, "rl_games.frameskip"),
-        "rl_games.env_eval.image_size": _get(cfg, "rl_games.image_size"),
-        "rl_games.env_eval.task_description": _get(cfg, "rl_games.task_description"),
-    }
-    for key, value in optional.items():
-        if value not in (None, ""):
-            cmd.append(f"{key}={_hydra_value(value)}")
-
-    latencies = _latencies_expr(_get(cfg, "rl_games.latencies"))
-    if latencies:
-        cmd.append(f"rl_games.env_eval.latency.values={latencies}")
-
-    prompt_map = _get(cfg, "rl_games.latency_prompt_map_path") or setup.get("latency_prompt_map_path")
+    prompt_map = setup.get("latency_prompt_map_path")
     if prompt_map:
-        cmd.append(f"rl_games.env_eval.latency.prompt_map_path={prompt_map}")
+        _append_leaf_override(cmd, "rl_games.env_eval.latency.prompt_map_path", prompt_map)
     for task_name, task_prompt_map in (setup.get("cross_task_prompt_maps") or {}).items():
-        cmd.append(f"rl_games.cross_task.eval_tasks.{task_name}.prompt_map_path={task_prompt_map}")
-
-    _append_cross_task_eval_overrides(cmd, cfg)
-    _append_eval_stage_overrides(cmd, cfg, "mid_train_eval", "mid_train")
-    _append_eval_stage_overrides(cmd, cfg, "post_train_eval", "post_train")
-
-    action_layout = _get(cfg, "rl_games.env_eval.deadly.action_layout", _get(cfg, "rl_games.deadly_action_layout", None))
-    if action_layout not in (None, "") or str(_get(cfg, "env")) == "deadly_corridor" or str(_get(cfg, "rl_games.task", "")) == "deadly_corridor":
-        cmd.append(f"rl_games.env_eval.deadly.action_layout={action_layout or 'multibinary_7'}")
-    threshold = _get(cfg, "rl_games.env_eval.deadly.multibinary_threshold", None)
-    if threshold not in (None, ""):
-        cmd.append(f"rl_games.env_eval.deadly.multibinary_threshold={_hydra_value(threshold)}")
+        _append_leaf_override(cmd, f"rl_games.cross_task.eval_tasks.{task_name}.prompt_map_path", task_prompt_map)
 
     return cmd
 
