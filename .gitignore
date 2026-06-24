@@ -10,7 +10,7 @@ __pycache__/
 
 *.ini
 ghost_trail_test_outputs/
-
+ghost_trail_test_outputs_demon_attack/
 # Distribution / packaging
 .Python
 build/

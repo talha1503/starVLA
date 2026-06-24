@@ -1,14 +1,17 @@
 #!/usr/bin/env python
-"""Build 5 sanity-check ghost-trail composites for image_patching.py.
+"""Build 5 sanity-check ghost-trail composites for Demon Attack's player ship.
 
 For `--num-sets` random positions in a single episode of
-latency-sensitive-bench/flappy_200ep (latency 0), this takes the 8 frames
-ending at that position (the last of which is the "current" frame, the
-preceding 7 are the ghost trail), runs build_ghost_trail_image on them, and
-saves the inputs + composite to disk for visual inspection.
+latency-sensitive-bench/demon_attack_200ep (latency 0), this takes the 8
+frames ending at that position (the last is the "current" frame, the
+preceding up-to-7 are the ghost trail), runs build_ghost_trail_image on them
+with an exact-color ship segmenter and no occlusion/scroll (Demon Attack's
+background is static and the ship's on-screen position already is its true
+motion -- see image_patching.py's module docstring), and saves the inputs +
+composite to disk for visual inspection.
 
 Usage:
-    python examples/rl_games/scripts/test_image_patching.py
+    python examples/rl_games/scripts/test_image_patching_demon_attack.py
 """
 from __future__ import annotations
 
@@ -24,13 +27,20 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from examples.rl_games.scripts.image_patching import build_ghost_trail_image, select_ghost_frames
+from examples.rl_games.scripts.image_patching import (
+    DEMON_ATTACK_SHIP_RGB,
+    build_ghost_trail_image,
+    make_exact_color_segmenter,
+    select_ghost_frames,
+)
 
-DATASET_NAME = "latency-sensitive-bench/flappy_200ep"
-DATASET_SUBDIR = "flappy_fix_latency_0_200ep"
+DATASET_NAME = "latency-sensitive-bench/demon_attack_200ep"
+DATASET_SUBDIR = "demon_attack_fix_latency_0_200ep"
 TRAIL_LEN = 7  # ghosts
 LOOKBACK = 60  # how far back to search for `TRAIL_LEN` well-separated ghosts
 WINDOW_LEN = LOOKBACK + 1  # lookback buffer + current frame
+
+segment_ship = make_exact_color_segmenter(DEMON_ATTACK_SHIP_RGB)
 
 
 def load_episode_rows(episode_idx: int, cache_dir: str | None):
@@ -67,7 +77,7 @@ def main() -> None:
     parser.add_argument("--cache-dir", default=None)
     parser.add_argument(
         "--out-dir",
-        default=str(Path(__file__).parent / "ghost_trail_test_outputs"),
+        default=str(Path(__file__).parent / "ghost_trail_test_outputs_demon_attack"),
     )
     args = parser.parse_args()
 
@@ -90,23 +100,28 @@ def main() -> None:
         steps = list(rows["decision_step"])
         history = [np.array(img.convert("RGB")) for img in rows["image"]]
 
-        ghosts, ghost_steps = select_ghost_frames(history, steps, trail_len=TRAIL_LEN)
+        # No scroll (static background) and no occlusion (nothing should hide
+        # the ship's trail) -- pass scroll_px_per_step=0 and skip steps for
+        # the composite; selection still uses steps only as a tie-breaker but
+        # with scroll_px_per_step=0 it reduces to pure on-screen distance.
+        ghosts, ghost_steps = select_ghost_frames(
+            history, steps, trail_len=TRAIL_LEN, scroll_px_per_step=0.0, segment_fn=segment_ship
+        )
         frames = ghosts + [history[-1]]
-        frame_steps = ghost_steps + [steps[-1]]
 
         set_dir = out_dir / f"set_{set_idx}_pos_{pos}"
         set_dir.mkdir(parents=True, exist_ok=True)
 
         for j, fr in enumerate(frames):
             tag = "current" if j == len(frames) - 1 else f"ghost_{j}"
-            Image.fromarray(fr).save(set_dir / f"frame_{j:02d}_{tag}_step{frame_steps[j]}.png")
+            Image.fromarray(fr).save(set_dir / f"frame_{j:02d}_{tag}.png")
 
         make_contact_sheet(frames, set_dir / "contact_sheet_inputs.png")
 
-        composite = build_ghost_trail_image(frames, frame_steps)
+        composite = build_ghost_trail_image(frames, segment_fn=segment_ship, occlusion_fn=None)
         Image.fromarray(composite).save(set_dir / "ghost_trail_composite.png")
 
-        print(f"set {set_idx}: pos={pos} lookback_steps={steps[0]}..{steps[-1]} kept_ghosts={len(ghosts)} ghost_steps={frame_steps} -> {set_dir}")
+        print(f"set {set_idx}: pos={pos} lookback_steps={steps[0]}..{steps[-1]} kept_ghosts={len(ghosts)} ghost_steps={ghost_steps} -> {set_dir}")
 
     print(f"Done. Outputs in {out_dir}")
 
