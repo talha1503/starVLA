@@ -11,7 +11,7 @@ python examples/rl_games/scripts/launch_train.py \
   model=openvla \
   env=flappy \
   init=bridge \
-  run_id=flappy_fix_latency_2_200ep_full_tuning_corrected_bs32_3k_steps \
+  run_id=flappy_fix_latency_2_200ep_full_tuning_corrected_bs32_4k_steps \
   paths.dataset_local_dir=data/flappy_fix_latency_2_200ep \
   trainer.distributed_backend=none \
   trainer.gradient_accumulation_steps=1 \
