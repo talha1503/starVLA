@@ -3,6 +3,10 @@ set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 TORCH_PROFILE="${STARVLA_TORCH_PROFILE:-auto}"
+# Wheel index base. Defaults to the official PyTorch CDN; install.sh / bootstrap.sh
+# speed-test mirrors and export STARVLA_TORCH_INDEX_BASE (e.g. the Aliyun mirror) to
+# route these multi-GB downloads through the fastest provider.
+TORCH_INDEX_BASE="${STARVLA_TORCH_INDEX_BASE:-https://download.pytorch.org/whl}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_pip.sh
@@ -33,28 +37,28 @@ install_torch() {
   case "${profile}" in
     cu130)
       echo "[install/torch] Installing PyTorch 2.10.0 CUDA 13.0 stack for datacenter Blackwell/sm_100"
-      pip_install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
-        --index-url https://download.pytorch.org/whl/cu130
+      pip_install torch==2.10.0+cu130 torchvision==0.25.0+cu130 torchaudio==2.10.0+cu130 \
+        --index-url "${TORCH_INDEX_BASE}/cu130"
       ;;
     cu128)
       echo "[install/torch] Installing PyTorch 2.7.1 CUDA 12.8 stack for Blackwell/sm_120"
-      pip_install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
-        --index-url https://download.pytorch.org/whl/cu128
+      pip_install torch==2.7.1+cu128 torchvision==0.22.1+cu128 torchaudio==2.7.1+cu128 \
+        --index-url "${TORCH_INDEX_BASE}/cu128"
       ;;
     cu126)
       echo "[install/torch] Installing PyTorch 2.6.0 CUDA 12.6 stack"
-      pip_install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
-        --index-url https://download.pytorch.org/whl/cu126
+      pip_install torch==2.6.0+cu126 torchvision==0.21.0+cu126 torchaudio==2.6.0+cu126 \
+        --index-url "${TORCH_INDEX_BASE}/cu126"
       ;;
     cu124)
       echo "[install/torch] Installing PyTorch 2.6.0 CUDA 12.4 stack"
-      pip_install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
-        --index-url https://download.pytorch.org/whl/cu124
+      pip_install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 \
+        --index-url "${TORCH_INDEX_BASE}/cu124"
       ;;
     cpu)
       echo "[install/torch] Installing PyTorch 2.6.0 CPU stack"
       pip_install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
-        --index-url https://download.pytorch.org/whl/cpu
+        --index-url "${TORCH_INDEX_BASE}/cpu"
       ;;
     *)
       echo "[install/torch] Unknown STARVLA_TORCH_PROFILE='${profile}'. Expected auto|cu124|cu126|cu128|cu130|cpu." >&2

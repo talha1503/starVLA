@@ -3,11 +3,57 @@ from __future__ import annotations
 import pytest
 from omegaconf import DictConfig, OmegaConf
 
-from starVLA.training.rl_games.config_validation import validate_rl_games_config
+from starVLA.training.rl_games.config_validation import (
+    sync_kv_memory_obs_window,
+    validate_rl_games_config,
+)
 
 
 def _build_cfg(data: dict) -> DictConfig:
     return OmegaConf.create(data)
+
+
+def test_kv_memory_sync_ties_obs_window_to_rollout_len() -> None:
+    cfg = _build_cfg(
+        {
+            "framework": {"kv_memory": {"enabled": True, "window": 4, "rollout_len": 8}},
+            "datasets": {"vla_data": {"num_obs_frames": 1, "image_mode": "single"}},
+        }
+    )
+
+    sync_kv_memory_obs_window(cfg)
+
+    assert cfg.datasets.vla_data.num_obs_frames == 8
+    assert cfg.datasets.vla_data.image_mode == "multiframe"
+
+
+def test_kv_memory_sync_noop_when_disabled() -> None:
+    cfg = _build_cfg(
+        {
+            "framework": {"kv_memory": {"enabled": False, "window": 4, "rollout_len": 8}},
+            "datasets": {"vla_data": {"num_obs_frames": 1, "image_mode": "single"}},
+        }
+    )
+
+    sync_kv_memory_obs_window(cfg)
+
+    assert cfg.datasets.vla_data.num_obs_frames == 1
+    assert cfg.datasets.vla_data.image_mode == "single"
+
+
+def test_kv_memory_sync_derives_rollout_len_from_window() -> None:
+    cfg = _build_cfg(
+        {
+            "framework": {"kv_memory": {"enabled": True, "window": 4}},
+            "datasets": {"vla_data": {}},
+        }
+    )
+
+    sync_kv_memory_obs_window(cfg)
+
+    # rollout_len defaults to max(window + 1, 2), matching QwenOFT.
+    assert cfg.datasets.vla_data.num_obs_frames == 5
+    assert cfg.datasets.vla_data.image_mode == "multiframe"
 
 
 def test_rejects_pi05_scratch() -> None:

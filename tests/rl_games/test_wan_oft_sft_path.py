@@ -82,8 +82,8 @@ def test_launch_train_forwards_world_model_path_only_for_wan_oft(tmp_path: Path)
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert f"framework.world_model.base_wm={tmp_path / 'wan_base'}" in cmd
-    assert f"framework.qwenvl.base_vlm={tmp_path / 'wan_base'}" in cmd
+    assert f"++framework.world_model.base_wm={tmp_path / 'wan_base'}" in cmd
+    assert f"++framework.qwenvl.base_vlm={tmp_path / 'wan_base'}" in cmd
 
     openvla_cfg = launch_train.compose_training_config(
         config_name="train",
@@ -95,7 +95,7 @@ def test_launch_train_forwards_world_model_path_only_for_wan_oft(tmp_path: Path)
     )
     openvla_cmd = launch_train.build_trainer_command(openvla_cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert not any(item.startswith("framework.world_model.base_wm=") for item in openvla_cmd)
+    assert not any(item.startswith("++framework.world_model.base_wm=") for item in openvla_cmd)
 
 
 def test_launch_train_forwards_explicit_wan_oft_bridge_data_mix(tmp_path: Path) -> None:
@@ -118,8 +118,8 @@ def test_launch_train_forwards_explicit_wan_oft_bridge_data_mix(tmp_path: Path) 
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "datasets.vla_data.data_mix=flappy_train__bridge" in cmd
-    assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in cmd
+    assert "++datasets.vla_data.data_mix=flappy_train__bridge" in cmd
+    assert "++datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in cmd
 
 
 def test_train_starvla_uses_device_aware_distributed_barrier() -> None:

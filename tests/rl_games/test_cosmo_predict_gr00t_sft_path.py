@@ -87,8 +87,8 @@ def test_launch_train_forwards_world_model_path_for_cosmo_predict_gr00t(tmp_path
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert f"framework.world_model.base_wm={tmp_path / 'cosmo_base'}" in cmd
-    assert f"framework.qwenvl.base_vlm={tmp_path / 'cosmo_base'}" in cmd
+    assert f"++framework.world_model.base_wm={tmp_path / 'cosmo_base'}" in cmd
+    assert f"++framework.qwenvl.base_vlm={tmp_path / 'cosmo_base'}" in cmd
 
 
 def test_run_train_shell_knows_cosmo_predict_gr00t_defaults() -> None:

@@ -73,6 +73,13 @@ def make_LeRobotSingleDataset(
     data_config = ROBOT_TYPE_CONFIG_MAP[robot_type]
     modality_config = _modality_config_with_dataset_indices(data_config=data_config, data_cfg=data_cfg)
     transforms = data_config.transform()
+
+    # Temporal observation window: expand the video modality's delta indices to the
+    # last N frames so `_pack_sample` can emit a chronological frame sequence.
+    # Driven centrally here (one place) rather than editing every DataConfig.
+    num_obs_frames = int(data_cfg.get("num_obs_frames", 1) or 1) if data_cfg else 1
+    if num_obs_frames > 1:
+        modality_config["video"].delta_indices = list(range(-(num_obs_frames - 1), 1))
     dataset_path = data_root_dir / data_name
     if robot_type not in ROBOT_TYPE_TO_EMBODIMENT_TAG:
         print(f"Warning: Robot type {robot_type} not found in ROBOT_TYPE_TO_EMBODIMENT_TAG, using {EmbodimentTag.NEW_EMBODIMENT} as default")

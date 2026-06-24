@@ -12,8 +12,7 @@ from typing import Any, NamedTuple
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-from datasets import Image as DatasetImage
-from datasets import Sequence as DatasetSequence
+import datasets
 from datasets import load_dataset
 from PIL import Image
 from tqdm import tqdm
@@ -22,7 +21,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import build_latency_prompt_map, latency_id_from_row
+from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import (
+    build_latency_prompt_map,
+    concatenate_latency_parts,
+    latency_id_from_row,
+    resolve_latency_subdirs,
+)
 
 
 ACTION_LABELS = ["NOOP", "FLAP"]
@@ -70,27 +74,6 @@ def _local_parquet_files(dataset_name: str, split: str, dataset_source_subdir: s
         if any(marker in part.lower() for marker in split_markers for part in parquet_file.relative_to(dataset_path).parts)
     ]
     return [str(parquet_file) for parquet_file in (split_files or parquet_files)]
-
-
-def _local_parquet_files_are_split_specific(
-    dataset_name: str,
-    split: str,
-    dataset_source_subdir: str | None,
-    parquet_files: list[str],
-) -> bool:
-    dataset_path = Path(dataset_name).expanduser()
-    if dataset_source_subdir not in (None, ""):
-        dataset_path = dataset_path / str(dataset_source_subdir)
-    split_markers = {"train"} if split == "train" else {"validation", "val", "test"}
-    for parquet_file in parquet_files:
-        parquet_path = Path(parquet_file).expanduser()
-        try:
-            relative_parts = parquet_path.relative_to(dataset_path).parts
-        except ValueError:
-            relative_parts = parquet_path.parts
-        if not any(marker in part.lower() for marker in split_markers for part in relative_parts):
-            return False
-    return True
 
 
 def _local_parquet_columns(dataset_name: str, split: str, dataset_source_subdir: str | None = None) -> set[str] | None:
@@ -178,7 +161,15 @@ def _load_hf_dataset(
     cache_dir: str | None = None,
     columns: list[str] | None = None,
 ):
-    load_kwargs = {"split": split, "cache_dir": cache_dir, "columns": columns}
+    load_kwargs = {
+        "split": split,
+        "cache_dir": cache_dir,
+        "columns": columns,
+        # Some hosted RL-game datasets record the validation split as `val` in
+        # dataset_info but generate it as `validation`. Disable split-count
+        # verification so train loading is not blocked by that naming mismatch.
+        "verification_mode": "no_checks",
+    }
     if dataset_source_subdir not in (None, ""):
         load_kwargs["data_dir"] = str(dataset_source_subdir)
     if dataset_config_name not in (None, ""):
@@ -186,17 +177,42 @@ def _load_hf_dataset(
     return load_dataset(dataset_name, **load_kwargs)
 
 
+def _local_file_selection_is_split_specific(
+    dataset_name: str,
+    split: str,
+    dataset_source_subdir: str | None,
+    local_files: list[str],
+) -> bool:
+    dataset_path = Path(dataset_name)
+    if dataset_source_subdir not in (None, ""):
+        dataset_path = dataset_path / str(dataset_source_subdir)
+    split_markers = {"train"} if split == "train" else {"validation", "val", "test"}
+
+    for local_file in local_files:
+        local_path = Path(local_file)
+        try:
+            relative_parts = local_path.relative_to(dataset_path).parts
+        except ValueError:
+            relative_parts = local_path.parts
+        if not any(marker in part.lower() for marker in split_markers for part in relative_parts):
+            return False
+    return True
+
+
 def _cast_image_columns_to_encoded_bytes(ds: Any, image_columns: list[str] | None) -> Any:
-    if not image_columns:
+    if image_columns is None:
         return ds
+    features = getattr(ds, "features", {})
     for image_column in image_columns:
-        if image_column not in ds.column_names:
+        if image_column not in getattr(ds, "column_names", []):
             continue
-        feature = ds.features[image_column]
-        if isinstance(getattr(feature, "feature", None), DatasetImage):
-            ds = ds.cast_column(image_column, DatasetSequence(DatasetImage(decode=False)))
-        else:
-            ds = ds.cast_column(image_column, DatasetImage(decode=False))
+        feature = features.get(image_column) if hasattr(features, "get") else None
+        if isinstance(feature, datasets.Image):
+            ds = ds.cast_column(image_column, datasets.Image(decode=False))
+            continue
+        nested_feature = getattr(feature, "feature", None)
+        if isinstance(nested_feature, datasets.Image):
+            ds = ds.cast_column(image_column, datasets.Sequence(datasets.Image(decode=False)))
     return ds
 
 
@@ -207,71 +223,83 @@ def _load_split(
     columns: list[str] | None = None,
     dataset_config_name: str | None = None,
     dataset_source_subdir: str | None = None,
+    latencies: list[int] | None = None,
     image_columns: list[str] | None = None,
 ):
     split_values = {"train"} if split == "train" else {"validation", "val", "test"}
 
     def _filter_internal_split(ds):
         if "split" in ds.column_names:
-            return ds.filter(lambda row: str(row["split"]).lower() in split_values)
+            # input_columns="split" 让 datasets 只物化 split 这一列来评估 predicate，
+            # 避免为读一个字符串而把每行的 image PNG 字节也解出来（否则 ~600 ex/s）。
+            return ds.filter(
+                lambda split: str(split).lower() in split_values,
+                input_columns="split",
+            )
         return ds
 
-    local_files = _local_parquet_files(dataset_name, split, dataset_source_subdir)
-    if local_files is not None:
-        load_columns = list(columns) if columns is not None else None
-        if load_columns is not None and "split" not in load_columns:
+    def _load_one(subdir: str | None):
+        local_files = _local_parquet_files(dataset_name, split, subdir)
+        if local_files is not None:
+            split_specific = _local_file_selection_is_split_specific(dataset_name, split, subdir, local_files)
+            load_columns = list(columns) if columns is not None else None
+            if load_columns is not None and "split" not in load_columns:
+                load_columns.append("split")
+            try:
+                ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=load_columns)
+            except (ValueError, KeyError):
+                if columns is None:
+                    raise
+                ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=columns)
+            ds = _cast_image_columns_to_encoded_bytes(ds, image_columns)
+            if split_specific:
+                return ds
+            return _filter_internal_split(ds)
+
+        if split == "train":
+            try:
+                ds = _load_hf_dataset(
+                    dataset_name, dataset_config_name, subdir,
+                    split="train", cache_dir=cache_dir, columns=columns,
+                )
+                ds = _cast_image_columns_to_encoded_bytes(ds, image_columns)
+                return _filter_internal_split(ds)
+            except (ValueError, KeyError):
+                pass
+        else:
+            for candidate in ("validation", "val", "test"):
+                try:
+                    ds = _load_hf_dataset(
+                        dataset_name, dataset_config_name, subdir,
+                        split=candidate, cache_dir=cache_dir, columns=columns,
+                    )
+                    if len(ds) > 0:
+                        ds = _cast_image_columns_to_encoded_bytes(ds, image_columns)
+                        return _filter_internal_split(ds)
+                except (ValueError, KeyError):
+                    continue
+
+        load_columns = list(columns or [])
+        if "split" not in load_columns:
             load_columns.append("split")
         try:
-            ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=load_columns)
+            ds_all = _load_hf_dataset(
+                dataset_name, dataset_config_name, subdir,
+                split="train", cache_dir=cache_dir, columns=load_columns or None,
+            )
         except (ValueError, KeyError):
             if columns is None:
                 raise
-            ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=columns)
-        ds = _cast_image_columns_to_encoded_bytes(ds, image_columns)
-        if _local_parquet_files_are_split_specific(dataset_name, split, dataset_source_subdir, local_files):
-            return ds
-        return _filter_internal_split(ds)
-
-    if split == "train":
-        try:
-            ds = _load_hf_dataset(
-                dataset_name, dataset_config_name, dataset_source_subdir,
-                split="train", cache_dir=cache_dir, columns=columns,
+            ds_all = _load_hf_dataset(
+                dataset_name, dataset_config_name, subdir,
+                split="train", cache_dir=cache_dir,
             )
-            ds = _cast_image_columns_to_encoded_bytes(ds, image_columns)
-            return _filter_internal_split(ds)
-        except (ValueError, KeyError):
-            pass
-    else:
-        for candidate in ("validation", "val", "test"):
-            try:
-                ds = _load_hf_dataset(
-                    dataset_name, dataset_config_name, dataset_source_subdir,
-                    split=candidate, cache_dir=cache_dir, columns=columns,
-                )
-                if len(ds) > 0:
-                    ds = _cast_image_columns_to_encoded_bytes(ds, image_columns)
-                    return _filter_internal_split(ds)
-            except (ValueError, KeyError):
-                continue
+        ds_all = _cast_image_columns_to_encoded_bytes(ds_all, image_columns)
+        return ds_all.filter(lambda row: str(row["split"]).lower() in split_values)
 
-    load_columns = list(columns or [])
-    if "split" not in load_columns:
-        load_columns.append("split")
-    try:
-        ds_all = _load_hf_dataset(
-            dataset_name, dataset_config_name, dataset_source_subdir,
-            split="train", cache_dir=cache_dir, columns=load_columns or None,
-        )
-    except (ValueError, KeyError):
-        if columns is None:
-            raise
-        ds_all = _load_hf_dataset(
-            dataset_name, dataset_config_name, dataset_source_subdir,
-            split="train", cache_dir=cache_dir,
-        )
-    ds_all = _cast_image_columns_to_encoded_bytes(ds_all, image_columns)
-    return ds_all.filter(lambda row: str(row["split"]).lower() in split_values)
+    subdirs = resolve_latency_subdirs(dataset_source_subdir, latencies)
+    parts = [_load_one(subdir) for subdir in subdirs]
+    return concatenate_latency_parts(parts)
 
 
 def _png_bytes(image: Any) -> bytes:
@@ -280,11 +308,10 @@ def _png_bytes(image: Any) -> bytes:
         image_path = image.get("path")
         if image_bytes is not None:
             return bytes(image_bytes)
-        elif image_path is not None:
+        if image_path is not None:
             return Path(str(image_path)).read_bytes()
-        else:
-            raise ValueError("Image dict must contain `bytes` or `path`")
-    elif isinstance(image, (bytes, bytearray, memoryview)):
+        raise ValueError("Image dict must contain `bytes` or `path`")
+    if isinstance(image, (bytes, bytearray, memoryview)):
         return bytes(image)
     if not isinstance(image, Image.Image):
         image = Image.fromarray(np.asarray(image))
@@ -453,6 +480,7 @@ def _load_index_split(
     want_latency: bool,
     dataset_config_name: str | None = None,
     dataset_source_subdir: str | None = None,
+    latencies: list[int] | None = None,
 ) -> tuple[Any, FlappyColumns]:
     candidate_columns = _flappy_column_candidates(
         dataset_name,
@@ -478,6 +506,7 @@ def _load_index_split(
                     columns=columns,
                     dataset_config_name=dataset_config_name,
                     dataset_source_subdir=dataset_source_subdir,
+                    latencies=latencies,
                 ),
                 flappy_columns,
             )
@@ -493,6 +522,7 @@ def _load_index_split(
             cache_dir=cache_dir,
             dataset_config_name=dataset_config_name,
             dataset_source_subdir=dataset_source_subdir,
+            latencies=latencies,
         )
     except Exception:
         if last_error is not None:
@@ -585,6 +615,10 @@ def _write_metadata(
             }
         },
     }
+    if context_images_output_column is not None:
+        modality["video"]["context_images"] = {
+            "original_key": context_images_output_column,
+        }
     (meta_dir / "modality.json").write_text(json.dumps(modality, indent=2), encoding="utf-8")
 
     info = {
@@ -618,13 +652,15 @@ def _write_metadata(
         },
     }
     if context_images_output_column is not None:
-        if image_sequence_length is None:
-            raise ValueError("image_sequence_length is required when context_images_output_column is set")
         info["features"][context_images_output_column] = {
-            "dtype": "image_sequence",
-            "shape": [int(image_sequence_length) - 1, 84, 84, 3],
-            "names": ["time", "height", "width", "channel"],
-            "video_info": {"video.fps": FPS},
+            "dtype": "sequence",
+            "shape": [int(image_sequence_length or 1) - 1],
+            "names": ["context_frame"],
+            "feature": {
+                "dtype": "image",
+                "shape": [84, 84, 3],
+                "names": ["height", "width", "channel"],
+            },
         }
     (meta_dir / "info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
 
@@ -648,11 +684,10 @@ def _write_episode(
     context_images_output_column: str | None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    image_struct_type = pa.struct([("bytes", pa.binary()), ("path", pa.string())])
     columns = {
         "observation.image": pa.array(
             [{"bytes": row["image_bytes"], "path": None} for row in rows],
-            type=image_struct_type,
+            type=pa.struct([("bytes", pa.binary()), ("path", pa.string())]),
         ),
         "observation.state": pa.array(
             [[0.0] * state_dim for _ in rows],
@@ -672,6 +707,7 @@ def _write_episode(
         "action_id": pa.array([row["action_id"] for row in rows], type=pa.int64()),
     }
     if context_images_output_column is not None:
+        image_struct_type = pa.struct([("bytes", pa.binary()), ("path", pa.string())])
         columns[context_images_output_column] = pa.array(
             [row["context_images"] for row in rows],
             type=pa.list_(image_struct_type),
@@ -700,16 +736,10 @@ def convert_dataset(
     default_latency: int | None = None,
     action_carrier: str = "native",
     context_images_column: str | None = None,
-    context_images_output_column: str | None = None,
+    context_images_output_column: str | None = DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN,
     image_sequence_length: int = 4,
 ) -> dict[str, Any]:
     action_carrier = _normalize_action_carrier(action_carrier)
-    if context_images_column is not None and image_sequence_length < 2:
-        raise ValueError(f"image_sequence_length must be at least 2 when context_images_column is set, got {image_sequence_length}")
-    if context_images_column is None:
-        context_images_output_column = None
-    elif context_images_output_column in (None, ""):
-        context_images_output_column = DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN
     action_dim = _action_dim(action_carrier)
     action_labels = _action_labels(action_carrier)
     state_dim = _state_dim(action_carrier)
@@ -750,6 +780,7 @@ def convert_dataset(
             want_latency=want_latency,
             dataset_config_name=dataset_config_name,
             dataset_source_subdir=dataset_source_subdir,
+            latencies=split_latency_filter,
         )
         ds_meta = _filter_latency(
             ds_meta,
@@ -794,12 +825,26 @@ def convert_dataset(
                 cache_dir=cache_dir,
                 dataset_config_name=dataset_config_name,
                 dataset_source_subdir=dataset_source_subdir,
-                image_columns=["image", context_images_column] if context_images_column is not None else ["image"],
+                latencies=split_latency_filter,
+                image_columns=[
+                    column
+                    for column in ("image", context_images_column)
+                    if column is not None
+                ],
             ),
             split_latency_filter,
             latency_column=flappy_columns.latency,
             default_latency=default_latency,
         )
+        # 关闭 image 列的自动 PNG 解码：源字节已是合格的 RGB PNG，迭代时直接拿
+        # {"bytes": <png>, "path": ...} 原样透传，省掉每帧的 PNG 解码+重编码。
+        # cast_column 是惰性的（只改 feature 类型，不重写数据）。
+        if "image" in ds_full.column_names:
+            ds_full = ds_full.cast_column("image", datasets.Image(decode=False))
+        if context_images_column is not None:
+            if context_images_column not in ds_full.column_names:
+                raise ValueError(f"Configured context_images_column={context_images_column!r} is missing from {dataset_name}")
+            ds_full = ds_full.cast_column(context_images_column, datasets.Sequence(datasets.Image(decode=False)))
         episode_lengths: list[int] = []
 
         for new_episode_idx, original_episode_idx in enumerate(tqdm(original_episode_ids, desc=f"Writing Flappy {split} LeRobot episodes")):
@@ -823,8 +868,16 @@ def convert_dataset(
                         "latency_ms": latency_ms,
                         "prompt": prompt,
                     })
+                img_cell = row["image"]
+                # decode=False 时 img_cell 是 {"bytes": <png>, "path": ...}，直接透传；
+                # 万一拿到 PIL/array（未被识别为 Image feature）则回退到重新编码。
+                image_bytes = (
+                    img_cell["bytes"]
+                    if isinstance(img_cell, dict) and img_cell.get("bytes") is not None
+                    else _png_bytes(img_cell)
+                )
                 out_row = {
-                    "image_bytes": _png_bytes(row["image"]),
+                    "image_bytes": image_bytes,
                     "action": _one_hot(int(row["action_id"]), action_dim=action_dim),
                     "timestamp": float(frame_idx) / FPS,
                     "episode_index": new_episode_idx,
@@ -854,7 +907,7 @@ def convert_dataset(
                 out_rows,
                 action_dim=action_dim,
                 state_dim=state_dim,
-                context_images_output_column=context_images_output_column,
+                context_images_output_column=context_images_output_column if context_images_column is not None else None,
             )
 
         _write_metadata(
@@ -865,8 +918,8 @@ def convert_dataset(
             action_labels=action_labels,
             state_dim=state_dim,
             state_labels=state_labels,
-            context_images_output_column=context_images_output_column,
-            image_sequence_length=image_sequence_length if context_images_output_column is not None else None,
+            context_images_output_column=context_images_output_column if context_images_column is not None else None,
+            image_sequence_length=image_sequence_length if context_images_column is not None else None,
         )
 
         if latency_rows:
@@ -890,6 +943,7 @@ def convert_dataset(
             "source": dataset_name,
             "source_config": dataset_config_name,
             "source_subdir": dataset_source_subdir,
+            "latency_subdirs": [str(s) for s in resolve_latency_subdirs(dataset_source_subdir, split_latency_filter)],
             "format": "starvla_lerobot_v2_image_parquet",
             "action_labels": action_labels,
             "action_dim": action_dim,
@@ -906,8 +960,8 @@ def convert_dataset(
             "active_state_dim": STATE_DIM,
             "state_carrier": action_carrier,
             "context_images_column": context_images_column,
-            "context_images_output_column": context_images_output_column,
-            "image_sequence_length": int(image_sequence_length) if context_images_output_column is not None else None,
+            "context_images_output_column": context_images_output_column if context_images_column is not None else None,
+            "image_sequence_length": int(image_sequence_length) if context_images_column is not None else None,
             "episodes": len(episode_lengths),
             "frames": int(sum(episode_lengths)),
             "task_prompts": task_prompts,

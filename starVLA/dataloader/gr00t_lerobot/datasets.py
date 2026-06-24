@@ -28,6 +28,7 @@ import hashlib
 import io
 import json, torch
 import copy
+from starVLA.training.trainer_utils.trainer_tools import stitch_frames
 from collections import defaultdict
 from pathlib import Path
 from typing import Sequence
@@ -41,11 +42,6 @@ from PIL import Image
 import torch.distributed as dist
 
 from starVLA.dataloader.gr00t_lerobot.video import get_all_frames, get_frames_by_timestamps
-from starVLA.training.rl_games.temporal_clip import (
-    decode_context_image_sequence,
-    decode_prepacked_image_sequence,
-    pack_image_sequence,
-)
 
 from starVLA.dataloader.gr00t_lerobot.embodiment_tags import EmbodimentTag
 from starVLA.dataloader.gr00t_lerobot.schema import (
@@ -1388,23 +1384,27 @@ class LeRobotSingleDataset(Dataset):
 
     def _pack_sample(self, data: dict) -> dict:
         """Pack transformed modality data into training sample format."""
+        num_obs_frames = int(self.data_cfg.get("num_obs_frames", 1) or 1) if self.data_cfg is not None else 1
+        image_mode = str(self.data_cfg.get("image_mode", "single")) if self.data_cfg is not None else "single"
+        if self.data_cfg is not None and self.data_cfg.get("pack_image_sequence", False) not in ["False", False]:
+            num_obs_frames = int(self.data_cfg.get("image_sequence_length", num_obs_frames) or num_obs_frames)
+            if image_mode == "single":
+                image_mode = "multiframe"
+        stitch_grid = tuple(self.data_cfg.get("stitch_grid", [2, 2])) if self.data_cfg is not None else (2, 2)
+
         step_images = []
-        pack_sequence = (
-            self.data_cfg is not None
-            and _as_bool(self.data_cfg.get("pack_image_sequence", False), default=False)
-        )
-        image_sequence_length = int(
-            self.data_cfg.get("image_sequence_length", 1) if self.data_cfg is not None else 1
-        )
         for video_key in self.modality_keys["video"]:
-            step_images.extend(
-                pack_image_sequence(
-                    frames=data[video_key],
-                    pack_image_sequence=pack_sequence,
-                    image_sequence_length=image_sequence_length,
-                    resize_size=(224, 224),
-                )
-            )
+            frames = data[video_key]  # (T, H, W, C), chronological (oldest .. newest)
+            if image_mode == "single":
+                selected = [frames[-1]]
+            else:
+                n = min(num_obs_frames, len(frames))
+                selected = [frames[i] for i in range(len(frames) - n, len(frames))]
+            pil_frames = [Image.fromarray(f) for f in selected]
+            if image_mode == "stitch":
+                step_images.append(stitch_frames(pil_frames, grid=stitch_grid, size=(224, 224)))
+            else:  # "single" or "multiframe": each frame tokenized independently
+                step_images.extend(p.resize((224, 224)) for p in pil_frames)
 
         language = data[self.modality_keys["language"][0]][0]
         action = []
@@ -1490,7 +1490,9 @@ class LeRobotSingleDataset(Dataset):
                     episode_chunk=chunk_index, episode_index=trajectory_id
                 )
                 assert parquet_path.exists(), f"Parquet file not found at {parquet_path}"
-                return pd.read_parquet(parquet_path)
+                self.curr_traj_id = trajectory_id
+                self.curr_traj_data = pd.read_parquet(parquet_path)
+                return self.curr_traj_data
         elif self._lerobot_version == "v3.0":
             return self.get_trajectory_data_lerobot_v3(trajectory_id)
     
@@ -1513,7 +1515,9 @@ class LeRobotSingleDataset(Dataset):
             
             # filter by trajectory_id
             episode_data = file_data.loc[file_data["episode_index"] == trajectory_id].copy()
-            return episode_data
+            self.curr_traj_id = trajectory_id
+            self.curr_traj_data = episode_data
+            return self.curr_traj_data
 
     def get_trajectory_columns(self, trajectory_id: int, columns: Sequence[str]) -> pd.DataFrame:
         """Read selected columns for one trajectory without loading image/action payloads."""
@@ -1762,34 +1766,34 @@ class LeRobotSingleDataset(Dataset):
         original_key = self.lerobot_modality_meta.video[key].original_key
         if original_key is None:
             original_key = key
-        image_sequence_column = None
+
+        def _decode_image_entry(entry):
+            if isinstance(entry, np.ndarray):
+                return entry
+            if isinstance(entry, Image.Image):
+                return np.array(entry)
+            if isinstance(entry, (bytes, bytearray, memoryview)):
+                return np.array(Image.open(io.BytesIO(bytes(entry))).convert("RGB"))
+            if isinstance(entry, dict):
+                img_bytes = entry.get("bytes", None)
+                img_path = entry.get("path", None)
+
+                if img_bytes is not None:
+                    return np.array(Image.open(io.BytesIO(img_bytes)).convert("RGB"))
+
+                if img_path is not None:
+                    path_obj = Path(img_path)
+                    if not path_obj.is_absolute():
+                        path_obj = self.dataset_path / path_obj
+                    return np.array(Image.open(path_obj).convert("RGB"))
+
+            raise TypeError(f"Unsupported image entry type: {type(entry)}")
+
         context_images_column = None
         if self.data_cfg is not None:
-            configured_image_sequence_column = self.data_cfg.get("image_sequence_column", None)
-            if configured_image_sequence_column not in (None, ""):
-                image_sequence_column = str(configured_image_sequence_column)
             configured_context_images_column = self.data_cfg.get("context_images_column", None)
             if configured_context_images_column not in (None, ""):
                 context_images_column = str(configured_context_images_column)
-        if image_sequence_column is not None and context_images_column is not None:
-            raise ValueError(
-                "Configure only one of image_sequence_column or context_images_column "
-                f"for dataset {self.dataset_name}"
-            )
-        if image_sequence_column is not None and self.curr_traj_data is not None:
-            if image_sequence_column not in self.curr_traj_data.columns:
-                raise ValueError(
-                    f"Configured image_sequence_column={image_sequence_column!r} is missing from "
-                    f"dataset {self.dataset_name} trajectory {trajectory_id}"
-                )
-            image_sequence_length = int(
-                self.data_cfg.get("image_sequence_length", 1) if self.data_cfg is not None else 1
-            )
-            return decode_prepacked_image_sequence(
-                entry=self.curr_traj_data.iloc[int(base_index)][image_sequence_column],
-                image_sequence_length=image_sequence_length,
-                dataset_path=self.dataset_path,
-            )
         if context_images_column is not None and self.curr_traj_data is not None:
             missing_columns = [
                 column
@@ -1804,37 +1808,17 @@ class LeRobotSingleDataset(Dataset):
             image_sequence_length = int(
                 self.data_cfg.get("image_sequence_length", 1) if self.data_cfg is not None else 1
             )
+            expected_context_images = image_sequence_length - 1
             row = self.curr_traj_data.iloc[int(base_index)]
-            return decode_context_image_sequence(
-                context_entry=row[context_images_column],
-                current_entry=row[original_key],
-                image_sequence_length=image_sequence_length,
-                dataset_path=self.dataset_path,
-            )
+            context_values = list(row[context_images_column])
+            if len(context_values) != expected_context_images:
+                raise ValueError(
+                    f"Expected {expected_context_images} context image frames, got {len(context_values)}"
+                )
+            return np.stack([_decode_image_entry(item) for item in [*context_values, row[original_key]]])
+
         if self.curr_traj_data is not None and original_key in self.curr_traj_data.columns:
             image_entries = self.curr_traj_data[original_key].tolist()
-
-            def _decode_image_entry(entry):
-                if isinstance(entry, np.ndarray):
-                    return entry
-                if isinstance(entry, Image.Image):
-                    return np.array(entry)
-                if isinstance(entry, (bytes, bytearray, memoryview)):
-                    return np.array(Image.open(io.BytesIO(bytes(entry))).convert("RGB"))
-                if isinstance(entry, dict):
-                    img_bytes = entry.get("bytes", None)
-                    img_path = entry.get("path", None)
-
-                    if img_bytes is not None:
-                        return np.array(Image.open(io.BytesIO(img_bytes)).convert("RGB"))
-
-                    if img_path is not None:
-                        path_obj = Path(img_path)
-                        if not path_obj.is_absolute():
-                            path_obj = self.dataset_path / path_obj
-                        return np.array(Image.open(path_obj).convert("RGB"))
-
-                raise TypeError(f"Unsupported image entry type: {type(entry)}")
 
             frames = []
             for idx in step_indices:
@@ -2310,6 +2294,17 @@ def get_used_modality_keys(modality_keys: dict) -> tuple[list, list]:
             used_state_keys.append(clean_key)
     
     return used_action_keys, used_state_keys
+
+
+def _strip_fps(obj):
+    """Recursively drop "fps" keys so modality configs can be compared while
+    ignoring source-capture frame rate, which legitimately differs across tasks."""
+    if isinstance(obj, dict):
+        return {key: _strip_fps(value) for key, value in obj.items() if key != "fps"}
+    if isinstance(obj, list):
+        return [_strip_fps(value) for value in obj]
+    return obj
+
 
 class LeRobotMixtureDataset(Dataset):
     """
@@ -2926,17 +2921,21 @@ class LeRobotMixtureDataset(Dataset):
         merged_metadata["statistics"] = dataset_statistics
 
         # Merge the modality configs
-        modality_configs = defaultdict(set)
+        modality_configs = defaultdict(list)
         for metadata in metadata_dicts:
             for modality, configs in metadata["modalities"].items():
-                modality_configs[modality].add(json.dumps(configs))
+                modality_configs[modality].append(configs)
         merged_metadata["modalities"] = {}
         for modality, configs in modality_configs.items():
-            # Check that all modality configs correspond to the same tag matches
+            # "fps" is purely descriptive source-capture metadata (not consumed by
+            # any transform/time-windowing logic) and legitimately differs across
+            # tasks in a cross-task mixture with different native environment
+            # rates. Ignore it when checking that configs are otherwise compatible.
+            comparable = {json.dumps(_strip_fps(config), sort_keys=True) for config in configs}
             assert (
-                len(configs) == 1
-            ), f"Multiple modality configs for modality {modality}: {list(configs)}"
-            merged_metadata["modalities"][modality] = json.loads(configs.pop())
+                len(comparable) == 1
+            ), f"Multiple modality configs for modality {modality}: {configs}"
+            merged_metadata["modalities"][modality] = configs[0]
 
         return DatasetMetadata.model_validate(merged_metadata)
 

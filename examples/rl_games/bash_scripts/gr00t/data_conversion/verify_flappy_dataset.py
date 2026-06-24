@@ -3,10 +3,45 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
+
+
+_LATENCY_SUBDIR_RE = re.compile(r"(fix_latency_)\d+(_)")
+
+
+def latency_subdir_for(template: str, latency: int) -> str | None:
+    new_value, count = _LATENCY_SUBDIR_RE.subn(rf"\g<1>{int(latency)}\g<2>", template, count=1)
+    return new_value if count == 1 else None
+
+
+def resolve_latency_subdirs(template: str | None, latencies: Iterable[int] | None) -> list[str | None]:
+    if template is None or not latencies:
+        return [template]
+    unique_latencies = sorted({int(value) for value in latencies})
+    resolved = [latency_subdir_for(template, latency) for latency in unique_latencies]
+    if any(value is None for value in resolved):
+        # template doesn't match the known fix_latency_<N>_ pattern; don't partially apply
+        return [template]
+    return resolved
+
+
+def concatenate_latency_parts(parts: list) -> Any:
+    if len(parts) == 1:
+        return parts[0]
+    from datasets import concatenate_datasets
+
+    try:
+        return concatenate_datasets(parts)
+    except Exception:
+        try:
+            casted = [parts[0]] + [part.cast(parts[0].features) for part in parts[1:]]
+            return concatenate_datasets(casted)
+        except Exception as exc:
+            raise ValueError(f"could not concatenate per-latency dataset parts: {exc}") from exc
 
 
 EXPECTED_ACTIONS = ["NOOP", "FLAP"]
@@ -55,7 +90,15 @@ def _load_hf_dataset(
 ):
     from datasets import load_dataset
 
-    load_kwargs = {"split": split, "cache_dir": cache_dir, "columns": columns}
+    load_kwargs = {
+        "split": split,
+        "cache_dir": cache_dir,
+        "columns": columns,
+        # Some hosted RL-game datasets record the validation split as `val` in
+        # dataset_info but generate it as `validation`. Disable split-count
+        # verification so train loading is not blocked by that naming mismatch.
+        "verification_mode": "no_checks",
+    }
     if dataset_source_subdir not in (None, ""):
         load_kwargs["data_dir"] = str(dataset_source_subdir)
     if dataset_config_name not in (None, ""):
@@ -69,6 +112,7 @@ def _load_train_split(
     columns: list[str] | None = None,
     dataset_config_name: str | None = None,
     dataset_source_subdir: str | None = None,
+    latencies: Iterable[int] | None = None,
 ):
     from datasets import load_dataset
 
@@ -77,34 +121,39 @@ def _load_train_split(
             return ds.filter(lambda row: str(row["split"]).lower() == "train")
         return ds
 
-    local_files = _local_parquet_files(dataset_name, dataset_source_subdir)
-    if local_files is not None:
-        load_columns = list(columns) if columns is not None else None
-        if load_columns is not None and "split" not in load_columns:
-            load_columns.append("split")
-        try:
-            ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=load_columns)
-        except (ValueError, KeyError):
-            if columns is None:
-                raise
-            ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=columns)
-        return _filter_internal_split(ds)
+    def _load_one(subdir: str | None):
+        local_files = _local_parquet_files(dataset_name, subdir)
+        if local_files is not None:
+            load_columns = list(columns) if columns is not None else None
+            if load_columns is not None and "split" not in load_columns:
+                load_columns.append("split")
+            try:
+                ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=load_columns)
+            except (ValueError, KeyError):
+                if columns is None:
+                    raise
+                ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=columns)
+            return _filter_internal_split(ds)
 
-    try:
-        ds = _load_hf_dataset(
-            dataset_name, dataset_config_name, dataset_source_subdir,
-            split="train", cache_dir=cache_dir, columns=columns,
-        )
-        return _filter_internal_split(ds)
-    except (ValueError, KeyError):
-        load_columns = list(columns or [])
-        if "split" not in load_columns:
-            load_columns.append("split")
-        ds_all = _load_hf_dataset(
-            dataset_name, dataset_config_name, dataset_source_subdir,
-            split="train", cache_dir=cache_dir, columns=load_columns,
-        )
-        return ds_all.filter(lambda row: str(row["split"]).lower() == "train")
+        try:
+            ds = _load_hf_dataset(
+                dataset_name, dataset_config_name, subdir,
+                split="train", cache_dir=cache_dir, columns=columns,
+            )
+            return _filter_internal_split(ds)
+        except (ValueError, KeyError):
+            load_columns = list(columns or [])
+            if "split" not in load_columns:
+                load_columns.append("split")
+            ds_all = _load_hf_dataset(
+                dataset_name, dataset_config_name, subdir,
+                split="train", cache_dir=cache_dir, columns=load_columns,
+            )
+            return ds_all.filter(lambda row: str(row["split"]).lower() == "train")
+
+    subdirs = resolve_latency_subdirs(dataset_source_subdir, latencies)
+    parts = [_load_one(subdir) for subdir in subdirs]
+    return concatenate_latency_parts(parts)
 
 
 def latency_id_from_row(
@@ -164,6 +213,7 @@ def verify_dataset(
     dataset_source_subdir: str | None = None,
     strict: bool = False,
     allow_mixed_latency_prompts: bool = False,
+    latencies: list[int] | None = None,
 ) -> bool:
     try:
         for columns in (
@@ -180,6 +230,7 @@ def verify_dataset(
                     columns=columns,
                     dataset_config_name=dataset_config_name,
                     dataset_source_subdir=dataset_source_subdir,
+                    latencies=latencies,
                 )
                 break
             except Exception:
@@ -207,6 +258,8 @@ def verify_dataset(
     if allow_mixed_latency_prompts:
         try:
             mapping = build_latency_prompt_map(ds)
+            if latencies and len({int(v) for v in latencies}) > 1 and len(mapping) <= 1:
+                raise ValueError(f"expected more than one latency prompt, got {len(mapping)}")
             print("Latency prompt map:")
             print(json.dumps(mapping, indent=2))
         except Exception as exc:

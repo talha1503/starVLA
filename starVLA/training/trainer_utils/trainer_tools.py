@@ -118,6 +118,62 @@ def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, to
     return optimizer, lr_scheduler
 
 
+def _qwen_vl_interface(model):
+    return model.qwen_vl_interface
+
+
+def _llm_language_model(model):
+    return _qwen_vl_interface(model).model.model.language_model
+
+
+def _vit_module(model):
+    # Qwen-VL keeps the visual tower and its vision-to-language connector/merger
+    # under this module.
+    return _qwen_vl_interface(model).model.model.visual
+
+
+def _llm_decoder_layers(model):
+    return _llm_language_model(model).layers
+
+
+def _tied_embedding_modules(model):
+    language_model = _llm_language_model(model)
+    hf_model = _qwen_vl_interface(model).model
+    return language_model.embed_tokens, hf_model.lm_head
+
+
+def resolve_freeze_llm_layer_indices(model, cfg):
+    """Translate ``trainer.freeze_llm_layers=[start,end]`` to an inclusive layer list."""
+    freeze_llm_layers = cfg.trainer.freeze_llm_layers
+    if not freeze_llm_layers:
+        return [], len(_llm_decoder_layers(model))
+    start, end = [int(value) for value in freeze_llm_layers]
+    return list(range(start, end + 1)), len(_llm_decoder_layers(model))
+
+
+def _module_param_ids(module):
+    return {id(param) for param in module.parameters()}
+
+
+def vit_llm_frozen_param_ids(model, cfg):
+    """Parameter ids excluded from optimizer by trainer freeze controls."""
+    frozen_params = set()
+    freeze_vit = cfg.trainer.freeze_vit
+    if freeze_vit:
+        frozen_params.update(_module_param_ids(_vit_module(model)))
+
+    if cfg.trainer.freeze_tied_embedding:
+        for module in _tied_embedding_modules(model):
+            frozen_params.update(_module_param_ids(module))
+
+    frozen_layer_indices, _ = resolve_freeze_llm_layer_indices(model, cfg)
+    layers = list(_llm_decoder_layers(model))
+    for layer_index in frozen_layer_indices:
+        frozen_params.update(_module_param_ids(layers[layer_index]))
+
+    return frozen_params
+
+
 def build_param_lr_groups(model, cfg):
     """
     build multiple param groups based on cfg.trainer.learning_rate.
@@ -152,6 +208,10 @@ def build_param_lr_groups(model, cfg):
         except AttributeError:
             print(f"⚠️ freeze module path does not exist: {freeze_path}")
             continue
+
+    # Exclude trainer freeze controls so frozen parameters never enter an
+    # optimizer param group.
+    frozen_params.update(vit_llm_frozen_param_ids(model, cfg))
 
     for module_name, lr in lr_cfg.items():
         if module_name == "base":
@@ -213,6 +273,33 @@ def resize_images(images, target_size=(224, 224)):
         raise ValueError("Unsupported image type or structure.")
 
 
+def stitch_frames(frames, grid=(2, 2), size=(224, 224)):
+    """Tile temporal frames into one image, keeping the token count of a single image.
+
+    Used by the ``stitch`` multi-image mode: instead of feeding N frames as N
+    tokenized images, they are laid out on a fixed grid and the whole canvas is
+    returned at ``size``. Both training (``_pack_sample``) and eval
+    (``policy/starvla.py``) call this so the layouts match.
+
+    Args:
+        frames: list of ``PIL.Image`` or ``np.ndarray`` (H, W, C), oldest first.
+        grid: (rows, cols). Cells beyond ``len(frames)`` repeat the last frame so
+            the layout is fixed regardless of how many frames are available.
+        size: (width, height) of the returned canvas.
+    """
+    rows, cols = grid
+    canvas_w, canvas_h = size
+    cell_w, cell_h = canvas_w // cols, canvas_h // rows
+    pil = [f if isinstance(f, Image.Image) else Image.fromarray(f) for f in frames]
+    capacity = rows * cols
+    pil = (pil + [pil[-1]] * (capacity - len(pil))) if len(pil) < capacity else pil[:capacity]
+    canvas = Image.new("RGB", (canvas_w, canvas_h))
+    for idx, frame in enumerate(pil):
+        r, c = divmod(idx, cols)
+        canvas.paste(frame.convert("RGB").resize((cell_w, cell_h)), (c * cell_w, r * cell_h))
+    return canvas
+
+
 import torch.distributed as dist
 
 
@@ -260,6 +347,39 @@ class TrainerUtils:
         # accelerator.wait_for_everyone()  # synchronize when distributed training
         if not dist.is_initialized() or dist.get_rank() == 0:
             print(f"🔒 Frozen modules with re pattern: {frozen}")
+        return model
+
+    @staticmethod
+    def freeze_vit_and_llm_layers(model, cfg):
+        """Apply trainer.freeze_vit/freeze_tied_embedding/freeze_llm_layers.
+
+        trainer.freeze_vit freezes Qwen-VL's visual module, including the
+        vision-to-language connector/merger it contains.
+        """
+        freeze_vit = cfg.trainer.freeze_vit
+        if freeze_vit:
+            for param in _vit_module(model).parameters():
+                param.requires_grad = False
+
+        freeze_tied_embedding = cfg.trainer.freeze_tied_embedding
+        if freeze_tied_embedding:
+            for module in _tied_embedding_modules(model):
+                for param in module.parameters():
+                    param.requires_grad = False
+
+        frozen_layer_indices, total = resolve_freeze_llm_layer_indices(model, cfg)
+        layers = list(_llm_decoder_layers(model))
+        for layer_index in frozen_layer_indices:
+            for param in layers[layer_index].parameters():
+                param.requires_grad = False
+
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            print(
+                "🔒 freeze_vit="
+                f"{freeze_vit}, freeze_tied_embedding={freeze_tied_embedding}, "
+                f"freeze_llm_layers={list(frozen_layer_indices)}"
+                f" / total={total}"
+            )
         return model
 
     @staticmethod

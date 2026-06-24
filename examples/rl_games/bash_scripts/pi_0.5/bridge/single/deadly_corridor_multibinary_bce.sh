@@ -4,7 +4,7 @@ bash examples/rl_games/install/install_stack.sh pi05 deadly_corridor
 
 conda activate starvla_rl_games_pi05
 
-pip install flash-attn --no-build-isolation
+bash examples/rl_games/install/flash_attn.sh --check >/dev/null 2>&1 || bash examples/rl_games/install/flash_attn.sh
 
 python examples/rl_games/scripts/launch_train.py \
     model=pi05 \

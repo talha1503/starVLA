@@ -248,7 +248,12 @@ def test_convert_flappy_hf_loader_passes_dataset_config_name(
     assert calls == [
         (
             ("latency-sensitive-bench/dataset-filter-comparison", "flappy_clean_v1"),
-            {"split": "train", "cache_dir": "/tmp/cache", "columns": ["prompt"]},
+            {
+                "split": "train",
+                "cache_dir": "/tmp/cache",
+                "columns": ["prompt"],
+                "verification_mode": "no_checks",
+            },
         )
     ]
 
@@ -283,6 +288,7 @@ def test_convert_flappy_hf_loader_passes_dataset_source_subdir(
                 "split": "train",
                 "cache_dir": "/tmp/cache",
                 "columns": ["prompt"],
+                "verification_mode": "no_checks",
                 "data_dir": "flappy_fix_latency_0_200ep",
             },
         )

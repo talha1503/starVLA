@@ -29,7 +29,7 @@ import wandb
 from accelerate import Accelerator, DeepSpeedPlugin
 from accelerate.utils import set_seed
 from omegaconf import OmegaConf
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import AutoProcessor, get_scheduler
 
@@ -37,7 +37,7 @@ from transformers import AutoProcessor, get_scheduler
 from starVLA.dataloader import build_dataloader
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
-from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias, validate_rl_games_config
+from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias, sync_kv_memory_obs_window, validate_rl_games_config
 from starVLA.training.rl_games.auth import login_training_services
 from starVLA.training.rl_games.eval_core import EvalResult
 from starVLA.training.rl_games import action_cc_f1
@@ -170,6 +170,25 @@ def _episode_latency(ds, trajectory_id: int) -> int | None:
         if values:
             return int(values[0])
     return None
+
+
+def _identity_collate(batch):
+    return batch
+
+
+class _ActionCCF1FrameDataset(Dataset):
+    def __init__(self, single_datasets: list, frame_records: list[tuple[int, int, str, int, str, int | None]]):
+        self.single_datasets = single_datasets
+        self.frame_records = frame_records
+
+    def __len__(self) -> int:
+        return len(self.frame_records)
+
+    def __getitem__(self, index: int):
+        dataset_index, flat_idx, episode_key, base_idx, ep_task, _episode_latency_value = self.frame_records[index]
+        sample = self.single_datasets[dataset_index][flat_idx]
+        sample_task = _sample_task(sample) or ep_task
+        return sample_task, episode_key, base_idx, _sample_latency(sample), sample
 
 
 def load_fast_tokenizer():
@@ -337,6 +356,8 @@ class VLATrainer(TrainerUtils):
         self._best_state_path = None
         self._best_metadata_path = None
         self._latency_curriculum_phase = None
+        self._action_cc_f1_frame_loader = None
+        self._action_cc_f1_frame_loader_key = None
         if hasattr(self.config, "rl_games") and hasattr(self.config.rl_games, "env_eval"):
             enabled = bool(getattr(self.config.rl_games.env_eval, "enabled", False))
             if enabled:
@@ -363,6 +384,7 @@ class VLATrainer(TrainerUtils):
             else None
         )
         self.model = self.freeze_backbones(self.model, freeze_modules=freeze_modules)
+        self.model = self.freeze_vit_and_llm_layers(self.model, self.config)
         self.print_trainable_parameters(self.model)
 
         if self.vla_eval_dataloader is not None:
@@ -727,6 +749,30 @@ class VLATrainer(TrainerUtils):
         """Create data iterators."""
         self.vla_iter = iter(self.vla_train_dataloader)
 
+    def _profile_timing_enabled(self) -> bool:
+        return self.config.trainer.profile_timing.enabled
+
+    def _profile_timing_log_interval(self) -> int:
+        return self.config.trainer.profile_timing.log_interval
+
+    def _profile_timing_should_log(self, step: int | None = None) -> bool:
+        if not self._profile_timing_enabled():
+            return False
+        step = self.completed_steps if step is None else step
+        return step % self._profile_timing_log_interval() == 0
+
+    def _profile_sync(self) -> None:
+        if self._profile_timing_enabled() and torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+    def _profile_start(self) -> float:
+        self._profile_sync()
+        return time.perf_counter()
+
+    def _profile_elapsed(self, start: float) -> float:
+        self._profile_sync()
+        return time.perf_counter() - start
+
     def _latency_curriculum_cfg(self):
         vla_data = getattr(getattr(self.config, "datasets", None), "vla_data", None)
         if vla_data is None:
@@ -845,13 +891,18 @@ class VLATrainer(TrainerUtils):
         )
 
         while self.completed_steps < self.config.trainer.max_train_steps:
+            profile_enabled = self._profile_timing_enabled()
+            t_profile_data = self._profile_start() if profile_enabled else None
             t_start_data = time.perf_counter()
             batch_vla = self._get_next_batch()
             t_end_data = time.perf_counter()
+            profile_data_seconds = self._profile_elapsed(t_profile_data) if profile_enabled else None
 
+            t_profile_model = self._profile_start() if profile_enabled else None
             t_start_model = time.perf_counter()
             step_metrics = self._train_step(batch_vla)
             t_end_model = time.perf_counter()
+            profile_model_seconds = self._profile_elapsed(t_profile_model) if profile_enabled else None
 
             if self.accelerator.sync_gradients:
                 progress_bar.update(1)
@@ -859,6 +910,15 @@ class VLATrainer(TrainerUtils):
                 curriculum_metrics = self._apply_latency_curriculum()
                 if curriculum_metrics:
                     step_metrics.update(curriculum_metrics)
+                if self._profile_timing_should_log():
+                    step_metrics["timing/dataloader_next"] = profile_data_seconds
+                    step_metrics["timing/train_step_total"] = profile_model_seconds
+                    if "batch/size" in step_metrics:
+                        step_metrics["throughput/samples_per_sec"] = step_metrics["batch/size"] / profile_model_seconds
+                    if "batch/effective_tokens" in step_metrics:
+                        step_metrics["throughput/effective_tokens_per_sec"] = (
+                            step_metrics["batch/effective_tokens"] / profile_model_seconds
+                        )
 
             if self.accelerator.is_local_main_process:
                 progress_bar.set_postfix(
@@ -877,7 +937,10 @@ class VLATrainer(TrainerUtils):
                 ):
                     if self.accelerator.is_main_process:
                         logger.info("Starting held-out action loss eval at step %s", self.completed_steps)
+                    t_profile_eval = self._profile_start()
                     step_metrics = self.eval_action_loss(step_metrics)
+                    if self._profile_timing_should_log():
+                        step_metrics["timing/eval_action_loss_total"] = self._profile_elapsed(t_profile_eval)
                     if self.accelerator.is_main_process:
                         logger.info("Finished held-out action loss eval at step %s", self.completed_steps)
                 action_classification_interval = getattr(
@@ -894,7 +957,10 @@ class VLATrainer(TrainerUtils):
                 ):
                     if self.accelerator.is_main_process:
                         logger.info("Starting held-out action classification eval at step %s", self.completed_steps)
+                    t_profile_eval = self._profile_start()
                     step_metrics = self.eval_action_cc_f1(step_metrics)
+                    if self._profile_timing_should_log():
+                        step_metrics["timing/eval_action_classification_total"] = self._profile_elapsed(t_profile_eval)
                     if self.accelerator.is_main_process:
                         logger.info("Finished held-out action classification eval at step %s", self.completed_steps)
                 if self._rl_games_eval_runner is not None:
@@ -905,6 +971,7 @@ class VLATrainer(TrainerUtils):
                         gradients_synced=gradients_synced,
                     ):
                         if self._rl_games_eval_runner.is_enabled(stage="mid_train"):
+                            t_profile_eval = self._profile_start()
                             if self._distributed_rl_games_eval_enabled():
                                 eval_result = self._run_distributed_rl_games_eval(stage="mid_train")
                             else:
@@ -918,6 +985,8 @@ class VLATrainer(TrainerUtils):
                                 eval_result=eval_result,
                                 stage="mid_train",
                             )
+                            if self._profile_timing_should_log():
+                                step_metrics["timing/rl_games_mid_train_eval_total"] = self._profile_elapsed(t_profile_eval)
                             eval_score = self._rl_games_best_score(eval_result)
                             is_new_best = self._save_best_checkpoint(
                                 eval_result=eval_result,
@@ -941,14 +1010,26 @@ class VLATrainer(TrainerUtils):
                 interval=self.config.trainer.logging_frequency,
                 gradients_synced=gradients_synced,
             ):
+                t_profile_log = self._profile_start() if self._profile_timing_should_log() else None
                 self._log_metrics(step_metrics)
+                if self._profile_timing_should_log() and self.accelerator.is_main_process:
+                    wandb.log(
+                        {"timing/log_metrics_total": self._profile_elapsed(t_profile_log)},
+                        step=self.completed_steps,
+                    )
 
             if self._save_periodic_checkpoints_enabled() and should_run_step_interval_event(
                 completed_steps=self.completed_steps,
                 interval=self.config.trainer.save_interval,
                 gradients_synced=gradients_synced,
             ):
+                t_profile_checkpoint = self._profile_start() if self._profile_timing_should_log() else None
                 self._save_checkpoint()
+                if self._profile_timing_should_log() and self.accelerator.is_main_process:
+                    wandb.log(
+                        {"timing/checkpoint_total": self._profile_elapsed(t_profile_checkpoint)},
+                        step=self.completed_steps,
+                    )
 
             if self.completed_steps >= self.config.trainer.max_train_steps:
                 break
@@ -963,6 +1044,7 @@ class VLATrainer(TrainerUtils):
 
         was_training = self.model.training
         self.model.eval()
+        eval_start = time.perf_counter()
         total_loss_sum = torch.zeros((), device=self.accelerator.device, dtype=torch.float32)
         total_loss_count = torch.zeros((), device=self.accelerator.device, dtype=torch.float32)
         latency_loss_sums: dict[int, torch.Tensor] = {}
@@ -1146,6 +1228,8 @@ class VLATrainer(TrainerUtils):
                 task_latency_loss_counts[task_latency_key] = loss_count
 
         if self.accelerator.is_main_process and total_loss_count.item() > 0:
+            step_metrics["eval/action_loss/seconds"] = time.perf_counter() - eval_start
+            step_metrics["eval/action_loss/samples"] = total_loss_count.item()
             step_metrics["eval/loss"] = (total_loss_sum / total_loss_count.clamp_min(1.0)).item()
             for latency in sorted(latency_loss_sums):
                 count = latency_loss_counts[latency]
@@ -1228,9 +1312,9 @@ class VLATrainer(TrainerUtils):
         single_datasets = list(getattr(dataset, "datasets", None) or [dataset])
 
         # Enumerate episodes as contiguous same-trajectory runs of all_steps.
-        # episodes: list of (task, single_ds, episode_key, latency, [(flat_idx, base_index), ...]).
+        # episodes: list of (task, dataset_index, episode_key, latency, [(flat_idx, base_index), ...]).
         episodes = []
-        for ds in single_datasets:
+        for dataset_index, ds in enumerate(single_datasets):
             ds_task = str(getattr(ds, "rl_games_task", task) or task)
             if ds_task not in action_cc_f1.SUPPORTED_TASKS:
                 continue
@@ -1243,12 +1327,12 @@ class VLATrainer(TrainerUtils):
             for flat_idx, step in enumerate(all_steps):
                 traj_id, base_idx = step
                 if cur and traj_id != cur_traj:
-                    episodes.append((ds_task, ds, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
+                    episodes.append((ds_task, dataset_index, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
                     cur = []
                 cur_traj = traj_id
                 cur.append((int(flat_idx), int(base_idx)))
             if cur:
-                episodes.append((ds_task, ds, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
+                episodes.append((ds_task, dataset_index, f"{ds_task}:{tag}:{cur_traj}", _episode_latency(ds, int(cur_traj)), cur))
         if not episodes:
             return step_metrics
 
@@ -1312,26 +1396,68 @@ class VLATrainer(TrainerUtils):
         unwrapped = self.accelerator.unwrap_model(self.model)
         counts = action_cc_f1.new_counts(spec) if spec is not None else None
 
-        # Materialize assigned frames (tagged with their episode), batch for inference.
-        tagged = []  # (task, episode_key, base_index, latency, packed_sample)
-        for ep_task, ds, episode_key, _episode_latency_value, frames in assigned:
-            for flat_idx, base_idx in frames:
-                sample = ds[flat_idx]
-                sample_task = _sample_task(sample) or ep_task
-                tagged.append((sample_task, episode_key, base_idx, _sample_latency(sample), sample))
-
         per_ep = {}  # episode_key -> list of (base_index, teacher_components, model_components)
+
+        def flush_chunk(chunk):
+            normalized = unwrapped.predict_action(examples=[c[4] for c in chunk])["normalized_actions"]
+            for i, (sample_task, episode_key, base_idx, latency, sample) in enumerate(chunk):
+                sample_task = str(sample_task)
+                sample_spec = _spec_for_task(sample_task)
+                teacher_vec = np.asarray(sample["action"])[0, :]
+                model_vec = normalized[i, 0, :]
+                entry = per_ep.setdefault(episode_key, {"task": sample_task, "latency": latency, "items": []})
+                entry["items"].append((base_idx, sample_spec.comp_fn(teacher_vec), sample_spec.comp_fn(model_vec)))
+
+        frame_records = []
+        for ep_task, dataset_index, episode_key, episode_latency_value, frames in assigned:
+            for flat_idx, base_idx in frames:
+                frame_records.append((
+                    int(dataset_index),
+                    int(flat_idx),
+                    str(episode_key),
+                    int(base_idx),
+                    str(ep_task),
+                    episode_latency_value,
+                ))
+
+        eval_num_workers = getattr(self.config.datasets.vla_data, "eval_num_workers", None)
+        if eval_num_workers is None:
+            eval_num_workers = self.config.datasets.vla_data.num_workers
+        eval_num_workers = int(eval_num_workers)
+        dataloader_kwargs = {
+            "pin_memory": _as_bool(self.config.datasets.vla_data.pin_memory),
+        }
+        if eval_num_workers > 0:
+            dataloader_kwargs["multiprocessing_context"] = "spawn"
+            dataloader_kwargs["persistent_workers"] = _as_bool(self.config.datasets.vla_data.persistent_workers)
+            if "prefetch_factor" in self.config.datasets.vla_data:
+                dataloader_kwargs["prefetch_factor"] = int(self.config.datasets.vla_data.prefetch_factor)
+        frame_loader_key = (tuple(frame_records), bs, eval_num_workers)
+        if self._action_cc_f1_frame_loader_key != frame_loader_key:
+            self._action_cc_f1_frame_loader = DataLoader(
+                _ActionCCF1FrameDataset(single_datasets, frame_records),
+                batch_size=bs,
+                shuffle=False,
+                collate_fn=_identity_collate,
+                num_workers=eval_num_workers,
+                **dataloader_kwargs,
+            )
+            self._action_cc_f1_frame_loader_key = frame_loader_key
+        frame_loader = self._action_cc_f1_frame_loader
+
+        data_wait_seconds = 0.0
+        predict_seconds = 0.0
+        processed_frames = 0
         with torch.no_grad():
-            for start in range(0, len(tagged), bs):
-                chunk = tagged[start : start + bs]
-                normalized = unwrapped.predict_action(examples=[c[4] for c in chunk])["normalized_actions"]
-                for i, (sample_task, episode_key, base_idx, latency, sample) in enumerate(chunk):
-                    sample_task = str(sample_task)
-                    sample_spec = _spec_for_task(sample_task)
-                    teacher_vec = np.asarray(sample["action"])[0, :]
-                    model_vec = normalized[i, 0, :]
-                    entry = per_ep.setdefault(episode_key, {"task": sample_task, "latency": latency, "items": []})
-                    entry["items"].append((base_idx, sample_spec.comp_fn(teacher_vec), sample_spec.comp_fn(model_vec)))
+            t_data_start = time.perf_counter()
+            for chunk in frame_loader:
+                t_data_end = time.perf_counter()
+                data_wait_seconds += t_data_end - t_data_start
+                t_predict_start = time.perf_counter()
+                flush_chunk(chunk)
+                predict_seconds += time.perf_counter() - t_predict_start
+                processed_frames += len(chunk)
+                t_data_start = time.perf_counter()
 
         if was_training:
             self.model.train()
@@ -1461,6 +1587,18 @@ class VLATrainer(TrainerUtils):
                             key = f"eval/{task_name}/latency_{int(latency)}/{key}"
                         step_metrics[key] = value
 
+        data_wait_t = torch.tensor(data_wait_seconds, device=self.accelerator.device, dtype=torch.float32)
+        predict_t = torch.tensor(predict_seconds, device=self.accelerator.device, dtype=torch.float32)
+        frames_t = torch.tensor(float(processed_frames), device=self.accelerator.device, dtype=torch.float32)
+        if dist.is_initialized():
+            dist.all_reduce(data_wait_t, op=dist.ReduceOp.MAX)
+            dist.all_reduce(predict_t, op=dist.ReduceOp.MAX)
+            dist.all_reduce(frames_t, op=dist.ReduceOp.SUM)
+        if self.accelerator.is_main_process:
+            step_metrics["eval/action_classification/data_wait_seconds"] = data_wait_t.item()
+            step_metrics["eval/action_classification/predict_seconds"] = predict_t.item()
+            step_metrics["eval/action_classification/frames"] = frames_t.item()
+
         _distributed_barrier()
         return step_metrics
 
@@ -1475,35 +1613,61 @@ class VLATrainer(TrainerUtils):
 
     def _train_step(self, batch_vla, batch_vlm=None):
         """Execute single training step."""
+        profile_next_step = self.completed_steps + 1
+        profile_log = self._profile_timing_should_log(profile_next_step)
+        profile_metrics = {}
         with self.accelerator.accumulate(self.model):
-            self.optimizer.zero_grad()
-
+            t_forward = self._profile_start() if profile_log else None
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
                 action_loss = output_dict["action_loss"]
                 total_loss = action_loss
+            if profile_log:
+                profile_metrics["timing/forward"] = self._profile_elapsed(t_forward)
+                profile_metrics.update(output_dict["timing"])
+                profile_metrics.update(output_dict["batch_stats"])
 
+            t_backward = self._profile_start() if profile_log else None
             self.accelerator.backward(total_loss)
+            if profile_log:
+                profile_metrics["timing/backward"] = self._profile_elapsed(t_backward)
 
             grad_norm = None
-            if self.config.trainer.gradient_clipping is not None:
+            gradients_synced = self.accelerator.sync_gradients
+            t_grad = self._profile_start() if profile_log else None
+            if gradients_synced and self.config.trainer.gradient_clipping is not None:
                 grad_norm = self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
-            elif self.accelerator.sync_gradients:
+            elif gradients_synced:
                 grad_norm = self._total_grad_norm(self.model.parameters())
+            if profile_log:
+                profile_metrics["timing/grad_clip_or_norm"] = self._profile_elapsed(t_grad)
 
+            t_optimizer = self._profile_start() if profile_log else None
             self.optimizer.step()
+            if profile_log:
+                profile_metrics["timing/optimizer_step"] = self._profile_elapsed(t_optimizer)
             # Only step the LR scheduler when gradients are actually synced
             # (i.e., not mid-accumulation). Without this guard the scheduler
             # runs gradient_accumulation_steps times faster than intended,
             # causing warmup to end too early and cosine decay to bottom out
             # at min_lr well before max_train_steps is reached.
-            if self.accelerator.sync_gradients:
+            t_scheduler = self._profile_start() if profile_log else None
+            if gradients_synced:
                 self.lr_scheduler.step()
+            if profile_log:
+                profile_metrics["timing/lr_scheduler"] = self._profile_elapsed(t_scheduler)
+            t_zero_grad = self._profile_start() if profile_log else None
+            self.optimizer.zero_grad()
+            if profile_log:
+                profile_metrics["timing/zero_grad"] = self._profile_elapsed(t_zero_grad)
 
+        if not gradients_synced:
+            return {}
         action_loss_value = action_loss.item()
         metrics = {
             "train/loss": action_loss_value,
         }
+        metrics.update(profile_metrics)
         if grad_norm is not None:
             if isinstance(grad_norm, torch.Tensor):
                 grad_norm = grad_norm.detach().float().item()
@@ -1588,6 +1752,9 @@ def main(cfg) -> None:
     if hasattr(cfg, "rl_games"):
         login_training_services(cfg, workspace_dir=getattr(cfg, "workspace_dir", None))
         validate_rl_games_config(cfg)
+    # Keep the obs window tied to the KV-memory rollout length before the config is
+    # wrapped/consumed by the dataloader and framework.
+    sync_kv_memory_obs_window(cfg)
     apply_model_alias(cfg)
     apply_action_spec(cfg)
 

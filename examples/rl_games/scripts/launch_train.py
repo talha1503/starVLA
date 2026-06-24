@@ -102,14 +102,6 @@ def _workspace_dir(cfg: Any) -> Path:
     return REPO_ROOT
 
 
-def _latencies_expr(values: Any) -> str | None:
-    if values in (None, ""):
-        return None
-    if isinstance(values, str):
-        values = [item.strip() for item in values.split(",") if item.strip()]
-    return "[" + ",".join(str(int(value)) for value in values) + "]"
-
-
 def _csv_int_list_expr(value: Any) -> str | None:
     if value in (None, ""):
         return None
@@ -119,6 +111,8 @@ def _csv_int_list_expr(value: Any) -> str | None:
 
 
 def _hydra_value(value: Any) -> str:
+    if value is None:
+        return "null"
     if isinstance(value, bool):
         return str(value).lower()
     if OmegaConf.is_config(value):
@@ -130,6 +124,46 @@ def _hydra_value(value: Any) -> str:
     if isinstance(value, str) and any(ch.isspace() or ch in {",", ":", "{", "}", "[", "]"} for ch in value):
         return "'" + value.replace("'", "\\'") + "'"
     return str(value)
+
+
+CONFIG_GROUP_KEYS = {"model", "env", "init", "mode"}
+TRAINER_COMMAND_EXCLUDED_ROOTS = {
+    "config_name",
+    "hydra",
+    "launch",
+    "conda",
+    "preprocess_cmd",
+    "wandb_entity",
+    "wandb_project",
+}
+
+
+def _iter_leaf_overrides(node: Any, prefix: str = ""):
+    if OmegaConf.is_config(node):
+        node = OmegaConf.to_container(node, resolve=False)
+    if isinstance(node, dict):
+        for key, value in node.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            yield from _iter_leaf_overrides(value, path)
+        return
+    yield prefix, node
+
+
+def _is_trainer_command_leaf(path: str) -> bool:
+    root = path.split(".", 1)[0]
+    return root not in CONFIG_GROUP_KEYS and root not in TRAINER_COMMAND_EXCLUDED_ROOTS
+
+
+def _append_leaf_override(cmd: list[str], path: str, value: Any) -> None:
+    cmd.append(f"++{path}={_hydra_value(value)}")
+
+
+def _append_config_leaf_overrides(cmd: list[str], cfg: Any) -> None:
+    for path, value in _iter_leaf_overrides(cfg):
+        if _is_trainer_command_leaf(path):
+            if isinstance(cfg, DictConfig):
+                value = OmegaConf.select(cfg, path)
+            _append_leaf_override(cmd, path, value)
 
 
 def _append_cross_task_train_task_cli_overrides(hydra_overrides: list[str], cli_args: argparse.Namespace) -> None:
@@ -152,63 +186,6 @@ def _append_cross_task_train_task_cli_overrides(hydra_overrides: list[str], cli_
         latencies = _csv_int_list_expr(getattr(cli_args, f"{prefix}_latencies", None))
         if latencies:
             hydra_overrides.append(f"{hydra_prefix}.train_latency_filter={latencies}")
-
-
-def _append_override(cmd: list[str], cfg: Any, cfg_path: str, hydra_path: str) -> None:
-    value = _cfg_get(cfg, cfg_path)
-    if value is None or value == "":
-        return
-    cmd.append(f"{hydra_path}={_hydra_value(value)}")
-
-
-def _append_eval_stage_overrides(cmd: list[str], cfg: Any, stage_name: str, hydra_name: str) -> None:
-    prefix = f"rl_games.{stage_name}"
-    hydra_prefix = f"rl_games.env_eval.{hydra_name}"
-
-    for cfg_key, hydra_key in (
-        ("enabled", "enabled"),
-        ("interval_steps", "interval_steps"),
-        ("num_episodes", "num_episodes"),
-        ("max_steps_per_episode", "max_steps_per_episode"),
-    ):
-        value = _cfg_get(cfg, f"{prefix}.{cfg_key}")
-        if value not in (None, ""):
-            cmd.append(f"{hydra_prefix}.{hydra_key}={_hydra_value(value)}")
-
-    latencies = _cfg_get(cfg, f"{prefix}.latencies")
-    if latencies not in (None, ""):
-        cmd.append(f"{hydra_prefix}.latencies={_latencies_expr(latencies)}")
-
-
-def _mapping_items(value: Any):
-    if value in (None, ""):
-        return []
-    if OmegaConf.is_config(value):
-        value = OmegaConf.to_container(value, resolve=True)
-    if isinstance(value, dict):
-        return value.items()
-    return []
-
-
-def _append_cross_task_eval_overrides(cmd: list[str], cfg: Any) -> None:
-    eval_tasks = _cfg_get(cfg, "rl_games.cross_task.eval_tasks")
-    for task_name, task_cfg in _mapping_items(eval_tasks):
-        base = f"rl_games.cross_task.eval_tasks.{task_name}"
-        for key in ("frameskip", "image_size", "task_description", "prompt_map_path"):
-            value = _cfg_get(task_cfg, key)
-            if value not in (None, ""):
-                cmd.append(f"{base}.{key}={_hydra_value(value)}")
-
-        for stage in ("mid_train", "post_train"):
-            stage_cfg = _cfg_get(task_cfg, stage)
-            stage_base = f"{base}.{stage}"
-            for key in ("enabled", "num_episodes", "max_steps_per_episode"):
-                value = _cfg_get(stage_cfg, key)
-                if value not in (None, ""):
-                    cmd.append(f"{stage_base}.{key}={_hydra_value(value)}")
-            latencies = _cfg_get(stage_cfg, "latencies")
-            if latencies not in (None, ""):
-                cmd.append(f"{stage_base}.latencies={_latencies_expr(latencies)}")
 
 
 def _safe_suffix(value: Any) -> str:
@@ -353,199 +330,37 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
         f"env={_cfg_get(cfg, 'env')}",
         f"init={_cfg_get(cfg, 'init')}",
         f"mode={_cfg_get(cfg, 'mode')}",
-        f"run_id={_cfg_get(cfg, 'run_id')}",
-        f"run_root_dir={run_root_dir}",
-        f"seed={_cfg_get(cfg, 'seed') or 42}",
-        f"wandb_entity={_cfg_get(cfg, 'wandb_entity') or 'your_wandb_entity'}",
-        f"wandb_project={_cfg_get(cfg, 'wandb_project') or 'starVLA_rl_games'}",
-        f"rl_games.env_eval.enabled={str(_as_bool(_cfg_get(cfg, 'rl_games.env_eval.enabled'))).lower()}",
-        f"checkpoint.sync.enabled={str(_as_bool(_cfg_get(cfg, 'checkpoint.sync.enabled'))).lower()}",
-        f"checkpoint.sync.keep_last_n={_cfg_get(cfg, 'checkpoint.sync.keep_last_n') or 0}",
-        f"checkpoint.local.keep_last_n={_default_if_empty(_cfg_get(cfg, 'checkpoint.local.keep_last_n'), 1)}",
-        f"checkpoint.save_best_model={str(_as_bool_default(_cfg_get(cfg, 'checkpoint.save_best_model'), True)).lower()}",
-        f"checkpoint.save_pt_file={str(_as_bool_default(_cfg_get(cfg, 'checkpoint.save_pt_file'), False)).lower()}",
-        f"trainer.is_resume={str(bool(setup.get('resume_found'))).lower()}",
     ]
+    _append_config_leaf_overrides(cmd, cfg)
+    _append_leaf_override(cmd, "run_root_dir", run_root_dir)
+    _append_leaf_override(cmd, "trainer.is_resume", bool(setup.get("resume_found")))
 
     if setup.get("resume_checkpoint"):
-        cmd.append(f"trainer.pretrained_checkpoint={setup['resume_checkpoint']}")
-        cmd.append(f"trainer.resume_step={int(setup.get('resume_step') or 0)}")
+        _append_leaf_override(cmd, "trainer.pretrained_checkpoint", setup["resume_checkpoint"])
+        _append_leaf_override(cmd, "trainer.resume_step", int(setup.get("resume_step") or 0))
     elif setup.get("pretrained_checkpoint"):
-        cmd.append(f"trainer.pretrained_checkpoint={setup['pretrained_checkpoint']}")
-        cmd.append("trainer.resume_step=0")
-
-    for cfg_path, hydra_path in (
-        ("trainer.max_train_steps", "trainer.max_train_steps"),
-        ("trainer.num_warmup_steps", "trainer.num_warmup_steps"),
-        ("trainer.save_interval", "trainer.save_interval"),
-        ("trainer.eval_interval", "trainer.eval_interval"),
-        ("trainer.eval_num_batches", "trainer.eval_num_batches"),
-        ("trainer.per_latency_eval_num_batches", "trainer.per_latency_eval_num_batches"),
-        ("trainer.logging_frequency", "trainer.logging_frequency"),
-        ("trainer.gradient_accumulation_steps", "trainer.gradient_accumulation_steps"),
-        ("trainer.distributed_backend", "trainer.distributed_backend"),
-        ("trainer.learning_rate.base", "trainer.learning_rate.base"),
-        ("trainer.learning_rate.qwen_vl_interface", "trainer.learning_rate.qwen_vl_interface"),
-        ("trainer.learning_rate.action_model", "trainer.learning_rate.action_model"),
-        ("trainer.lr_scheduler_type", "trainer.lr_scheduler_type"),
-        ("trainer.scheduler_specific_kwargs.min_lr", "trainer.scheduler_specific_kwargs.min_lr"),
-        ("trainer.freeze_modules", "trainer.freeze_modules"),
-        ("trainer.loss_scale.vla", "trainer.loss_scale.vla"),
-        ("trainer.loss_scale.vlm", "trainer.loss_scale.vlm"),
-        ("trainer.max_grad_norm", "trainer.max_grad_norm"),
-        ("trainer.weight_decay", "trainer.weight_decay"),
-        ("trainer.gradient_clipping", "trainer.gradient_clipping"),
-        ("trainer.optimizer.name", "trainer.optimizer.name"),
-        ("trainer.optimizer.betas", "trainer.optimizer.betas"),
-        ("trainer.optimizer.eps", "trainer.optimizer.eps"),
-        ("trainer.optimizer.weight_decay", "trainer.optimizer.weight_decay"),
-        ("trainer.optimizer.fused", "trainer.optimizer.fused"),
-        ("trainer.reload_modules", "trainer.reload_modules"),
-        ("trainer.save_format", "trainer.save_format"),
-        ("framework.name", "framework.name"),
-        ("framework.qwenvl.attn_implementation", "framework.qwenvl.attn_implementation"),
-        ("framework.qwenvl.enable_gradient_checkpointing", "framework.qwenvl.enable_gradient_checkpointing"),
-        ("framework.world_model.base_wm", "framework.world_model.base_wm"),
-        ("framework.world_model.extract_layers", "framework.world_model.extract_layers"),
-        ("framework.action_model.action_model_type", "framework.action_model.action_model_type"),
-        ("framework.action_model.action_dim", "framework.action_model.action_dim"),
-        ("framework.action_model.action_env_dim", "framework.action_model.action_env_dim"),
-        ("framework.action_model.state_dim", "framework.action_model.state_dim"),
-        ("framework.action_model.loss_type", "framework.action_model.loss_type"),
-        ("framework.action_model.action_horizon", "framework.action_model.action_horizon"),
-        ("framework.action_model.future_action_window_size", "framework.action_model.future_action_window_size"),
-        ("framework.action_model.past_action_window_size", "framework.action_model.past_action_window_size"),
-        ("framework.action_model.repeated_diffusion_steps", "framework.action_model.repeated_diffusion_steps"),
-        ("framework.action_model.num_inference_timesteps", "framework.action_model.num_inference_timesteps"),
-        ("framework.action_model.num_target_vision_tokens", "framework.action_model.num_target_vision_tokens"),
-        ("framework.action_model.add_pos_embed", "framework.action_model.add_pos_embed"),
-        ("framework.action_model.max_seq_len", "framework.action_model.max_seq_len"),
-        ("framework.action_model.hidden_size", "framework.action_model.hidden_size"),
-        ("framework.action_model.action_hidden_dim", "framework.action_model.action_hidden_dim"),
-        ("framework.action_model.noise_beta_alpha", "framework.action_model.noise_beta_alpha"),
-        ("framework.action_model.noise_beta_beta", "framework.action_model.noise_beta_beta"),
-        ("framework.action_model.noise_s", "framework.action_model.noise_s"),
-        ("framework.action_model.num_timestep_buckets", "framework.action_model.num_timestep_buckets"),
-        (
-            "framework.action_model.diffusion_model_cfg.action_dit_hidden_dim",
-            "framework.action_model.diffusion_model_cfg.action_dit_hidden_dim",
-        ),
-        (
-            "framework.action_model.diffusion_model_cfg.cross_attention_dim",
-            "framework.action_model.diffusion_model_cfg.cross_attention_dim",
-        ),
-        ("framework.action_model.diffusion_model_cfg.dropout", "framework.action_model.diffusion_model_cfg.dropout"),
-        (
-            "framework.action_model.diffusion_model_cfg.final_dropout",
-            "framework.action_model.diffusion_model_cfg.final_dropout",
-        ),
-        (
-            "framework.action_model.diffusion_model_cfg.interleave_self_attention",
-            "framework.action_model.diffusion_model_cfg.interleave_self_attention",
-        ),
-        ("framework.action_model.diffusion_model_cfg.norm_type", "framework.action_model.diffusion_model_cfg.norm_type"),
-        (
-            "framework.action_model.diffusion_model_cfg.num_layers",
-            "framework.action_model.diffusion_model_cfg.num_layers",
-        ),
-        ("framework.action_model.diffusion_model_cfg.output_dim", "framework.action_model.diffusion_model_cfg.output_dim"),
-        (
-            "framework.action_model.diffusion_model_cfg.positional_embeddings",
-            "framework.action_model.diffusion_model_cfg.positional_embeddings",
-        ),
-        (
-            "framework.action_model.diffusion_model_cfg.attention_head_dim",
-            "framework.action_model.diffusion_model_cfg.attention_head_dim",
-        ),
-        ("datasets.vla_data.include_state", "datasets.vla_data.include_state"),
-        ("datasets.vla_data.action_type", "datasets.vla_data.action_type"),
-        ("datasets.vla_data.sequential_step_sampling", "datasets.vla_data.sequential_step_sampling"),
-        ("datasets.vla_data.shuffle", "datasets.vla_data.shuffle"),
-        ("datasets.vla_data.action_balance.enabled", "datasets.vla_data.action_balance.enabled"),
-        ("datasets.vla_data.action_balance.strategy", "datasets.vla_data.action_balance.strategy"),
-        ("datasets.vla_data.action_balance.action_key", "datasets.vla_data.action_balance.action_key"),
-        ("datasets.vla_data.action_balance.target_flap_fraction", "datasets.vla_data.action_balance.target_flap_fraction"),
-        ("datasets.vla_data.action_balance.noop_id", "datasets.vla_data.action_balance.noop_id"),
-        ("datasets.vla_data.action_balance.flap_id", "datasets.vla_data.action_balance.flap_id"),
-        ("datasets.vla_data.latency_curriculum.enabled", "datasets.vla_data.latency_curriculum.enabled"),
-        ("datasets.vla_data.latency_curriculum.strategy", "datasets.vla_data.latency_curriculum.strategy"),
-        ("datasets.vla_data.latency_curriculum.latencies", "datasets.vla_data.latency_curriculum.latencies"),
-        ("datasets.vla_data.latency_curriculum.phase_steps", "datasets.vla_data.latency_curriculum.phase_steps"),
-        ("datasets.vla_data.per_device_batch_size", "datasets.vla_data.per_device_batch_size"),
-        ("datasets.vla_data.load_all_data_for_training", "datasets.vla_data.load_all_data_for_training"),
-        ("datasets.vla_data.obs_image_size", "datasets.vla_data.obs_image_size"),
-        ("datasets.vla_data.video_backend", "datasets.vla_data.video_backend"),
-        ("datasets.vla_data.observation_indices", "datasets.vla_data.observation_indices"),
-        ("datasets.vla_data.language_indices", "datasets.vla_data.language_indices"),
-        ("datasets.vla_data.state_indices", "datasets.vla_data.state_indices"),
-        ("datasets.vla_data.action_indices", "datasets.vla_data.action_indices"),
-        ("datasets.vla_data.pack_image_sequence", "datasets.vla_data.pack_image_sequence"),
-        ("datasets.vla_data.image_sequence_length", "datasets.vla_data.image_sequence_length"),
-    ):
-        _append_override(cmd, cfg, cfg_path, hydra_path)
+        _append_leaf_override(cmd, "trainer.pretrained_checkpoint", setup["pretrained_checkpoint"])
+        _append_leaf_override(cmd, "trainer.resume_step", 0)
 
     data_root = setup.get("dataset_local_dir") or _resolve_path(_cfg_get(cfg, "paths.dataset_local_dir"), workspace_dir)
-    cmd.append(f"datasets.vla_data.data_root_dir={data_root}")
+    _append_leaf_override(cmd, "datasets.vla_data.data_root_dir", data_root)
 
-    data_mix = setup.get("data_mix") or _cfg_get(cfg, "datasets.vla_data.data_mix")
-    eval_data_mix = setup.get("eval_data_mix") or _cfg_get(cfg, "datasets.vla_data.eval_data_mix")
-    custom_mixtures_path = setup.get("custom_mixtures_path") or _cfg_get(
-        cfg,
-        "datasets.vla_data.custom_mixtures_path",
-    )
-    if data_mix not in (None, ""):
-        cmd.append(f"datasets.vla_data.data_mix={data_mix}")
-    if eval_data_mix not in (None, ""):
-        cmd.append(f"datasets.vla_data.eval_data_mix={eval_data_mix}")
-    if custom_mixtures_path not in (None, ""):
-        cmd.append(f"datasets.vla_data.custom_mixtures_path={custom_mixtures_path}")
+    if setup.get("data_mix"):
+        _append_leaf_override(cmd, "datasets.vla_data.data_mix", setup["data_mix"])
+    if setup.get("eval_data_mix"):
+        _append_leaf_override(cmd, "datasets.vla_data.eval_data_mix", setup["eval_data_mix"])
+    if setup.get("custom_mixtures_path"):
+        _append_leaf_override(cmd, "datasets.vla_data.custom_mixtures_path", setup["custom_mixtures_path"])
     if setup.get("base_model_dir"):
-        cmd.append(f"framework.qwenvl.base_vlm={setup['base_model_dir']}")
+        _append_leaf_override(cmd, "framework.qwenvl.base_vlm", setup["base_model_dir"])
         if _cfg_get(cfg, "framework.world_model.base_wm") not in (None, ""):
-            cmd.append(f"framework.world_model.base_wm={setup['base_model_dir']}")
+            _append_leaf_override(cmd, "framework.world_model.base_wm", setup["base_model_dir"])
 
-    for hydra_key, cfg_path in (
-        ("rl_games.task", "rl_games.task"),
-        ("rl_games.model_alias", "rl_games.model_alias"),
-        ("rl_games.initialization_mode", "rl_games.initialization_mode"),
-        ("rl_games.action_carrier", "rl_games.action_carrier"),
-        ("rl_games.cross_task.loss_by_task", "rl_games.cross_task.loss_by_task"),
-        ("rl_games.cross_task.loss_weight_by_task", "rl_games.cross_task.loss_weight_by_task"),
-        ("rl_games.env_eval.distributed_mode", "rl_games.env_eval.distributed_mode"),
-        ("rl_games.env_eval.latency.mode", "rl_games.env_eval.latency.mode"),
-        ("rl_games.env_eval.frameskip", "rl_games.env_eval.frameskip"),
-        ("rl_games.env_eval.image_size", "rl_games.env_eval.image_size"),
-        ("rl_games.env_eval.seed", "rl_games.env_eval.seed"),
-        ("rl_games.env_eval.fixed_episode_seeds", "rl_games.env_eval.fixed_episode_seeds"),
-        ("rl_games.env_eval.latency_seed_stride", "rl_games.env_eval.latency_seed_stride"),
-        ("rl_games.env_eval.task_seed_stride", "rl_games.env_eval.task_seed_stride"),
-        ("rl_games.env_eval.task_description", "rl_games.env_eval.task_description"),
-    ):
-        value = _cfg_get(cfg, cfg_path)
-        if value not in (None, ""):
-            cmd.append(f"{hydra_key}={_hydra_value(value)}")
-
-    latencies = _latencies_expr(_cfg_get(cfg, "rl_games.env_eval.latency.values"))
-    if latencies:
-        cmd.append(f"rl_games.env_eval.latency.values={latencies}")
-
-    prompt_map = setup.get("latency_prompt_map_path") or _cfg_get(cfg, "rl_games.env_eval.latency.prompt_map_path")
+    prompt_map = setup.get("latency_prompt_map_path")
     if prompt_map not in (None, ""):
-        cmd.append(f"rl_games.env_eval.latency.prompt_map_path={prompt_map}")
+        _append_leaf_override(cmd, "rl_games.env_eval.latency.prompt_map_path", prompt_map)
     for task_name, task_prompt_map in (setup.get("cross_task_prompt_maps") or {}).items():
-        cmd.append(f"rl_games.cross_task.eval_tasks.{task_name}.prompt_map_path={task_prompt_map}")
-
-    _append_cross_task_eval_overrides(cmd, cfg)
-    _append_eval_stage_overrides(cmd, cfg, "env_eval.mid_train", "mid_train")
-    _append_eval_stage_overrides(cmd, cfg, "env_eval.post_train", "post_train")
-
-    if str(_cfg_get(cfg, "env")) == "deadly_corridor" or str(_cfg_get(cfg, "rl_games.task") or "") == "deadly_corridor":
-        action_layout = _cfg_get(cfg, "rl_games.env_eval.deadly.action_layout") or "multibinary_7"
-        cmd.append(f"rl_games.env_eval.deadly.action_layout={action_layout}")
-
-    sync_repo_id = _cfg_get(cfg, "checkpoint.sync.repo_id")
-    if sync_repo_id not in (None, ""):
-        cmd.append(f"checkpoint.sync.repo_id={sync_repo_id}")
+        _append_leaf_override(cmd, f"rl_games.cross_task.eval_tasks.{task_name}.prompt_map_path", task_prompt_map)
 
     return cmd
 

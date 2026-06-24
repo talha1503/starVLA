@@ -9,6 +9,7 @@ __pycache__/
 *.so
 
 *.ini
+ghost_trail_test_outputs/
 
 # Distribution / packaging
 .Python
