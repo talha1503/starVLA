@@ -2392,6 +2392,8 @@ class LeRobotMixtureDataset(Dataset):
         self._action_balance_cfg = {}
         self._action_balance_enabled = False
         self._active_latency_filter: set[int] | None = None
+        self._active_latency_quotas: dict[int, float] | None = None
+        self._active_latency_quota_starts: dict[int, float] = {}
         if self.data_cfg is not None:
             seq_cfg = self.data_cfg.get("sequential_step_sampling", True)
             self._sequential_step_sampling = _as_bool(seq_cfg, default=True)
@@ -2465,7 +2467,82 @@ class LeRobotMixtureDataset(Dataset):
                 "so the active latency subset can be changed deterministically."
             )
         self._active_latency_filter = None if latencies is None else {int(value) for value in latencies}
+        self._active_latency_quotas = None
+        self._active_latency_quota_starts = {}
         self._rebuild_step_order(getattr(self, "epoch", 0))
+
+    def set_latency_quota_filter(
+        self,
+        quotas: dict[int, float] | None,
+        *,
+        quota_starts: dict[int, float] | None = None,
+    ) -> None:
+        """Restrict sequential step sampling with per-latency pass quotas."""
+        if not self._sequential_step_sampling:
+            raise ValueError(
+                "latency quota curriculum requires datasets.vla_data.sequential_step_sampling=true "
+                "so the phase subset can be changed deterministically."
+            )
+        if quotas is None:
+            self._active_latency_quotas = None
+            self._active_latency_filter = None
+            self._active_latency_quota_starts = {}
+        else:
+            cleaned = {int(latency): float(quota) for latency, quota in quotas.items() if float(quota) > 0.0}
+            if not cleaned:
+                raise ValueError("latency quota curriculum requires at least one positive latency quota.")
+            self._active_latency_quotas = cleaned
+            starts = quota_starts or {}
+            self._active_latency_quota_starts = {
+                latency: float(starts.get(latency, 0.0))
+                for latency in cleaned
+            }
+            self._active_latency_filter = set(cleaned)
+        self._rebuild_step_order(getattr(self, "epoch", 0))
+
+    def get_latency_step_counts(self) -> dict[int, int]:
+        """Return the number of sequential training steps available per latency."""
+        counts: dict[int, int] = {}
+        for dataset in self.datasets:
+            for latency in dataset.get_latencies_for_all_steps():
+                latency = int(latency)
+                counts[latency] = counts.get(latency, 0) + 1
+        return counts
+
+    def _quota_step_indices(
+        self,
+        indices: list[int],
+        quota: float,
+        *,
+        latency: int,
+        pass_start: float = 0.0,
+    ) -> list[int]:
+        """Select deterministic rows from the pass interval [pass_start, pass_start + quota)."""
+        if quota <= 0.0 or not indices:
+            return []
+        selected: list[int] = []
+        cursor = float(pass_start)
+        remaining = float(quota)
+        num_indices = len(indices)
+        eps = 1e-9
+        while remaining > eps:
+            pass_idx = int(np.floor(cursor))
+            frac_start = cursor - pass_idx
+            if 1.0 - frac_start <= eps:
+                cursor = float(pass_idx + 1)
+                continue
+            segment = min(remaining, 1.0 - frac_start)
+            frac_end = frac_start + segment
+            pass_indices = list(indices)
+            seed = safe_hash((self.seed, "latency_quota_pass", latency, pass_idx)) & 0xFFFFFFFF
+            rng = np.random.default_rng(seed)
+            rng.shuffle(pass_indices)
+            start_idx = int(np.ceil(float(num_indices) * frac_start - eps))
+            end_idx = int(np.ceil(float(num_indices) * frac_end - eps))
+            selected.extend(pass_indices[start_idx:min(num_indices, end_idx)])
+            cursor += segment
+            remaining -= segment
+        return selected
 
     def _rebuild_step_order(self, epoch: int) -> None:
         """Build deterministic step order for sequential sampling."""
@@ -2473,26 +2550,47 @@ class LeRobotMixtureDataset(Dataset):
             return
 
         flat_steps: list[tuple[int, int]] = []
-        for dataset_index, dataset in enumerate(self.datasets):
-            if self._active_latency_filter is None:
-                flat_steps.extend(
-                    (dataset_index, step_index)
-                    for step_index in range(len(dataset.all_steps))
-                )
-            else:
+        if self._active_latency_quotas is not None:
+            candidate_steps_by_latency: dict[int, list[tuple[int, int]]] = {
+                int(latency): [] for latency in self._active_latency_quotas
+            }
+            for dataset_index, dataset in enumerate(self.datasets):
                 step_latencies = dataset.get_latencies_for_all_steps()
+                for step_index, latency in enumerate(step_latencies):
+                    latency = int(latency)
+                    if latency in candidate_steps_by_latency:
+                        candidate_steps_by_latency[latency].append((dataset_index, step_index))
+            for latency, quota in sorted(self._active_latency_quotas.items()):
+                candidates = candidate_steps_by_latency.get(int(latency), [])
                 flat_steps.extend(
-                    (dataset_index, step_index)
-                    for step_index, latency in enumerate(step_latencies)
-                    if int(latency) in self._active_latency_filter
+                    self._quota_step_indices(
+                        candidates,
+                        float(quota),
+                        latency=int(latency),
+                        pass_start=float(self._active_latency_quota_starts.get(int(latency), 0.0)),
+                    )
                 )
+        else:
+            for dataset_index, dataset in enumerate(self.datasets):
+                if self._active_latency_filter is None:
+                    flat_steps.extend(
+                        (dataset_index, step_index)
+                        for step_index in range(len(dataset.all_steps))
+                    )
+                else:
+                    step_latencies = dataset.get_latencies_for_all_steps()
+                    flat_steps.extend(
+                        (dataset_index, step_index)
+                        for step_index, latency in enumerate(step_latencies)
+                        if int(latency) in self._active_latency_filter
+                    )
 
         self._flat_steps = flat_steps
         self._flat_action_ids = np.array([], dtype=np.int64)
         self._noop_step_order = np.array([], dtype=np.int64)
         self._flap_step_order = np.array([], dtype=np.int64)
         self._other_step_order = np.array([], dtype=np.int64)
-        if self._active_latency_filter is not None and len(flat_steps) == 0:
+        if (self._active_latency_filter is not None or self._active_latency_quotas is not None) and len(flat_steps) == 0:
             available = sorted(
                 {
                     int(latency)

@@ -42,6 +42,7 @@ Usage:
 """
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -72,6 +73,7 @@ MIN_COMPONENT_AREA = 2  # px, drops stray single-pixel noise
 
 GAMMA = 0.7
 MIN_ALPHA = 35
+MAX_ALPHA = 255
 
 
 def foreground_components(frame: np.ndarray) -> list[tuple[tuple[float, float], np.ndarray]]:
@@ -176,7 +178,13 @@ def truncate_by_direction(
     return [history[i] for i in kept]
 
 
-def composite_all_entities(frames: list[np.ndarray]) -> np.ndarray:
+def composite_all_entities(
+    frames: list[np.ndarray],
+    *,
+    gamma: float = GAMMA,
+    min_alpha: int = MIN_ALPHA,
+    max_alpha: int = MAX_ALPHA,
+) -> np.ndarray:
     n = len(frames)
     H, W = frames[0].shape[:2]
     current_idx = n - 1
@@ -195,8 +203,10 @@ def composite_all_entities(frames: list[np.ndarray]) -> np.ndarray:
 
         kept = truncate_by_direction(history)
         for frame_idx, _, mask in kept[:-1]:  # exclude the current-frame entry itself
-            x = (frame_idx + 1) / (n - 1)
-            alpha_value = (MIN_ALPHA + (255 - MIN_ALPHA) * (x**GAMMA)) / 255.0
+            # Normalize against the current frame too, so the immediately
+            # previous ghost is still below the max opacity ceiling.
+            x = (frame_idx + 1) / n
+            alpha_value = (min_alpha + (max_alpha - min_alpha) * (x**gamma)) / 255.0
             alpha_acc[mask] += alpha_value
             color_acc[mask] += alpha_value * frames[frame_idx][mask].astype(np.float32)
 
@@ -214,12 +224,26 @@ def composite_all_entities(frames: list[np.ndarray]) -> np.ndarray:
 
 
 def main() -> None:
-    if not BIDIRECTION_DIR.is_dir():
-        raise FileNotFoundError(f"expected bidirectional outputs at {BIDIRECTION_DIR}")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input-dir", default=str(BIDIRECTION_DIR))
+    parser.add_argument("--out-dir", default=str(OUT_DIR))
+    parser.add_argument("--gamma", type=float, default=GAMMA)
+    parser.add_argument("--min-alpha", type=int, default=MIN_ALPHA)
+    parser.add_argument("--max-alpha", type=int, default=MAX_ALPHA)
+    args = parser.parse_args()
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    input_dir = Path(args.input_dir)
+    out_root = Path(args.out_dir)
 
-    for set_dir in sorted(BIDIRECTION_DIR.iterdir()):
+    if not (0 <= args.min_alpha <= args.max_alpha <= 255):
+        raise ValueError("expected 0 <= min_alpha <= max_alpha <= 255")
+
+    if not input_dir.is_dir():
+        raise FileNotFoundError(f"expected bidirectional outputs at {input_dir}")
+
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    for set_dir in sorted(input_dir.iterdir()):
         if not set_dir.is_dir():
             continue
 
@@ -228,17 +252,22 @@ def main() -> None:
             continue
         frames = [np.array(Image.open(p).convert("RGB")) for p in frame_paths]
 
-        out_dir = OUT_DIR / set_dir.name
+        out_dir = out_root / set_dir.name
         out_dir.mkdir(parents=True, exist_ok=True)
         for p in set_dir.glob("frame_*.png"):
             Image.fromarray(np.array(Image.open(p).convert("RGB"))).save(out_dir / p.name)
 
-        composite = composite_all_entities(frames)
+        composite = composite_all_entities(
+            frames,
+            gamma=args.gamma,
+            min_alpha=args.min_alpha,
+            max_alpha=args.max_alpha,
+        )
         Image.fromarray(composite).save(out_dir / "ghost_trail_composite.png")
 
         print(f"{set_dir.name}: {len(frames)} frames -> {out_dir}")
 
-    print(f"Done. Outputs in {OUT_DIR}")
+    print(f"Done. Outputs in {out_root}")
 
 
 if __name__ == "__main__":
