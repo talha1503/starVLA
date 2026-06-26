@@ -96,6 +96,9 @@ def test_wan_oft_single_gpu_command_enables_held_out_eval_mix() -> None:
     assert "model=wan_oft" in command_text
     assert "env=flappy" in command_text
     assert "init=wan_oft_libero" in command_text
+    assert "trainer.distributed_backend=deepspeed" in command_text
+    assert "launch.use_accelerate=true" in command_text
+    assert "launch.num_processes=1" in command_text
     assert "datasets.vla_data.data_mix=flappy_train__bridge" in command_text
     assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in command_text
 
@@ -107,6 +110,9 @@ def test_wan_oft_chunk8_command_matches_released_checkpoint() -> None:
     assert "model=wan_oft" in command_text
     assert "env=flappy" in command_text
     assert "init=wan_oft_libero" in command_text
+    assert "trainer.distributed_backend=deepspeed" in command_text
+    assert "launch.use_accelerate=true" in command_text
+    assert "launch.num_processes=1" in command_text
     assert "run_id=wan_oft_flappy_fix_latency_0_context4_chunk8" in command_text
     assert "horizon1" not in command_text
     assert "framework.action_model.action_horizon=8" in command_text

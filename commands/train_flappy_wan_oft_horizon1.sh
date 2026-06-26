@@ -11,7 +11,9 @@ python examples/rl_games/scripts/launch_train.py \
   init=wan_oft_libero \
   run_id=wan_oft_flappy_fix_latency_0_context4_chunk8 \
   paths.dataset_local_dir=data/flappy_fix_latency_0_200ep_context4 \
-  trainer.distributed_backend=none \
+  trainer.distributed_backend=deepspeed \
+  launch.use_accelerate=true \
+  launch.num_processes=1 \
   trainer.gradient_accumulation_steps=16 \
   datasets.vla_data.per_device_batch_size=8 \
   datasets.vla_data.data_mix=flappy_train__bridge \
