@@ -14,6 +14,7 @@ Conventions:
 import argparse
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -120,6 +121,186 @@ def _optional_int_list(value) -> list[int] | None:
             return []
         return [int(item.strip()) for item in stripped.split(",") if item.strip()]
     return [int(item) for item in value]
+
+
+def _quota_interval_row_count(base_count: int, pass_start: float, quota: float) -> int:
+    """Rows selected by the pass interval [pass_start, pass_start + quota)."""
+    if int(base_count) <= 0 or float(quota) <= 0.0:
+        return 0
+    cursor = float(pass_start)
+    remaining = float(quota)
+    selected = 0
+    eps = 1e-9
+    while remaining > eps:
+        pass_idx = math.floor(cursor)
+        frac_start = cursor - pass_idx
+        if 1.0 - frac_start <= eps:
+            cursor = float(pass_idx + 1)
+            continue
+        segment = min(remaining, 1.0 - frac_start)
+        frac_end = frac_start + segment
+        start_idx = int(math.ceil(float(base_count) * frac_start - eps))
+        end_idx = int(math.ceil(float(base_count) * frac_end - eps))
+        selected += max(0, min(int(base_count), end_idx) - min(int(base_count), start_idx))
+        cursor += segment
+        remaining -= segment
+    return int(selected)
+
+
+def _latency_curriculum_cfg_from_config(cfg):
+    vla_data = getattr(getattr(cfg, "datasets", None), "vla_data", None)
+    if vla_data is None:
+        return None
+    curriculum_cfg = getattr(vla_data, "latency_curriculum", None)
+    if curriculum_cfg is None or not _as_bool(getattr(curriculum_cfg, "enabled", False), default=False):
+        return None
+    return curriculum_cfg
+
+
+def _dataset_latency_step_counts(dataset) -> dict[int, int]:
+    if dataset is not None and callable(getattr(dataset, "get_latency_step_counts", None)):
+        return {int(k): int(v) for k, v in dataset.get_latency_step_counts().items()}
+
+    counts: dict[int, int] = {}
+    single_datasets = list(getattr(dataset, "datasets", None) or [dataset])
+    for ds in single_datasets:
+        if ds is None or not callable(getattr(ds, "get_latencies_for_all_steps", None)):
+            continue
+        for latency in ds.get_latencies_for_all_steps():
+            latency = int(latency)
+            counts[latency] = counts.get(latency, 0) + 1
+    return counts
+
+
+def _build_quota_cumulative_plan(cfg, dataset, effective_batch_size: int) -> list[dict[str, Any]]:
+    curriculum_cfg = _latency_curriculum_cfg_from_config(cfg)
+    if curriculum_cfg is None:
+        return []
+    strategy = str(getattr(curriculum_cfg, "strategy", "") or "").strip().lower()
+    if strategy != "quota_cumulative":
+        return []
+
+    latencies = _optional_int_list(getattr(curriculum_cfg, "latencies", None))
+    if not latencies:
+        latencies = _dataset_latency_values(dataset)
+    latencies = sorted(dict.fromkeys(int(value) for value in latencies or []))
+    if not latencies:
+        raise ValueError("quota_cumulative requires configured or discoverable curriculum latencies.")
+
+    counts = _dataset_latency_step_counts(dataset)
+    missing = [latency for latency in latencies if int(counts.get(latency, 0)) <= 0]
+    if missing:
+        raise ValueError(f"quota_cumulative found no training rows for latencies={missing}; counts={counts}.")
+
+    new_latency_passes = float(getattr(curriculum_cfg, "new_latency_passes", 1.0))
+    replay_passes = float(getattr(curriculum_cfg, "replay_passes", 0.25))
+    target_total_passes = float(getattr(curriculum_cfg, "target_total_passes", 2.0))
+    final_equalization = _as_bool(getattr(curriculum_cfg, "final_equalization", True), default=True)
+    if new_latency_passes <= 0.0:
+        raise ValueError("quota_cumulative.new_latency_passes must be positive.")
+    if replay_passes < 0.0:
+        raise ValueError("quota_cumulative.replay_passes must be non-negative.")
+    if target_total_passes <= 0.0:
+        raise ValueError("quota_cumulative.target_total_passes must be positive.")
+    if effective_batch_size <= 0:
+        raise ValueError(f"quota_cumulative effective batch size must be positive, got {effective_batch_size}.")
+
+    cumulative_passes = {latency: 0.0 for latency in latencies}
+    phases: list[dict[str, Any]] = []
+    cursor = 0
+
+    def append_phase(name: str, quotas: dict[int, float]) -> None:
+        nonlocal cursor
+        cleaned = {int(latency): float(quota) for latency, quota in quotas.items() if float(quota) > 0.0}
+        if not cleaned:
+            return
+        quota_starts = {
+            latency: float(cumulative_passes.get(latency, 0.0))
+            for latency in cleaned
+        }
+        rows_by_latency = {
+            latency: _quota_interval_row_count(int(counts[latency]), quota_starts[latency], quota)
+            for latency, quota in cleaned.items()
+        }
+        total_rows = int(sum(rows_by_latency.values()))
+        if total_rows <= 0:
+            return
+        steps = int(math.ceil(total_rows / effective_batch_size))
+        start_step = cursor
+        cursor += steps
+        phases.append(
+            {
+                "phase_idx": len(phases),
+                "name": name,
+                "quotas": cleaned,
+                "quota_starts": quota_starts,
+                "rows_by_latency": rows_by_latency,
+                "dataset_size": total_rows,
+                "steps": steps,
+                "start_step": start_step,
+                "end_step": cursor,
+            }
+        )
+        for latency, quota in cleaned.items():
+            cumulative_passes[latency] = cumulative_passes.get(latency, 0.0) + float(quota)
+
+    for idx, latency in enumerate(latencies):
+        quotas = {prev_latency: replay_passes for prev_latency in latencies[:idx]}
+        quotas[latency] = new_latency_passes
+        append_phase(f"introduce_latency_{latency}", quotas)
+
+    if final_equalization:
+        top_up = {
+            latency: max(0.0, target_total_passes - cumulative_passes.get(latency, 0.0))
+            for latency in latencies
+        }
+        append_phase("equalize_total_coverage", top_up)
+
+    if not phases:
+        raise ValueError("quota_cumulative produced an empty phase plan.")
+    return phases
+
+
+def _configure_quota_cumulative_training_steps(cfg, dataloader, accelerator) -> None:
+    curriculum_cfg = _latency_curriculum_cfg_from_config(cfg)
+    if curriculum_cfg is None:
+        return
+    strategy = str(getattr(curriculum_cfg, "strategy", "") or "").strip().lower()
+    if strategy != "quota_cumulative":
+        return
+
+    grad_accum_steps = int(getattr(cfg.trainer, "gradient_accumulation_steps", 1))
+    per_device_bs = int(getattr(cfg.datasets.vla_data, "per_device_batch_size"))
+    effective_batch_size = per_device_bs * int(accelerator.num_processes) * grad_accum_steps
+    dataset = getattr(dataloader, "dataset", None)
+    plan = _build_quota_cumulative_plan(cfg, dataset, effective_batch_size)
+    total_steps = int(plan[-1]["end_step"])
+
+    step_budget_mode = str(getattr(curriculum_cfg, "step_budget_mode", "auto") or "auto").strip().lower()
+    if step_budget_mode != "auto":
+        raise ValueError("quota_cumulative currently supports step_budget_mode=auto only.")
+
+    cfg.trainer.max_train_steps = total_steps
+    curriculum_cfg.computed_plan = plan
+    curriculum_cfg.effective_batch_size = effective_batch_size
+    if not dist.is_initialized() or dist.get_rank() == 0:
+        logger.info(
+            "quota_cumulative derived max_train_steps=%s from %s phases and effective_batch_size=%s",
+            total_steps,
+            len(plan),
+            effective_batch_size,
+        )
+        for phase in plan:
+            logger.info(
+                "quota_cumulative phase %s %s: steps=%s rows=%s quotas=%s rows_by_latency=%s end_step=%s",
+                phase["phase_idx"],
+                phase["name"],
+                phase["steps"],
+                phase["dataset_size"],
+                phase["quotas"],
+                phase["rows_by_latency"],
+                phase["end_step"],
+            )
 
 
 def _dataset_latency_values(dataset) -> list[int]:
@@ -345,6 +526,10 @@ class VLATrainer(TrainerUtils):
         self._pending_full_state_resume = None
         self._save_best_model_enabled = _as_bool(
             getattr(getattr(self.config, "checkpoint", {}), "save_best_model", None),
+            default=True,
+        )
+        self._save_final_model_enabled = _as_bool(
+            getattr(getattr(self.config, "checkpoint", {}), "save_final_model", None),
             default=True,
         )
         self._save_pt_file_enabled = _as_bool(
@@ -597,6 +782,42 @@ class VLATrainer(TrainerUtils):
         self.accelerator.wait_for_everyone()
         return merged_result
 
+    def _run_mid_train_rl_games_eval(self, step_metrics: dict[str, float]) -> dict[str, float]:
+        if self._rl_games_eval_runner is None or not self._rl_games_eval_runner.is_enabled(stage="mid_train"):
+            return step_metrics
+        t_profile_eval = self._profile_start()
+        if self._distributed_rl_games_eval_enabled():
+            eval_result = self._run_distributed_rl_games_eval(stage="mid_train")
+        else:
+            eval_result = self._rl_games_eval_runner.run(
+                model=self.accelerator.unwrap_model(self.model),
+                step=self.completed_steps,
+                stage="mid_train",
+            )
+        step_metrics = self._append_rl_games_eval_metrics(
+            step_metrics=step_metrics,
+            eval_result=eval_result,
+            stage="mid_train",
+        )
+        if self._profile_timing_should_log():
+            step_metrics["timing/rl_games_mid_train_eval_total"] = self._profile_elapsed(t_profile_eval)
+        eval_score = self._rl_games_best_score(eval_result)
+        is_new_best = self._save_best_checkpoint(
+            eval_result=eval_result,
+            score=eval_score,
+            stage="mid_train",
+        )
+        step_metrics["checkpoint/current_eval_score"] = float(eval_score)
+        step_metrics["checkpoint/best_score"] = float(self._best_score)
+        step_metrics["checkpoint/best_step"] = float(self._best_step)
+        step_metrics["checkpoint/is_new_best"] = float(is_new_best)
+        self._checkpoint_sync_manager.sync_eval_result(
+            eval_path=eval_result.path,
+            stage="mid_train",
+            step=self.completed_steps,
+        )
+        return step_metrics
+
     def _best_config_paths(self) -> list[str]:
         output_dir = Path(self.config.output_dir)
         return [
@@ -804,19 +1025,49 @@ class VLATrainer(TrainerUtils):
         remainder = total_steps % len(latencies)
         return [base + (1 if idx < remainder else 0) for idx in range(len(latencies))]
 
-    def _latency_curriculum_phase_for_step(self, step: int) -> tuple[int, list[int]] | None:
+    def _quota_curriculum_plan(self) -> list[dict[str, Any]]:
+        cfg = self._latency_curriculum_cfg()
+        if cfg is None:
+            return []
+        plan = getattr(cfg, "computed_plan", None)
+        if plan in (None, ""):
+            return []
+        if isinstance(plan, list):
+            return plan
+        return list(plan)
+
+    def _latency_curriculum_phase_for_step(
+        self,
+        step: int,
+    ) -> tuple[int, list[int], dict[int, float] | None, dict[int, float] | None, str] | None:
         cfg = self._latency_curriculum_cfg()
         if cfg is None:
             return None
+        strategy = str(getattr(cfg, "strategy", "exclusive") or "exclusive").strip().lower()
+        if strategy == "quota_cumulative":
+            plan = self._quota_curriculum_plan()
+            if not plan:
+                raise ValueError("quota_cumulative requires a computed_plan; did setup derive max_train_steps?")
+            phase = plan[-1]
+            for candidate in plan:
+                if int(step) < int(candidate["end_step"]):
+                    phase = candidate
+                    break
+            quotas = {int(k): float(v) for k, v in dict(phase["quotas"]).items()}
+            quota_starts = {int(k): float(v) for k, v in dict(phase.get("quota_starts", {})).items()}
+            active = sorted(quotas)
+            return int(phase["phase_idx"]), active, quotas, quota_starts, str(phase.get("name", f"phase_{phase['phase_idx']}"))
+
         latencies = _optional_int_list(getattr(cfg, "latencies", None))
         if not latencies:
             latencies = _dataset_latency_values(getattr(self.vla_train_dataloader, "dataset", None))
         if not latencies:
             raise ValueError("latency_curriculum.enabled=true but no curriculum latencies were configured or found.")
         latencies = sorted(dict.fromkeys(int(value) for value in latencies))
-        strategy = str(getattr(cfg, "strategy", "exclusive") or "exclusive").strip().lower()
         if strategy not in {"exclusive", "cumulative"}:
-            raise ValueError(f"Unsupported latency_curriculum.strategy={strategy!r}; expected exclusive or cumulative.")
+            raise ValueError(
+                f"Unsupported latency_curriculum.strategy={strategy!r}; expected exclusive, cumulative, or quota_cumulative."
+            )
 
         phase_steps = self._latency_curriculum_phase_steps(cfg, latencies)
         cursor = 0
@@ -831,39 +1082,89 @@ class VLATrainer(TrainerUtils):
             active = [latencies[phase_idx]]
         else:
             active = latencies[: phase_idx + 1]
-        return phase_idx, active
+        return phase_idx, active, None, None, f"phase_{phase_idx}"
+
+    def _latency_curriculum_phase_end_at_step(self, step: int) -> bool:
+        cfg = self._latency_curriculum_cfg()
+        if cfg is None or int(step) <= 0:
+            return False
+        strategy = str(getattr(cfg, "strategy", "exclusive") or "exclusive").strip().lower()
+        if strategy == "quota_cumulative":
+            plan = self._quota_curriculum_plan()
+            final_step = int(getattr(self.config.trainer, "max_train_steps"))
+            return any(int(phase["end_step"]) == int(step) and int(step) < final_step for phase in plan)
+
+        latencies = _optional_int_list(getattr(cfg, "latencies", None))
+        if not latencies:
+            latencies = _dataset_latency_values(getattr(self.vla_train_dataloader, "dataset", None))
+        if not latencies:
+            return False
+        phase_steps = self._latency_curriculum_phase_steps(cfg, sorted(dict.fromkeys(int(value) for value in latencies)))
+        cursor = 0
+        final_step = int(getattr(self.config.trainer, "max_train_steps"))
+        for num_steps in phase_steps[:-1]:
+            cursor += int(num_steps)
+            if cursor == int(step) and int(step) < final_step:
+                return True
+        return False
 
     def _apply_latency_curriculum(self, *, force: bool = False) -> dict[str, float]:
         phase = self._latency_curriculum_phase_for_step(self.completed_steps)
         if phase is None:
             return {}
-        phase_idx, active_latencies = phase
-        active_key = (phase_idx, tuple(active_latencies))
+        phase_idx, active_latencies, active_quotas, quota_starts, phase_name = phase
+        active_key = (
+            phase_idx,
+            tuple(active_latencies),
+            tuple(sorted((active_quotas or {}).items())),
+            tuple(sorted((quota_starts or {}).items())),
+        )
         if not force and active_key == self._latency_curriculum_phase:
             return {}
 
         dataset = getattr(self.vla_train_dataloader, "dataset", None)
-        if dataset is None or not callable(getattr(dataset, "set_active_latency_filter", None)):
-            raise ValueError("latency curriculum requires a train dataset with set_active_latency_filter(...).")
-        dataset.set_active_latency_filter(active_latencies)
+        if dataset is None:
+            raise ValueError("latency curriculum requires a train dataset.")
+        if active_quotas is not None:
+            if not callable(getattr(dataset, "set_latency_quota_filter", None)):
+                raise ValueError("quota_cumulative requires a train dataset with set_latency_quota_filter(...).")
+            dataset.set_latency_quota_filter(active_quotas, quota_starts=quota_starts)
+        else:
+            if not callable(getattr(dataset, "set_active_latency_filter", None)):
+                raise ValueError("latency curriculum requires a train dataset with set_active_latency_filter(...).")
+            dataset.set_active_latency_filter(active_latencies)
         self._latency_curriculum_phase = active_key
         if hasattr(self.vla_train_dataloader, "sampler") and callable(getattr(self.vla_train_dataloader.sampler, "set_epoch", None)):
             self.vla_train_dataloader.sampler.set_epoch(phase_idx)
         self._create_data_iterators()
         if self.accelerator.is_main_process:
             logger.info(
-                "Latency curriculum phase %s at step %s: active_latencies=%s, dataset_size=%s",
+                "Latency curriculum phase %s (%s) at step %s: active_latencies=%s, active_quotas=%s, dataset_size=%s",
                 phase_idx,
+                phase_name,
                 self.completed_steps,
                 active_latencies,
+                active_quotas,
                 len(dataset),
             )
-        return {
+        metrics = {
             "latency_curriculum/phase": float(phase_idx),
             "latency_curriculum/active_count": float(len(active_latencies)),
             "latency_curriculum/max_active_latency": float(max(active_latencies)),
             "latency_curriculum/dataset_size": float(len(dataset)),
         }
+        if active_quotas is not None:
+            for latency, quota in active_quotas.items():
+                metrics[f"latency_curriculum/quota/latency_{latency}"] = float(quota)
+                if quota_starts and latency in quota_starts:
+                    metrics[f"latency_curriculum/quota_start/latency_{latency}"] = float(quota_starts[latency])
+            for phase_info in self._quota_curriculum_plan():
+                if int(phase_info["phase_idx"]) == int(phase_idx):
+                    for latency, rows in dict(phase_info.get("rows_by_latency", {})).items():
+                        metrics[f"latency_curriculum/rows/latency_{latency}"] = float(rows)
+                    metrics["latency_curriculum/phase_optimizer_steps"] = float(phase_info.get("steps", 0))
+                    break
+        return metrics
 
     def _get_next_batch(self):
         """Get next batch (automatically handle data loop)."""
@@ -907,6 +1208,27 @@ class VLATrainer(TrainerUtils):
             if self.accelerator.sync_gradients:
                 progress_bar.update(1)
                 self.completed_steps += 1
+                phase_ended = self._latency_curriculum_phase_end_at_step(self.completed_steps)
+                ran_mid_train_rl_eval = False
+                curriculum_cfg = self._latency_curriculum_cfg()
+                if (
+                    phase_ended
+                    and curriculum_cfg is not None
+                    and _as_bool(getattr(curriculum_cfg, "eval_at_phase_end", False), default=False)
+                ):
+                    if self.accelerator.is_main_process:
+                        logger.info("Starting phase-end RL-games mid-train eval at step %s", self.completed_steps)
+                    step_metrics = self._run_mid_train_rl_games_eval(step_metrics)
+                    ran_mid_train_rl_eval = True
+                    if self.accelerator.is_main_process:
+                        logger.info("Finished phase-end RL-games mid-train eval at step %s", self.completed_steps)
+                if (
+                    phase_ended
+                    and curriculum_cfg is not None
+                    and _as_bool(getattr(curriculum_cfg, "save_at_phase_end", False), default=False)
+                    and self._save_periodic_checkpoints_enabled()
+                ):
+                    self._save_checkpoint()
                 curriculum_metrics = self._apply_latency_curriculum()
                 if curriculum_metrics:
                     step_metrics.update(curriculum_metrics)
@@ -969,39 +1291,8 @@ class VLATrainer(TrainerUtils):
                         completed_steps=self.completed_steps,
                         interval=eval_every,
                         gradients_synced=gradients_synced,
-                    ):
-                        if self._rl_games_eval_runner.is_enabled(stage="mid_train"):
-                            t_profile_eval = self._profile_start()
-                            if self._distributed_rl_games_eval_enabled():
-                                eval_result = self._run_distributed_rl_games_eval(stage="mid_train")
-                            else:
-                                eval_result = self._rl_games_eval_runner.run(
-                                    model=self.accelerator.unwrap_model(self.model),
-                                    step=self.completed_steps,
-                                    stage="mid_train",
-                                )
-                            step_metrics = self._append_rl_games_eval_metrics(
-                                step_metrics=step_metrics,
-                                eval_result=eval_result,
-                                stage="mid_train",
-                            )
-                            if self._profile_timing_should_log():
-                                step_metrics["timing/rl_games_mid_train_eval_total"] = self._profile_elapsed(t_profile_eval)
-                            eval_score = self._rl_games_best_score(eval_result)
-                            is_new_best = self._save_best_checkpoint(
-                                eval_result=eval_result,
-                                score=eval_score,
-                                stage="mid_train",
-                            )
-                            step_metrics["checkpoint/current_eval_score"] = float(eval_score)
-                            step_metrics["checkpoint/best_score"] = float(self._best_score)
-                            step_metrics["checkpoint/best_step"] = float(self._best_step)
-                            step_metrics["checkpoint/is_new_best"] = float(is_new_best)
-                            self._checkpoint_sync_manager.sync_eval_result(
-                                eval_path=eval_result.path,
-                                stage="mid_train",
-                                step=self.completed_steps,
-                            )
+                    ) and not ran_mid_train_rl_eval:
+                        step_metrics = self._run_mid_train_rl_games_eval(step_metrics)
 
             step_metrics["timing/data"] = t_end_data - t_start_data
             step_metrics["timing/model"] = t_end_model - t_start_model
@@ -1677,10 +1968,16 @@ class VLATrainer(TrainerUtils):
     def _finalize_training(self):
         """Training end processing."""
         save_interval = int(getattr(self.config.trainer, "save_interval", 0) or 0)
-        if (
+        final_step_already_saved = (
             self._save_periodic_checkpoints_enabled()
             and self.completed_steps > 0
-            and (save_interval <= 0 or self.completed_steps % save_interval != 0)
+            and save_interval > 0
+            and self.completed_steps % save_interval == 0
+        )
+        if (
+            self._save_final_model_enabled
+            and self.completed_steps > 0
+            and not final_step_already_saved
         ):
             self._save_checkpoint()
 
@@ -1768,6 +2065,7 @@ def main(cfg) -> None:
     accelerator = _build_accelerator(cfg)
 
     vla_train_dataloader, vla_eval_dataloader = prepare_data(cfg=cfg, accelerator=accelerator, output_dir=output_dir)
+    _configure_quota_cumulative_training_steps(cfg=cfg, dataloader=vla_train_dataloader, accelerator=accelerator)
     optimizer, lr_scheduler = setup_optimizer_and_scheduler(model=vla, cfg=cfg)
 
     trainer = VLATrainer(

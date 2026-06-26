@@ -41,6 +41,15 @@ datasets:
       strategy: exclusive
       latencies: null
       phase_steps: null
+      new_latency_passes: 1.0
+      replay_passes: 0.25
+      target_total_passes: 2.0
+      final_equalization: true
+      step_budget_mode: auto
+      eval_at_phase_end: false
+      save_at_phase_end: false
+      computed_plan: null
+      effective_batch_size: null
     per_device_batch_size: 4
     load_all_data_for_training: true
     num_obs_frames: 1

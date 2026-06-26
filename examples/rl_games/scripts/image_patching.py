@@ -1,20 +1,29 @@
-"""Ghost-trail image patching for Flappy Bird frames.
+"""Ghost-trail image patching for RL-games frames.
 
 Builds a single composite image where the most recent frame is the
-authoritative background (current pipes/ground/bird, always correct), and up
-to N earlier frames contribute fading "ghost" cutouts of the bird at its past
-on-screen positions.
+authoritative background (always correct), and up to N earlier frames
+contribute fading "ghost" cutouts of a tracked object at its past on-screen
+positions -- giving a model implicit access to recent motion/velocity that a
+single frame can't show.
 
-Flappy Bird's world scrolls (pipes move left over time) while the bird stays
-at a roughly fixed screen x -- so unlike a static-camera scene, a ghost's old
-(x, y) position can be occluded by a pipe that has since scrolled into that
-exact spot. Ghosts are therefore clipped to the *current* frame's pipe/ground
-mask before compositing: wherever the current frame already has a solid
-pipe/ground pixel, no ghost is drawn there, so a ghost never appears to float
-through an obstacle that wasn't there when it was captured. This mask is
-recomputed fresh from the current frame every time, so it stays correct for
-every timestep in an episode, not just frames where the background happens to
-be unchanged.
+The core functions (`select_ghost_frames`, `build_ghost_trail_image`) are
+game-agnostic: pass a `segment_fn` that extracts the object to trail, and
+(optionally) an `occlusion_fn` plus `steps`/`scroll_px_per_step` for games
+where the camera follows the object and the background scrolls.
+
+Flappy Bird (the first game this was built for) needs both extras: its world
+scrolls (pipes move left over time) while the bird stays at a roughly fixed
+screen x, so a ghost's old (x, y) position can be occluded by a pipe that has
+since scrolled into that exact spot, and on-screen position alone
+understates the bird's true motion through the level. Ghosts are clipped to
+the *current* frame's pipe/ground mask before compositing (recomputed fresh
+every time, so it stays correct for every timestep, not just frames where
+the background happens to be unchanged) and shifted by the measured scroll
+rate to reproject them into the current frame's reference.
+
+Demon Attack (static camera, no scroll) needs neither: on-screen position
+already is the true motion, and there's nothing that should occlude the
+trail, so it can use `occlusion_fn=None` and omit `steps`.
 """
 from __future__ import annotations
 
@@ -66,7 +75,13 @@ def _make_pipe_mask(frame_rgb: np.ndarray) -> np.ndarray:
     Ri = frame_rgb[..., 0].astype(np.int16)
     Gi = frame_rgb[..., 1].astype(np.int16)
     Bi = frame_rgb[..., 2].astype(np.int16)
-    pipe_rgb = (Gi > 70) & ((Gi - Ri) > 12) & ((Gi - Bi) > 12)
+    # Require real saturation in addition to "G is somewhat higher than R/B" --
+    # otherwise near-white/cream pixels (e.g. a bird sprite's eye highlight,
+    # RGB ~(215, 230, 204)) can satisfy the G-dominance check by a wide enough
+    # margin to false-positive as "pipe", punching a hole in the bird mask.
+    # Real pipe greens are heavily desaturated from white (e.g. (85, 128, 34)).
+    saturation = hsv[..., 1].astype(np.int16)
+    pipe_rgb = (Gi > 70) & ((Gi - Ri) > 12) & ((Gi - Bi) > 12) & (saturation > 40)
 
     pipe = pipe_hsv | pipe_rgb
 
@@ -195,23 +210,176 @@ def _segment_bird(
     return mask
 
 
+def make_exact_color_segmenter(target_rgb: "tuple[int, int, int]", tolerance: int = 0):
+    """Build a `segment_fn(frame_rgb, occlusion_mask=None) -> Optional[mask]`
+    that matches pixels within L1 `tolerance` of `target_rgb`.
+
+    Use for sprites that render as an exact, unchanging solid color (e.g.
+    classic Atari sprites like Demon Attack's ship) -- far more robust than
+    HSV/morphology heuristics when the color truly doesn't vary, and much
+    simpler than what Flappy Bird's anti-aliased sprite needed.
+    """
+    target = np.array(target_rgb, dtype=np.int16)
+
+    def _segment(frame_rgb: np.ndarray, occlusion_mask: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+        diff = np.abs(frame_rgb.astype(np.int16) - target).sum(axis=-1)
+        mask = diff <= tolerance
+        if occlusion_mask is not None:
+            mask = mask & ~occlusion_mask
+        return mask if mask.any() else None
+
+    return _segment
+
+
+# Empirically measured: Demon Attack's player ship renders as this exact RGB,
+# always exactly 44 pixels, with zero variation observed across episodes
+# 0, 1, 2, 5, and 10 (latency-sensitive-bench/demon_attack_200ep, latency 0).
+DEMON_ATTACK_SHIP_RGB = (184, 70, 162)
+
+
+def _object_centroid(
+    frame_rgb: np.ndarray,
+    segment_fn=_segment_bird,
+    occlusion_mask: Optional[np.ndarray] = None,
+) -> Optional[tuple]:
+    mask = segment_fn(frame_rgb, occlusion_mask)
+    if mask is None or not mask.any():
+        return None
+    ys, xs = np.where(mask)
+    return float(xs.mean()), float(ys.mean())
+
+
+# Empirically measured (constrained cross-correlation search over multiple
+# points in a flappy_200ep episode, latency 0): the world scrolls left at an
+# exact, constant 4.0 px per raw decision_step, with zero observed variance.
+# This holds because the bird's screen-x is fixed by the camera and the pipes
+# scroll at a fixed game speed -- it is specific to this renderer/dataset.
+PIPE_SCROLL_PX_PER_STEP = 4.0
+
+
+def _shift_horizontal(image: np.ndarray, shift_x: float) -> np.ndarray:
+    """Shift `image` left by `shift_x` px, filling the revealed area with
+    zeros (no wraparound). Works for uint8 RGB frames and uint8 0/255 masks."""
+    if abs(shift_x) < 1e-6:
+        return image
+    _require_cv2()
+    H, W = image.shape[:2]
+    M = np.array([[1, 0, -float(shift_x)], [0, 1, 0]], dtype=np.float32)
+    return cv2.warpAffine(image, M, (W, H), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+
+def select_ghost_frames(
+    history: Sequence[np.ndarray],
+    steps: Sequence[int],
+    *,
+    trail_len: int = 7,
+    min_pixel_gap: float = 16.0,
+    scroll_px_per_step: float = PIPE_SCROLL_PX_PER_STEP,
+    segment_fn=_segment_bird,
+) -> "tuple[List[np.ndarray], List[int]]":
+    """Pick up to `trail_len` ghost frames from `history` that actually look
+    different from each other, accounting for both the tracked object's own
+    on-screen motion AND any world scroll (e.g. Flappy Bird's bird barely
+    moves on-screen, so vertical-only distance understates how visually
+    separated two frames will actually end up once re-projected into the
+    current frame -- see `build_ghost_trail_image`). Pass `scroll_px_per_step
+    =0` for static-background games (e.g. Demon Attack), where on-screen
+    position already is the true motion.
+
+    `history` and `steps` are chronologically ordered and the same length,
+    with `history[-1]`/`steps[-1]` the current frame. Walks backward and only
+    keeps a candidate once its *effective* position (its own centroid plus
+    scroll-implied horizontal offset from the previously kept position) has
+    moved at least `min_pixel_gap`. Without this, a fixed "previous N rows"
+    window frequently lands entirely within one sprite-height of motion (e.g.
+    near the apex of a Flappy Bird flap, or while an agent holds still), so
+    ghosts would overlap almost completely.
+
+    `segment_fn` defaults to the Flappy Bird bird segmenter; pass a different
+    one (e.g. from :func:`make_exact_color_segmenter`) for other games.
+
+    Returns `(ghost_frames, ghost_steps)`, oldest-first, ready to pass (with
+    the current frame/step appended) to :func:`build_ghost_trail_image`.
+    """
+    if len(history) < 2:
+        return [], []
+
+    current_step = steps[-1]
+    ref_centroid = _object_centroid(history[-1], segment_fn)
+    ref_step = current_step
+    selected: List[np.ndarray] = []
+    selected_steps: List[int] = []
+    for fr, step in zip(reversed(history[:-1]), reversed(steps[:-1])):
+        centroid = _object_centroid(fr, segment_fn)
+        if centroid is None:
+            continue
+        if ref_centroid is not None:
+            # Combine the scroll-implied offset (the part of motion hidden
+            # from on-screen position when the camera follows the object,
+            # e.g. Flappy Bird) with the object's own measured horizontal
+            # displacement (the *only* signal when there's no scroll, e.g.
+            # Demon Attack's ship, which moves on-screen with zero camera
+            # compensation). For Flappy this just adds a small, real jitter
+            # term; for Demon Attack the scroll term is 0 and this reduces to
+            # plain on-screen distance.
+            dx = scroll_px_per_step * (ref_step - step) + (centroid[0] - ref_centroid[0])
+            dy = centroid[1] - ref_centroid[1]
+            dist = (dx ** 2 + dy ** 2) ** 0.5
+            if dist < min_pixel_gap:
+                continue
+        selected.append(fr)
+        selected_steps.append(step)
+        ref_centroid = centroid
+        ref_step = step
+        if len(selected) >= trail_len:
+            break
+
+    selected.reverse()  # oldest first
+    selected_steps.reverse()
+    return selected, selected_steps
+
+
 def build_ghost_trail_image(
     frames: Sequence[np.ndarray],
+    steps: Optional[Sequence[int]] = None,
     *,
     gamma: float = 0.7,
     min_alpha: int = 35,
     ground_fraction: float = 0.22,
+    scroll_px_per_step: float = PIPE_SCROLL_PX_PER_STEP,
+    segment_fn=_segment_bird,
+    occlusion_fn=_make_occlusion_mask,
 ) -> np.ndarray:
     """Composite a ghost trail onto the LAST frame in `frames`.
 
     Args:
         frames: chronologically ordered RGB frames. ``frames[-1]`` is the
             current frame, used untouched as the background. ``frames[:-1]``
-            are the trail, oldest first, each rendered as a fading bird-only
-            cutout clipped to the current frame's pipe/ground mask.
+            are the trail, oldest first, each rendered as a fading cutout of
+            whatever `segment_fn` extracts, in its original color, clipped
+            to `occlusion_fn`'s mask of the current frame (if any).
+        steps: optional decision_step (or other monotonic raw-frame counter)
+            for each entry in `frames`, same length and order. When given,
+            each ghost is shifted left by ``scroll_px_per_step * (steps[-1] -
+            steps[i])`` before compositing -- for games where the camera
+            follows the tracked object so its on-screen position barely
+            moves (e.g. Flappy Bird), without this a ghost only shows local
+            bob, not the world distance actually covered since that frame.
+            Pass `scroll_px_per_step=0` (or omit `steps`) for static-camera
+            games (e.g. Demon Attack), where on-screen position already is
+            the true motion.
         gamma: <1 makes older ghosts more visible (less aggressive fade).
         min_alpha: opacity floor (0-255) for the oldest ghost.
-        ground_fraction: bottom fraction of the frame treated as ground.
+        ground_fraction: bottom fraction of the frame treated as ground,
+            forwarded to `occlusion_fn` (ignored if `occlusion_fn` is None or
+            doesn't accept it).
+        segment_fn: `(frame_rgb, occlusion_mask=None) -> Optional[mask]`.
+            Defaults to the Flappy Bird bird segmenter; pass a different one
+            (e.g. from :func:`make_exact_color_segmenter`) for other games.
+        occlusion_fn: `(frame_rgb, ground_fraction) -> mask` of current-frame
+            pixels that should hide any ghost drawn under them (e.g. Flappy
+            Bird's pipes/ground). Pass `None` for games with nothing that
+            should occlude the trail (e.g. Demon Attack's static background).
 
     Returns:
         An RGB array the same shape as ``frames[-1]``.
@@ -221,39 +389,62 @@ def build_ghost_trail_image(
 
     base = frames[-1]
     H, W = base.shape[:2]
-    composite = Image.fromarray(base).convert("RGBA")
 
     ghost_frames = frames[:-1]
     if not ghost_frames:
-        return np.array(composite.convert("RGB"))
+        return base.copy()
 
-    occlusion = _make_occlusion_mask(base, ground_fraction)
+    occlusion = occlusion_fn(base, ground_fraction) if occlusion_fn is not None else np.zeros((H, W), dtype=bool)
+    current_step = steps[-1] if steps is not None else None
 
-    masks: List[Optional[np.ndarray]] = []
-    for fr in ghost_frames:
-        mask = _segment_bird(fr)
+    # Accumulate every ghost's contribution per pixel instead of sequentially
+    # alpha-compositing one on top of the next. Sequential "over" compositing
+    # lets a more opaque, newer ghost paint over almost all of an older one
+    # wherever they overlap (the bird moves little relative to its own sprite
+    # size between consecutive samples, so overlap is heavy) -- that erases
+    # most of the trail. Accumulation instead makes overlapping ghosts build
+    # up into a denser, more visible shadow (closer to a real motion-blur
+    # trail), while isolated ghosts still show through faintly on their own.
+    L = len(ghost_frames)
+    alpha_acc = np.zeros((H, W), dtype=np.float32)
+    color_acc = np.zeros((H, W, 3), dtype=np.float32)
+
+    for idx, fr in enumerate(ghost_frames):
+        mask = segment_fn(fr)
         if mask is None or not mask.any():
-            masks.append(None)
             continue
+
+        if current_step is not None:
+            shift_x = scroll_px_per_step * (current_step - steps[idx])
+            mask = _shift_horizontal(mask.astype(np.uint8) * 255, shift_x) > 127
+            fr = _shift_horizontal(fr, shift_x)
+            if not mask.any():
+                continue
+
         # Clip the ghost to areas the current frame doesn't already occlude,
-        # so it never appears to float through a pipe/ground that has since
-        # scrolled into its old position.
-        clipped = mask & (~occlusion)
-        masks.append(clipped if clipped.any() else None)
-
-    L = len(masks)
-    for i, mask in enumerate(masks):
-        if mask is None:
+        # so it never appears to float through an obstacle that has since
+        # moved/scrolled into its old position.
+        mask = mask & (~occlusion)
+        if not mask.any():
             continue
-        x = (i + 1) / L  # (0, 1], oldest -> smallest, newest ghost -> 1.0
-        alpha_value = int(min_alpha + (255 - min_alpha) * (x ** gamma))
 
-        rgba = np.zeros((H, W, 4), dtype=np.uint8)
-        rgba[..., :3] = ghost_frames[i]
-        rgba[mask, 3] = alpha_value
-        composite = Image.alpha_composite(composite, Image.fromarray(rgba))
+        x = (idx + 1) / L  # (0, 1], oldest -> smallest, newest ghost -> 1.0
+        alpha_value = (min_alpha + (255 - min_alpha) * (x ** gamma)) / 255.0
 
-    return np.array(composite.convert("RGB"))
+        alpha_acc[mask] += alpha_value
+        color_acc[mask] += alpha_value * fr[mask].astype(np.float32)
+
+    has_ghost = alpha_acc > 1e-6
+    final_alpha = np.clip(alpha_acc, 0.0, 1.0)
+    blended_color = np.zeros((H, W, 3), dtype=np.float32)
+    blended_color[has_ghost] = color_acc[has_ghost] / alpha_acc[has_ghost, None]
+
+    result = base.astype(np.float32).copy()
+    result[has_ghost] = (
+        base[has_ghost].astype(np.float32) * (1.0 - final_alpha[has_ghost, None])
+        + blended_color[has_ghost] * final_alpha[has_ghost, None]
+    )
+    return np.clip(result, 0, 255).astype(np.uint8)
 
 
 def isolate_and_overlay_ghost_trail(image_paths: Sequence[str], out_path: str, **kwargs) -> str:
