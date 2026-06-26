@@ -282,7 +282,6 @@ def _configure_quota_cumulative_training_steps(cfg, dataloader, accelerator) -> 
 
     cfg.trainer.max_train_steps = total_steps
     curriculum_cfg.computed_plan = plan
-    curriculum_cfg.effective_batch_size = effective_batch_size
     if not dist.is_initialized() or dist.get_rank() == 0:
         logger.info(
             "quota_cumulative derived max_train_steps=%s from %s phases and effective_batch_size=%s",
