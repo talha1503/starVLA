@@ -31,6 +31,7 @@ import torch
 
 from starVLA.model.framework.base_framework import baseframework
 from starVLA.model.framework.share_tools import read_mode_config
+from starVLA.model.profiling import stage_timer as _stage
 
 from deployment.model_server.policy_norm_processor import PolicyNormProcessor
 from deployment.model_server.rl_games_action_decode import decode_rl_games_actions
@@ -171,18 +172,22 @@ class PolicyServerWrapper:
                     f"Pass one of {self._available_unnorm_keys}."
                 )
         proc = self._get_processor(effective_key)
+        # Forwarded to the framework via **kwargs as well; both layers profile.
+        profiler = kwargs.get("profiler")
 
         out = self._framework.predict_action(examples=examples, **kwargs)
         normalized = np.asarray(out["normalized_actions"])  # (B, T, D)
 
         if self._action_output_mode == "rl_games":
-            return decode_rl_games_actions(
-                normalized_actions=normalized,
-                env_name=self._rl_games_env_name,
-            )
+            with _stage(profiler, "starvla_wrapper_rl_games_decode_ms"):
+                return decode_rl_games_actions(
+                    normalized_actions=normalized,
+                    env_name=self._rl_games_env_name,
+                )
 
-        unnorm = np.stack(
-            [proc.unapply_actions(normalized[b]) for b in range(normalized.shape[0])],
-            axis=0,
-        )
+        with _stage(profiler, "starvla_wrapper_unnormalize_ms"):
+            unnorm = np.stack(
+                [proc.unapply_actions(normalized[b]) for b in range(normalized.shape[0])],
+                axis=0,
+            )
         return {"actions": unnorm}

@@ -41,7 +41,6 @@ Parameter breakdown (Qwen3-VL-4B + action_dit_hidden_dim=1024)
   TOTAL                     5,071,087,137  100.0%
 ═══════════════════════════════════════════════════════════════
 """
-from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -55,6 +54,7 @@ from starVLA.model.framework.base_framework import baseframework
 from starVLA.model.framework.share_tools import merge_framework_config, populate_layerwise_dit_cfg
 from starVLA.model.modules.action_model.LayerwiseFM_ActionHeader import LayerwiseFlowmatchingActionHead, get_action_model
 from starVLA.model.modules.vlm import get_vlm_model
+from starVLA.model.profiling import stage_timer as _stage
 from starVLA.model.tools import FRAMEWORK_REGISTRY
 from starVLA.training.trainer_utils import initialize_overwatch
 from starVLA.training.trainer_utils.trainer_tools import resize_images
@@ -64,14 +64,6 @@ logger = initialize_overwatch(__name__)
 # HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)
 IGNORE_INDEX = -100
 
-
-def _stage(profiler, name: str):
-    """Time a stage on an optional duck-typed profiler (``.time(name)``).
-
-    Returns a ``nullcontext`` when no profiler is passed, so inference paths that
-    do not profile pay nothing and stay decoupled from the eval harness.
-    """
-    return profiler.time(name) if profiler is not None else nullcontext()
 
 ####################################################
 # ⚠️ Warning: This framework has been restructured and is NOT compatible with checkpoints created before 2025-10-20.
@@ -259,7 +251,7 @@ class Qwen_PI_v3(baseframework):
         """Run QwenVL, project hidden states, and return the layer-wise embeddings for the Action DiT."""
         with _stage(profiler, "starvla_qwen_input_build_ms"):
             qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(
-                images=batch_images, instructions=instructions
+                images=batch_images, instructions=instructions, profiler=profiler
             )
         with _stage(profiler, "starvla_qwen_forward_ms"):
             with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -270,6 +262,8 @@ class Qwen_PI_v3(baseframework):
                     return_dict=True,
                 )
                 vl_embs_list = list(qwenvl_outputs.hidden_states[-self.num_action_dit_layers:])
+        with _stage(profiler, "starvla_project_layers_ms"):
+            with torch.autocast("cuda", dtype=torch.bfloat16):
                 vl_embs_list = self._project_vl_hidden_for_action(vl_embs_list)
         return vl_embs_list
 
