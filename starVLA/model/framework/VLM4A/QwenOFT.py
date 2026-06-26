@@ -632,73 +632,95 @@ class Qwenvl_OFT(baseframework):
         return self.add_discretized_state_to_instruction([instruction], [state])[0]
 
     def _forward_memory(self, examples: List[dict]) -> dict:
-        """Training forward with the streaming KV memory (req3, milestone 5).
+        """Training forward with the streaming KV memory: per-frame supervision.
 
-        Each sample is a contiguous R-frame rollout (R = rollout_len, R > window so
-        eviction is exercised). History KV is detached between steps (truncated BPTT,
-        depth 1), and the action loss is taken at the final step. Per-step action
-        labels (loss at every step) are a future extension.
+        Each sample is an R-frame rollout `[t-R+1 .. t]`; the dataloader marks clamp
+        padding via ``valid`` and supplies one action chunk per frame in
+        ``actions_per_frame`` ([R, H, dim]). We skip padding frames (never feed memory,
+        never supervise) and supervise EVERY real frame at the window it naturally has
+        (1 -> window, then evict), which matches eval (`_predict_action_memory`) frame
+        for frame, including the unfilled window at an episode's start. History KV is
+        detached between steps (truncated BPTT depth 1), so each step's loss flows only
+        through that step's forward; the per-step weighted losses are summed and the
+        trainer backpropagates once.
 
-        Samples that share an instruction (hence the same token layout) run their
-        rollout in one batched forward via `_kv_forward_step_batched`; differing
-        instructions form their own group, so this degrades to per-sample at worst
-        (mirrors `_predict_action_memory`). The non-final R-1 steps run under
-        `no_grad` since their KV is detached and never carries gradient anyway, which
-        keeps only the final step's activations and avoids 8x graph-building cost.
+        Same-instruction, same-`valid` rollouts share a token layout and window
+        evolution, so they run each step in one batched forward via
+        `_kv_forward_step_batched` (degrades to per-sample otherwise), mirroring
+        `_predict_action_memory`.
         """
+        profile = self._profile_timing_enabled()
+        timing = {"timing/mem_nograd_fwd": 0.0, "timing/mem_grad_fwd": 0.0, "timing/mem_action_head": 0.0}
+
         instructions = [
             self._instruction_with_state(ex["lang"], ex.get("state") if "state" in ex else None)
             for ex in examples
         ]
 
-        # Group same-instruction (same-layout) rollouts so they batch into one forward.
+        # Group rollouts that share the prompt AND the same real/padding pattern: those
+        # march through identical window states each step, so they batch cleanly.
         groups: dict = {}
         for idx, instruction in enumerate(instructions):
-            groups.setdefault(instruction, []).append(idx)
+            valid = np.asarray(examples[idx]["valid"], dtype=bool)
+            groups.setdefault((instruction, tuple(valid.tolist())), []).append(idx)
 
-        preds: List[Optional[torch.Tensor]] = [None] * len(examples)
-        for instruction, indices in groups.items():
+        total_weighted_loss = None
+        total_weight = 0.0
+        for (instruction, valid_key), indices in groups.items():
+            valid = np.asarray(valid_key, dtype=bool)
+            real_positions = [k for k in range(len(valid)) if valid[k]]
             memories = [self._new_kv_memory() for _ in indices]
             rollout = [examples[i]["image"] for i in indices]
-            rollout_len = len(rollout[0])
-            last_hidden = new_ids = None
-            for step in range(rollout_len):
-                if step > 0:
+            action_env_dims = [int(examples[i].get("action_env_dim", self.action_env_dim)) for i in indices]
+            rl_games_tasks = [str(examples[i].get("rl_games_task", "")) for i in indices]
+            if not any(rl_games_tasks):
+                rl_games_tasks = None
+
+            for step_pos, k in enumerate(real_positions):
+                if step_pos > 0:
                     for memory in memories:
                         memory.detach_()  # truncated BPTT: history is a fixed memory
-                step_frames = [frames[step] for frames in rollout]
-                if step < rollout_len - 1:
-                    with torch.no_grad():
-                        last_hidden, new_ids = self._kv_forward_step_batched(memories, step_frames, instruction)
-                else:
-                    last_hidden, new_ids = self._kv_forward_step_batched(memories, step_frames, instruction)
+                step_frames = [frames[k] for frames in rollout]
 
-            with torch.autocast("cuda", dtype=torch.float32):
-                action_queries = self._gather_action_token_embeddings(
-                    last_hidden, new_ids, action_token_id=self.action_token_id
+                t_fwd = self._profile_start() if profile else None
+                last_hidden, new_ids = self._kv_forward_step_batched(memories, step_frames, instruction)
+                if profile:
+                    timing["timing/mem_grad_fwd"] += self._profile_elapsed(t_fwd)
+
+                t_head = self._profile_start() if profile else None
+                with torch.autocast("cuda", dtype=torch.float32):
+                    action_queries = self._gather_action_token_embeddings(
+                        last_hidden, new_ids, action_token_id=self.action_token_id
+                    )
+                    group_preds = self.action_model.predict_action(action_queries)  # [Bg, chunk, dim]
+                    targets = [
+                        self._prepare_action_array(examples[i]["actions_per_frame"][k]) for i in indices
+                    ]
+                    targets = torch.tensor(
+                        np.array(targets), device=group_preds.device, dtype=group_preds.dtype
+                    )  # [Bg, H, dim]
+                    targets = targets[:, -self.action_horizon :, :]
+                    step_loss = self._compute_action_loss(
+                        group_preds,
+                        targets,
+                        action_env_dims=action_env_dims,
+                        rl_games_tasks=rl_games_tasks,
+                    )
+                if profile:
+                    timing["timing/mem_action_head"] += self._profile_elapsed(t_head)
+
+                # Per-supervised-step density weight: sum of the group's per-frame
+                # weights at frame k. Uniform weights reduce this to a sample-count
+                # weighting, i.e. the exact mean over all supervised (sample, step).
+                weight = float(
+                    sum(float(np.asarray(examples[i]["density_weight"])[k]) for i in indices)
                 )
-                group_preds = self.action_model.predict_action(action_queries)  # [Bg, chunk, dim]
-            for local, original in enumerate(indices):
-                preds[original] = group_preds[local : local + 1]
+                contribution = step_loss * weight
+                total_weighted_loss = contribution if total_weighted_loss is None else total_weighted_loss + contribution
+                total_weight += weight
 
-        # Assemble the batch in original order and reduce once, matching the non-memory
-        # `forward` loss semantics (per-sample action_env_dim and rl_games_task).
-        pred_actions = torch.cat(preds, dim=0)  # [B, chunk, dim]
-        targets = [self._prepare_action_array(ex["action"]) for ex in examples]
-        targets = torch.tensor(np.array(targets), device=pred_actions.device, dtype=pred_actions.dtype)
-        targets = targets[:, -self.action_horizon :, :]
-        action_env_dims = [int(ex.get("action_env_dim", self.action_env_dim)) for ex in examples]
-        rl_games_tasks = [str(ex.get("rl_games_task", "")) for ex in examples]
-        if not any(rl_games_tasks):
-            rl_games_tasks = None
-
-        action_loss = self._compute_action_loss(
-            pred_actions,
-            targets,
-            action_env_dims=action_env_dims,
-            rl_games_tasks=rl_games_tasks,
-        )
-        return {"action_loss": action_loss}
+        action_loss = total_weighted_loss / max(total_weight, 1e-6)
+        return {"action_loss": action_loss, "timing": timing, "batch_stats": {}}
 
     @torch.inference_mode()
     def _predict_action_memory(self, examples: List[dict]) -> dict:

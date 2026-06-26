@@ -13,6 +13,17 @@ export HF_DATASETS_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 
+# Full tuning (no layer freezing: freezing underperformed full FT in our sweeps).
+# To relieve full-FT optimizer/grad memory we shard across >=2 GPUs with DeepSpeed
+# ZeRO-2 (ds_config.yaml is stage 2, referenced by the default accelerate config).
+# ZeRO-2 (not ZeRO-3) is deliberate: the KV-memory rollout runs many forwards per step,
+# and ZeRO-3 would all-gather params on every one; ZeRO-2 replicates params and only
+# shards optimizer state + grads, so the multi-forward rollout pays no gather penalty.
+#
+# Effective batch = per_device_batch_size * num_processes * gradient_accumulation_steps
+#                 = 4 * 2 * 4 = 32. Tune per_device_batch_size / num_processes on the
+# real GPUs by watching memory; per-frame scheme-B holds R step-graphs until the single
+# backward, so keep per_device_batch_size modest at first.
 python examples/rl_games/scripts/launch_train.py \
   model=openvla \
   env=flappy \
@@ -24,8 +35,11 @@ python examples/rl_games/scripts/launch_train.py \
   framework.kv_memory.enabled=true \
   framework.kv_memory.window=4 \
   framework.kv_memory.rollout_len=8 \
-  trainer.distributed_backend=none \
-  trainer.gradient_accumulation_steps=8 \
+  trainer.distributed_backend=deepspeed \
+  launch.use_accelerate=true \
+  launch.num_processes=2 \
+  paths.accelerate_config=starVLA/config/deepseeds/deepspeed_zero2.yaml \
+  trainer.gradient_accumulation_steps=4 \
   datasets.vla_data.per_device_batch_size=4 \
   trainer.max_train_steps=5000 \
   trainer.save_interval=100 \

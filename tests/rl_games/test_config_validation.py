@@ -25,6 +25,10 @@ def test_kv_memory_sync_ties_obs_window_to_rollout_len() -> None:
 
     assert cfg.datasets.vla_data.num_obs_frames == 8
     assert cfg.datasets.vla_data.image_mode == "multiframe"
+    # Scheme-B per-frame supervision: dataloader must emit valid/actions_per_frame and
+    # read the per-row density weight column.
+    assert cfg.datasets.vla_data.kv_memory is True
+    assert cfg.datasets.vla_data.density_weight_key == "density_weight"
 
 
 def test_kv_memory_sync_noop_when_disabled() -> None:
