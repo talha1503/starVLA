@@ -41,6 +41,7 @@ Parameter breakdown (Qwen3-VL-4B + action_dit_hidden_dim=1024)
   TOTAL                     5,071,087,137  100.0%
 ═══════════════════════════════════════════════════════════════
 """
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -62,6 +63,15 @@ logger = initialize_overwatch(__name__)
 
 # HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)
 IGNORE_INDEX = -100
+
+
+def _stage(profiler, name: str):
+    """Time a stage on an optional duck-typed profiler (``.time(name)``).
+
+    Returns a ``nullcontext`` when no profiler is passed, so inference paths that
+    do not profile pay nothing and stay decoupled from the eval harness.
+    """
+    return profiler.time(name) if profiler is not None else nullcontext()
 
 ####################################################
 # ⚠️ Warning: This framework has been restructured and is NOT compatible with checkpoints created before 2025-10-20.
@@ -244,21 +254,23 @@ class Qwen_PI_v3(baseframework):
         return [proj(vl_h) for proj, vl_h in zip(self.project_layers, vl_embs_list)]
 
     def _encode_vl_hidden_states(
-        self, batch_images: List, instructions: List[str]
+        self, batch_images: List, instructions: List[str], *, profiler=None
     ) -> List[torch.Tensor]:
         """Run QwenVL, project hidden states, and return the layer-wise embeddings for the Action DiT."""
-        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(
-            images=batch_images, instructions=instructions
-        )
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            qwenvl_outputs = self.qwen_vl_interface(
-                **qwen_inputs,
-                output_attentions=False,
-                output_hidden_states=True,
-                return_dict=True,
+        with _stage(profiler, "starvla_qwen_input_build_ms"):
+            qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(
+                images=batch_images, instructions=instructions
             )
-            vl_embs_list = list(qwenvl_outputs.hidden_states[-self.num_action_dit_layers:])
-            vl_embs_list = self._project_vl_hidden_for_action(vl_embs_list)
+        with _stage(profiler, "starvla_qwen_forward_ms"):
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                qwenvl_outputs = self.qwen_vl_interface(
+                    **qwen_inputs,
+                    output_attentions=False,
+                    output_hidden_states=True,
+                    return_dict=True,
+                )
+                vl_embs_list = list(qwenvl_outputs.hidden_states[-self.num_action_dit_layers:])
+                vl_embs_list = self._project_vl_hidden_for_action(vl_embs_list)
         return vl_embs_list
 
     def forward(
@@ -326,6 +338,8 @@ class Qwen_PI_v3(baseframework):
     def predict_action(
         self,
         examples: List[dict] = None,
+        *,
+        profiler=None,
         **kwargs: str,
     ) -> np.ndarray:
         """
@@ -349,23 +363,26 @@ class Qwen_PI_v3(baseframework):
                     denoised actions in the normalised action space.
         """
 
-        batch_images = [to_pil_preserve(example["image"]) for example in examples]  # List[List[PIL.Image]]
+        with _stage(profiler, "starvla_to_pil_ms"):
+            batch_images = [to_pil_preserve(example["image"]) for example in examples]  # List[List[PIL.Image]]
         instructions = [example["lang"] for example in examples]  # List[str]
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # List[ndarray] or None
 
         # Encode proprioceptive state into the instruction string, then discard raw state.
-        instructions = (
-            self.add_discretized_state_to_instruction(instructions, state) if state is not None else instructions
-        )
+        with _stage(profiler, "starvla_state_instruction_ms"):
+            instructions = (
+                self.add_discretized_state_to_instruction(instructions, state) if state is not None else instructions
+            )
         state = None
 
         # Optionally resize images to the resolution used during training.
         train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
         if train_obs_image_size:
-            batch_images = resize_images(batch_images, target_size=train_obs_image_size)
+            with _stage(profiler, "starvla_resize_ms"):
+                batch_images = resize_images(batch_images, target_size=train_obs_image_size)
 
         # Step 1: encode through QwenVL
-        vl_embs_list = self._encode_vl_hidden_states(batch_images, instructions)
+        vl_embs_list = self._encode_vl_hidden_states(batch_images, instructions, profiler=profiler)
         base_hidden = vl_embs_list[-1]
 
         state = (
@@ -374,12 +391,14 @@ class Qwen_PI_v3(baseframework):
             else None
         )
         # Step 2: run the flow-matching sampler to produce the denoised action chunk.
-        with torch.autocast("cuda", dtype=torch.float32):
-            pred_actions = self.action_model.predict_action(
-                vl_embs_list, state
-            )  # (B, action_horizon, action_dim)
+        with _stage(profiler, "starvla_action_sampler_ms"):
+            with torch.autocast("cuda", dtype=torch.float32):
+                pred_actions = self.action_model.predict_action(
+                    vl_embs_list, state
+                )  # (B, action_horizon, action_dim)
 
-        normalized_actions = pred_actions.detach().cpu().numpy()
+        with _stage(profiler, "starvla_to_numpy_ms"):
+            normalized_actions = pred_actions.detach().cpu().numpy()
         return {"normalized_actions": normalized_actions}
 
     def state2str_transform(self, state: np.ndarray) -> str:
