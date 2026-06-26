@@ -1378,15 +1378,16 @@ class LeRobotSingleDataset(Dataset):
         trajectory_id, base_index = self.all_steps[index]
         raw_data = self.get_step_data(trajectory_id, base_index)
         data = self.transforms(raw_data)
-        sample = self._pack_sample(data)
+        sample = self._pack_sample(data, trajectory_id=trajectory_id, base_index=base_index)
         self._attach_rl_games_metadata(sample, base_index)
         return sample
 
-    def _pack_sample(self, data: dict) -> dict:
+    def _pack_sample(self, data: dict, trajectory_id: int | None = None, base_index: int | None = None) -> dict:
         """Pack transformed modality data into training sample format."""
         num_obs_frames = int(self.data_cfg.get("num_obs_frames", 1) or 1) if self.data_cfg is not None else 1
         image_mode = str(self.data_cfg.get("image_mode", "single")) if self.data_cfg is not None else "single"
         stitch_grid = tuple(self.data_cfg.get("stitch_grid", [2, 2])) if self.data_cfg is not None else (2, 2)
+        kv_memory = bool(self.data_cfg.get("kv_memory", False)) if self.data_cfg is not None else False
 
         step_images = []
         for video_key in self.modality_keys["video"]:
@@ -1406,7 +1407,35 @@ class LeRobotSingleDataset(Dataset):
         action = []
         for action_key in self.modality_keys["action"]:
             action.append(data[action_key])
-        action = np.concatenate(action, axis=1).astype(np.float16)
+        action = np.concatenate(action, axis=1).astype(np.float16)  # [rows, action_dim]
+
+        actions_per_frame = None
+        valid = None
+        density_weight = None
+        if kv_memory and base_index is not None and num_obs_frames > 1:
+            # Scheme B per-frame supervision. The action delta was widened to
+            # range(-(R-1), H) (see make_LeRobotSingleDataset), so `action` holds
+            # [R-1+H, dim] and frame k's chunk is the H-length slice at offset k.
+            R = num_obs_frames
+            horizon = action.shape[0] - (R - 1)
+            actions_per_frame = np.stack(
+                [action[k : k + horizon] for k in range(R)], axis=0
+            ).astype(np.float16)  # [R, H, dim]
+            # Keep `action` as the base-index chunk (last H rows) for any consumer
+            # that still reads the single-target field.
+            action = action[-horizon:]
+
+            # valid mask: a frame is real unless its global step was clamped (front
+            # padding at episode start). Mirrors get_video's clamp at datasets.py:1753.
+            video_key = self.modality_keys["video"][0]
+            video_delta = np.asarray(self.delta_indices[video_key])
+            step_idx = video_delta + int(base_index)
+            traj_len = int(self.trajectory_lengths[self.get_trajectory_index(trajectory_id)])
+            valid = ((step_idx >= 0) & (step_idx <= traj_len - 1)).astype(bool)  # [R]
+
+            # density_weight: per-frame loss weight (event balancing). Defaults to
+            # uniform; populated from per-row event metadata when available.
+            density_weight = self._kv_density_weight(step_idx, traj_len).astype(np.float32)  # [R]
 
         sample = {
             "action": action,
@@ -1414,6 +1443,10 @@ class LeRobotSingleDataset(Dataset):
             "lang": language,
             "robot_tag": self.tag
         }
+        if actions_per_frame is not None:
+            sample["actions_per_frame"] = actions_per_frame
+            sample["valid"] = valid
+            sample["density_weight"] = density_weight
         if hasattr(self, "rl_games_task"):
             sample["rl_games_task"] = self.rl_games_task
         if hasattr(self, "rl_games_action_env_dim"):
@@ -1427,6 +1460,22 @@ class LeRobotSingleDataset(Dataset):
             sample["state"] = state
 
         return sample
+
+    def _kv_density_weight(self, step_idx: np.ndarray, traj_len: int) -> np.ndarray:
+        """Per-frame loss weight for KV-memory scheme-B supervision.
+
+        Replicates clean_v1's event balancing as a per-supervised-step weight instead
+        of dropping rows, so the rollout history stays contiguous. Reads a per-row
+        event-weight column when the exported dataset carries one (configurable via
+        ``datasets.vla_data.density_weight_key``); otherwise weights are uniform.
+        """
+        weights = np.ones(len(step_idx), dtype=np.float32)
+        key = self.data_cfg.get("density_weight_key", None) if self.data_cfg is not None else None
+        if not key or self.curr_traj_data is None or key not in self.curr_traj_data.columns:
+            return weights
+        column = self.curr_traj_data[key].to_numpy()
+        clamped = np.clip(step_idx, 0, traj_len - 1)
+        return column[clamped].astype(np.float32)
 
     def _attach_rl_games_metadata(self, sample: dict, base_index: int) -> None:
         """Attach non-modality RL-games metadata columns when converted datasets provide them."""

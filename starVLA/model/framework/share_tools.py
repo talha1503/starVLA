@@ -492,7 +492,11 @@ def apply_config_compat(cfg, *, strict: bool = False):
             `datasets.vla_data.include_state` and
             `framework.action_model.state_dim`.
 
-      7.  `cfg.version_id` is stamped to `"0.21"`.
+      7.  `trainer.profile_timing`
+          - Auto-filled to disabled profiling for saved configs created before
+            the optional timing instrumentation was added.
+
+      8.  `cfg.version_id` is stamped to `"0.21"`.
 
     Args:
         cfg: An OmegaConf DictConfig (or anything _to_omegaconf can wrap).
@@ -566,7 +570,13 @@ def apply_config_compat(cfg, *, strict: bool = False):
         elif OmegaConf.select(cfg, "framework.action_model.state_dim", default=None) is None:
             OmegaConf.update(cfg, f"{vla_data_path}.include_state", False, force_add=True)
 
-    # ---- 7. stamp version ----
+    # ---- 7. optional profiling defaults ----
+    if OmegaConf.select(cfg, "trainer.profile_timing.enabled", default=None) is None:
+        OmegaConf.update(cfg, "trainer.profile_timing.enabled", False, force_add=True)
+    if OmegaConf.select(cfg, "trainer.profile_timing.log_interval", default=None) is None:
+        OmegaConf.update(cfg, "trainer.profile_timing.log_interval", 10, force_add=True)
+
+    # ---- 8. stamp version ----
     if src_version != CONFIG_VERSION:
         try:
             OmegaConf.update(cfg, "version_id", CONFIG_VERSION, force_add=True)

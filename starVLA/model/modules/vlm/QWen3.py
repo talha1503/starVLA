@@ -6,6 +6,7 @@ import time
 from typing import Optional
 
 import torch
+from starVLA.model.profiling import stage_timer as _stage
 from starVLA.training.trainer_utils import initialize_overwatch
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -219,39 +220,41 @@ class _QWen3_VL_Interface(nn.Module):
             )
         return generation_output
 
-    def build_qwenvl_inputs(self, images, instructions, solutions=None, **kwargs):
+    def build_qwenvl_inputs(self, images, instructions, solutions=None, profiler=None, **kwargs):
         """
         Build model inputs from raw data (images + instructions + optional solutions).
         Follow Oficial Qwen3-VL Instruct format: https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct
         """
 
         # Create messages: one message per sample
-        messages = []
-        assert len(images) == len(instructions), "Images and instructions must have the same length"
-        for imgs, instruction in zip(images, instructions):
-            content = [{"type": "image", "image": img} for img in imgs]
+        with _stage(profiler, "starvla_qwen_message_build_ms"):
+            messages = []
+            assert len(images) == len(instructions), "Images and instructions must have the same length"
+            for imgs, instruction in zip(images, instructions):
+                content = [{"type": "image", "image": img} for img in imgs]
 
-            if "CoT_prompt" in self.config.datasets.vla_data:  # If using a grounding prompt to task
-                CoT_prompt = self.config.datasets.vla_data.get("CoT_prompt", "")
-                prompt = CoT_prompt.replace("{instruction}", instruction)
-            else:
-                prompt = instruction
+                if "CoT_prompt" in self.config.datasets.vla_data:  # If using a grounding prompt to task
+                    CoT_prompt = self.config.datasets.vla_data.get("CoT_prompt", "")
+                    prompt = CoT_prompt.replace("{instruction}", instruction)
+                else:
+                    prompt = instruction
 
-            content.append({"type": "text", "text": prompt})
-            msg = [{"role": "user", "content": content}]
+                content.append({"type": "text", "text": prompt})
+                msg = [{"role": "user", "content": content}]
 
-            if solutions is not None:
-                solution = solutions[len(messages)]
-                msg.append({"role": "assistant", "content": [{"type": "text", "text": solution}]})
-            messages.append(msg)
+                if solutions is not None:
+                    solution = solutions[len(messages)]
+                    msg.append({"role": "assistant", "content": [{"type": "text", "text": solution}]})
+                messages.append(msg)
 
         profile_timing = self._profile_timing_enabled()
         build_timing = {}
 
         t_processor = time.perf_counter() if profile_timing else None
-        batch_inputs = self.processor.apply_chat_template(
-            messages, tokenize=True, padding=True, add_generation_prompt=True, return_dict=True, return_tensors="pt"
-        )
+        with _stage(profiler, "starvla_qwen_processor_ms"):
+            batch_inputs = self.processor.apply_chat_template(
+                messages, tokenize=True, padding=True, add_generation_prompt=True, return_dict=True, return_tensors="pt"
+            )
         if profile_timing:
             build_timing["timing/qwen_processor"] = time.perf_counter() - t_processor
 
@@ -281,7 +284,8 @@ class _QWen3_VL_Interface(nn.Module):
             batch_inputs["labels"] = labels
 
         t_h2d = time.perf_counter() if profile_timing else None
-        batch_inputs = batch_inputs.to(self.model.device)
+        with _stage(profiler, "starvla_qwen_h2d_ms"):
+            batch_inputs = batch_inputs.to(self.model.device)
         if profile_timing:
             self._profile_sync()
             build_timing["timing/qwen_h2d"] = time.perf_counter() - t_h2d

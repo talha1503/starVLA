@@ -282,7 +282,6 @@ def _configure_quota_cumulative_training_steps(cfg, dataloader, accelerator) -> 
 
     cfg.trainer.max_train_steps = total_steps
     curriculum_cfg.computed_plan = plan
-    curriculum_cfg.effective_batch_size = effective_batch_size
     if not dist.is_initialized() or dist.get_rank() == 0:
         logger.info(
             "quota_cumulative derived max_train_steps=%s from %s phases and effective_batch_size=%s",
@@ -536,7 +535,21 @@ class VLATrainer(TrainerUtils):
         if hasattr(self.config, "rl_games") and hasattr(self.config.rl_games, "env_eval"):
             enabled = bool(getattr(self.config.rl_games.env_eval, "enabled", False))
             if enabled:
-                self._rl_games_eval_runner = RlGamesEvalRunner(cfg=self.config, output_dir=self.config.output_dir)
+                # Default to the latency_bench ("corrected") eval; keep eval_core
+                # reachable via rl_games.env_eval.eval_backend=eval_core.
+                backend = str(
+                    getattr(self.config.rl_games.env_eval, "eval_backend", "latency_bench")
+                    or "latency_bench"
+                ).strip().lower()
+                if backend == "eval_core":
+                    runner_cls = RlGamesEvalRunner
+                else:
+                    from latency_bench.integrations.starvla_rl_games_eval_runner import (
+                        LatencyBenchRlGamesEvalRunner,
+                    )
+
+                    runner_cls = LatencyBenchRlGamesEvalRunner
+                self._rl_games_eval_runner = runner_cls(cfg=self.config, output_dir=self.config.output_dir)
 
     def _save_periodic_checkpoints_enabled(self) -> bool:
         return not self._save_best_model_enabled

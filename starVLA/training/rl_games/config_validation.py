@@ -86,6 +86,13 @@ def sync_kv_memory_obs_window(cfg: Any) -> None:
         rollout_len = max(window + 1, 2)
     OmegaConf.update(cfg, "datasets.vla_data.num_obs_frames", rollout_len, force_add=True)
     OmegaConf.update(cfg, "datasets.vla_data.image_mode", "multiframe", force_add=True)
+    # Flag the dataloader to emit per-frame KV-memory supervision fields (valid mask,
+    # per-frame action chunks, density weights) and widen the action delta window.
+    # This distinguishes KV-memory rollouts from plain multi-frame stacking.
+    OmegaConf.update(cfg, "datasets.vla_data.kv_memory", True, force_add=True)
+    # Read the per-row density weight column the exporter writes (clean_v1 event
+    # balancing). Absent column -> uniform weights (see datasets._kv_density_weight).
+    OmegaConf.update(cfg, "datasets.vla_data.density_weight_key", "density_weight", force_add=True)
 
 
 def validate_rl_games_config(cfg: Any) -> None:

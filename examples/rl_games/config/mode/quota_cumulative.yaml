@@ -21,6 +21,5 @@ datasets:
       eval_at_phase_end: true
       save_at_phase_end: false
       computed_plan: null
-      effective_batch_size: null
 
 mode: quota_cumulative
