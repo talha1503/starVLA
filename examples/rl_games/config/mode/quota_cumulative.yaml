@@ -20,5 +20,6 @@ datasets:
       step_budget_mode: auto
       eval_at_phase_end: true
       save_at_phase_end: false
+      computed_plan: null
 
 mode: quota_cumulative

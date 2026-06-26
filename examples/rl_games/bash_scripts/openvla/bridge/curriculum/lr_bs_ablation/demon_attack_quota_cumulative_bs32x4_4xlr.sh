@@ -11,13 +11,13 @@ python examples/rl_games/scripts/launch_train.py \
     env=demon_attack \
     init=bridge \
     mode=quota_cumulative \
-    run_id="openvla_demon_attack_mixed_latency_quota_cumulative_clean_exp1_bs32x4" \
+    run_id="openvla_demon_attack_mixed_latency_quota_cumulative_clean_exp1_bs32x4_4xlr" \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
     wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_demon_attack_mixed_latency_quota_cumulative_clean_exp1_bs32x4" \
+    checkpoint.hf_repo_id="talha15032/openvla_demon_attack_mixed_latency_quota_cumulative_clean_exp1_bs32x4_4xlr" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_demon_attack_mixed_latency_quota_cumulative_clean_exp1_bs32x4" \
+    checkpoint.sync.repo_id="talha15032/openvla_demon_attack_mixed_latency_quota_cumulative_clean_exp1_bs32x4_4xlr" \
     dataset.source_hf="latency-sensitive-bench/demon_attack_200ep" \
     dataset.latency_filter=[0,2,4,6,8] \
     dataset.episodes_per_latency=40 \
@@ -32,6 +32,9 @@ python examples/rl_games/scripts/launch_train.py \
     datasets.vla_data.latency_curriculum.step_budget_mode=auto \
     datasets.vla_data.latency_curriculum.eval_at_phase_end=true \
     datasets.vla_data.latency_curriculum.save_at_phase_end=false \
+    trainer.learning_rate.base=8.0e-05 \
+    trainer.learning_rate.qwen_vl_interface=4.0e-05 \
+    trainer.learning_rate.action_model=4.0e-04 \
     checkpoint.save_best_model=false \
     checkpoint.save_final_model=true \
     checkpoint.local.keep_last_n=1 \
