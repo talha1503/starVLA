@@ -28,7 +28,7 @@ python examples/rl_games/scripts/launch_train.py \
   env=flappy \
   init=bridge \
   run_id=flappy_fix_latency_2_200ep_7k2steps_kv_memory \
-  paths.dataset_local_dir=data/flappy_fix_latency_0_200ep_7k2steps \
+  paths.dataset_local_dir=data/flappy_fix_latency_2_200ep_7k2steps \
   datasets.vla_data.num_obs_frames=8 \
   datasets.vla_data.image_mode=multiframe \
   framework.kv_memory.enabled=true \
