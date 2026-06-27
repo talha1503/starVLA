@@ -36,6 +36,8 @@ python examples/rl_games/scripts/launch_train.py \
   framework.kv_memory.window=4 \
   framework.kv_memory.rollout_len=8 \
   trainer.distributed_backend=deepspeed \
+  trainer.eval_interval=250 \
+  trainer.eval_num_batches=50 \
   launch.use_accelerate=true \
   launch.num_processes=2 \
   paths.accelerate_config=starVLA/config/deepseeds/deepspeed_zero2.yaml \

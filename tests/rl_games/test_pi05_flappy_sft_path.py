@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -317,6 +318,113 @@ def test_ready_local_dataset_ignores_manifest_source_mismatch(
     assert result["dataset_converted"] is False
     assert result["data_mix"] == "flappy_train__bridge"
     assert result["eval_data_mix"] == "flappy_train__bridge__val"
+
+
+def _write_runtime_cache(dataset_dir: Path, *, total_steps: int, num_trajectories: int) -> None:
+    meta_dir = dataset_dir / "meta"
+    meta_dir.mkdir(parents=True)
+    (meta_dir / "stats_gr00t.json").write_text("{}", encoding="utf-8")
+    (dataset_dir / "dataset_statistics.json").write_text("{}", encoding="utf-8")
+    with (meta_dir / "steps_data_index.pkl").open("wb") as stream:
+        pickle.dump(
+            {
+                "total_steps": total_steps,
+                "num_trajectories": num_trajectories,
+                "steps": [(0, 0)] * total_steps,
+            },
+            stream,
+        )
+
+
+def test_validate_starvla_dataset_uses_runtime_cache_without_dataset_instantiation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    data_root_dir = tmp_path / "datasets"
+    dataset_dir = data_root_dir / "flappy_train__bridge"
+    _write_runtime_cache(dataset_dir, total_steps=17, num_trajectories=3)
+
+    def reject_dataset_instantiation(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("runtime cache hit should not instantiate LeRobotSingleDataset")
+
+    import starVLA.dataloader.lerobot_datasets as lerobot_datasets
+
+    monkeypatch.setattr(lerobot_datasets, "make_LeRobotSingleDataset", reject_dataset_instantiation)
+
+    result = setup_training_assets._validate_starvla_dataset(
+        data_root_dir=data_root_dir,
+        data_mix="flappy_train__bridge",
+    )
+
+    assert result == {
+        "dataset_stats_path": str(dataset_dir / "dataset_statistics.json"),
+        "dataset_robot_type": "rl_games_flappy",
+        "dataset_embodiment_tag": "EmbodimentTag.NEW_EMBODIMENT",
+        "dataset_num_steps": 17,
+        "dataset_num_trajectories": 3,
+    }
+
+
+def test_conversion_path_materializes_train_and_eval_runtime_caches_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    data_root_dir = tmp_path / "datasets"
+    materialized: list[str] = []
+
+    def fake_materialize(data_root_dir: Path, data_mix: str) -> dict[str, Any]:
+        materialized.append(data_mix)
+        return {
+            "dataset_stats_path": str(data_root_dir / data_mix / "dataset_statistics.json"),
+            "dataset_robot_type": "rl_games_flappy",
+            "dataset_embodiment_tag": "EmbodimentTag.NEW_EMBODIMENT",
+            "dataset_num_steps": 10 if data_mix.endswith("__bridge") else 4,
+            "dataset_num_trajectories": 2 if data_mix.endswith("__bridge") else 1,
+        }
+
+    def reject_validate(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("conversion path should reuse materialized summaries")
+
+    def fake_verify_dataset(*args: Any, **kwargs: Any) -> bool:
+        return True
+
+    def fake_convert_dataset(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(setup_training_assets, "_materialize_starvla_runtime_cache", fake_materialize)
+    monkeypatch.setattr(setup_training_assets, "_validate_starvla_dataset", reject_validate)
+
+    args = SimpleNamespace(
+        dataset_local_dir=str(data_root_dir),
+        initialization_mode="bridge",
+        action_carrier="bridge",
+        converted_dataset_name="flappy_train",
+        source_dataset_hf="data/flappy_fix_latency_0_parquet",
+        source_dataset_config_name=None,
+        source_dataset_subdir=None,
+        setup_force="true",
+        dataset_force_download="false",
+        mode="single",
+        latency_mode="single",
+        verify_rows=200,
+        dataset_cache_dir=None,
+        max_episodes=None,
+        latency_filter=None,
+        episodes_per_latency=None,
+    )
+
+    result = setup_training_assets._ensure_rl_games_lerobot_dataset(
+        args,
+        convert_dataset=fake_convert_dataset,
+        verify_dataset=fake_verify_dataset,
+    )
+
+    assert materialized == ["flappy_train__bridge", "flappy_train__bridge__val"]
+    assert result["dataset_converted"] is True
+    assert result["dataset_num_steps"] == 10
+    assert result["dataset_num_trajectories"] == 2
+    assert result["eval_dataset_num_steps"] == 4
+    assert result["eval_dataset_num_trajectories"] == 1
 
 
 @pytest.mark.parametrize(

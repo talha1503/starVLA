@@ -6,6 +6,7 @@ import contextlib
 import inspect
 import json
 import os
+import pickle
 import re
 import sys
 from pathlib import Path
@@ -421,10 +422,51 @@ def _ensure_base_model(model: str, base_model_dir: Path, base_model_repo_id: str
     return info
 
 
-def _validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, Any]:
+def _starvla_runtime_cache_paths(dataset_dir: Path) -> dict[str, Path]:
+    return {
+        "dataset_statistics": dataset_dir / "dataset_statistics.json",
+        "stats": dataset_dir / "meta" / "stats_gr00t.json",
+        "steps": dataset_dir / "meta" / "steps_data_index.pkl",
+    }
+
+
+def _starvla_runtime_cache_ready(dataset_dir: Path) -> bool:
+    paths = _starvla_runtime_cache_paths(dataset_dir)
+    return all(path.exists() for path in paths.values())
+
+
+def _read_starvla_runtime_cache_summary(data_root_dir: Path, data_mix: str) -> dict[str, Any]:
+    from starVLA.dataloader.gr00t_lerobot.registry import (
+        ROBOT_TYPE_TO_EMBODIMENT_TAG,
+        get_dataset_named_mixture,
+    )
+
+    total_steps = 0
+    total_trajectories = 0
+    first_stats: dict[str, Any] | None = None
+    for dataset_name, _, robot_type in get_dataset_named_mixture(data_mix):
+        paths = _starvla_runtime_cache_paths(data_root_dir / dataset_name)
+        with paths["steps"].open("rb") as stream:
+            steps_cache = pickle.load(stream)
+        total_steps += steps_cache["total_steps"]
+        total_trajectories += steps_cache["num_trajectories"]
+        if first_stats is None:
+            first_stats = {
+                "dataset_stats_path": str(paths["dataset_statistics"]),
+                "dataset_robot_type": robot_type,
+                "dataset_embodiment_tag": str(ROBOT_TYPE_TO_EMBODIMENT_TAG[robot_type]),
+            }
+    assert first_stats is not None
+    return {
+        **first_stats,
+        "dataset_num_steps": total_steps,
+        "dataset_num_trajectories": total_trajectories,
+    }
+
+
+def _materialize_starvla_runtime_cache(data_root_dir: Path, data_mix: str) -> dict[str, Any]:
     from starVLA.dataloader.lerobot_datasets import make_LeRobotSingleDataset
     from starVLA.dataloader.gr00t_lerobot.registry import (
-        ROBOT_TYPE_CONFIG_MAP,
         ROBOT_TYPE_TO_EMBODIMENT_TAG,
         get_dataset_named_mixture,
     )
@@ -452,7 +494,7 @@ def _validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, A
             first_stats = {
                 "dataset_stats_path": str(stats_path),
                 "dataset_robot_type": robot_type,
-                "dataset_embodiment_tag": str(ROBOT_TYPE_TO_EMBODIMENT_TAG.get(robot_type)),
+                "dataset_embodiment_tag": str(ROBOT_TYPE_TO_EMBODIMENT_TAG[robot_type]),
             }
     assert first_stats is not None
     return {
@@ -460,6 +502,15 @@ def _validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, A
         "dataset_num_steps": total_steps,
         "dataset_num_trajectories": total_trajectories,
     }
+
+
+def _validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, Any]:
+    from starVLA.dataloader.gr00t_lerobot.registry import get_dataset_named_mixture
+
+    mixture = get_dataset_named_mixture(data_mix)
+    if all(_starvla_runtime_cache_ready(data_root_dir / dataset_name) for dataset_name, _, _ in mixture):
+        return _read_starvla_runtime_cache_summary(data_root_dir=data_root_dir, data_mix=data_mix)
+    return _materialize_starvla_runtime_cache(data_root_dir=data_root_dir, data_mix=data_mix)
 
 
 def _initialization_mode(args) -> str:
@@ -604,9 +655,11 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
                 f"mixed-latency dataset conversion did not create a usable prompt map: {prompt_map}. "
                 "Check that the selected training episodes contain latency/prompt columns for more than one latency."
             )
-
-    validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=data_mix)
-    eval_validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=eval_data_mix)
+        validation = _materialize_starvla_runtime_cache(data_root_dir=data_root_dir, data_mix=data_mix)
+        eval_validation = _materialize_starvla_runtime_cache(data_root_dir=data_root_dir, data_mix=eval_data_mix)
+    else:
+        validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=data_mix)
+        eval_validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=eval_data_mix)
     return {
         "dataset_ready": True,
         "dataset_converted": converted,
@@ -862,6 +915,8 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 manifest["train_episodes_per_latency"] = episodes_per_latency
                 manifest["eval_episodes_per_latency"] = eval_episodes_per_latency
                 manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            _materialize_starvla_runtime_cache(data_root_dir=data_root_dir, data_mix=data_mix)
+            _materialize_starvla_runtime_cache(data_root_dir=data_root_dir, data_mix=eval_data_mix)
             converted = True
 
         mixture_entries.append([data_mix, weight, robot_type])
