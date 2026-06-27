@@ -5,11 +5,24 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 # shellcheck source=../_pip.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_pip.sh"
 
-pip_install flappy-bird-gymnasium
-# force-reinstall + no-deps is load-bearing: it makes regular pygame's files win
-# over pygame-ce (whose libpng cannot decode the sprites; see PIL patch below).
-# Drop --no-cache-dir so the wheel comes from cache instead of re-downloading.
-pip_install --force-reinstall --no-deps "pygame==2.6.1" pillow flappy-bird-gymnasium
+# Install the repo's custom flappy fork (provides GPU rendering / render_state,
+# used by latency_bench's in-process flappy eval). Stock PyPI flappy-bird-gymnasium
+# lacks flappy_bird_gymnasium.envs.render_state.BatchedFlappyRenderState. The fork
+# lives at the parent repo root (this submodule is nested under it).
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
+FLAPPY_FORK="${REPO_ROOT}/flappy-bird-gymnasium"
+if [ -d "${FLAPPY_FORK}" ]; then
+  pip_install -e "${FLAPPY_FORK}"
+else
+  echo "[install/env/flappy] WARN: fork not found at ${FLAPPY_FORK}; falling back to PyPI (no GPU rendering)"
+  pip_install flappy-bird-gymnasium
+fi
+# force-reinstall + no-deps is load-bearing: regular pygame (not pygame-ce). The PIL
+# fallback patch below is the real safety net: inside the heavy trainer process,
+# SDL2_image's bundled libpng gets symbol-interposed by PyAV/OpenCV/Pillow/torchvision
+# libpng and fails to decode the sprites; the fallback decodes via Pillow instead, so
+# no LD_PRELOAD is needed at training time. Drop --no-cache-dir so the wheel comes from cache.
+pip_install --force-reinstall --no-deps "pygame==2.6.1" pillow
 
 "$PYTHON_BIN" - <<'PY'
 import os
@@ -30,7 +43,7 @@ if marker not in source:
 import pygame as _starvla_pygame
 from PIL import Image as _starvla_PILImage
 _starvla_orig_load_sprite = _load_sprite
-def _load_sprite(filename, convert, alpha):  # noqa: F811
+def _load_sprite(filename, convert, alpha=True):  # noqa: F811
     try:
         return _starvla_orig_load_sprite(filename, convert, alpha)
     except _starvla_pygame.error:
