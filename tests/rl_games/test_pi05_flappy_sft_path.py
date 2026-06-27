@@ -536,8 +536,9 @@ def test_pi05_backbone_bridge_factorized11_command_forwards_partial_reload_and_1
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
     assert "init=backbone_bridge_factorized11" in cmd
-    assert "++trainer.reload_modules=qwen_vl_interface" in cmd
-    assert any(item.startswith("++trainer.pretrained_checkpoint=") for item in cmd)
+    assert "trainer.reload_modules=qwen_vl_interface" in cmd
+    assert any(item.startswith("trainer.pretrained_checkpoint=") for item in cmd)
+    assert not any(item.startswith("++trainer.") for item in cmd)
     assert "++rl_games.action_carrier=native" in cmd
     assert "++rl_games.env_eval.deadly.action_layout=factorized_11" in cmd
     assert "++framework.action_model.action_dim=11" in cmd

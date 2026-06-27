@@ -113,6 +113,19 @@ def test_openvla_three_env_cross_task_setup_uses_024_latencies() -> None:
         assert list(post_train.latencies) == [0, 2, 4]
 
 
+def test_default_training_config_disables_held_out_action_classification() -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="flappy",
+        init="bridge",
+        mode="single",
+        overrides=[],
+    )
+
+    assert cfg.trainer.eval_action_classification is False
+
+
 def test_openvla_three_env_cross_task_forwards_deadly_threshold(tmp_path: Path) -> None:
     cfg = launch_train.compose_training_config(
         config_name="train",
@@ -170,7 +183,7 @@ def test_launcher_auto_forwards_new_nested_config_fields(tmp_path: Path) -> None
         init="bridge",
         mode="single",
         overrides=[
-            "+trainer.optimizer.extra_flag=true",
+            "trainer.optimizer.fused=false",
             "+datasets.vla_data.synthetic_cache.enabled=true",
         ],
     )
@@ -182,8 +195,9 @@ def test_launcher_auto_forwards_new_nested_config_fields(tmp_path: Path) -> None
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "++trainer.optimizer.extra_flag=true" in cmd
+    assert "trainer.optimizer.fused=false" in cmd
     assert "++datasets.vla_data.synthetic_cache.enabled=true" in cmd
+    assert not any(item.startswith("++trainer.") for item in cmd)
 
 
 def test_launcher_runtime_overrides_are_last(tmp_path: Path) -> None:
@@ -233,7 +247,7 @@ def test_run_experiment_auto_forwards_canonical_nested_fields(tmp_path: Path) ->
             "save_best_model": False,
             "save_pt_file": False,
         },
-        "trainer": {"optimizer": {"extra_flag": True}},
+        "trainer": {"optimizer": {"fused": False}},
         "datasets": {"vla_data": {"per_device_batch_size": 8, "synthetic_cache": {"enabled": True}}},
         "framework": {"qwenvl": {"base_vlm": "config_base"}},
         "rl_games": {"env_eval": {"enabled": False, "latency": {"values": [0]}}},
@@ -246,8 +260,9 @@ def test_run_experiment_auto_forwards_canonical_nested_fields(tmp_path: Path) ->
 
     cmd = run_experiment._trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "++trainer.optimizer.extra_flag=true" in cmd
+    assert "trainer.optimizer.fused=false" in cmd
     assert "++datasets.vla_data.synthetic_cache.enabled=true" in cmd
+    assert not any(item.startswith("++trainer.") for item in cmd)
     assert "trainer.batch_size=" not in " ".join(cmd)
     assert [item for item in cmd if "datasets.vla_data.data_root_dir=" in item][-1] == (
         f"++datasets.vla_data.data_root_dir={tmp_path / 'resolved_datasets'}"
@@ -275,8 +290,9 @@ def test_launcher_forwards_vit_and_llm_freeze_overrides(tmp_path: Path, monkeypa
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "++trainer.freeze_vit=true" in cmd
-    assert "++trainer.freeze_llm_layers=[0,27]" in cmd
+    assert "trainer.freeze_vit=true" in cmd
+    assert "trainer.freeze_llm_layers=[0,27]" in cmd
+    assert not any(item.startswith("++trainer.") for item in cmd)
     assert "trainer.freeze_llm_bottom_ratio=" not in cmd
 
 

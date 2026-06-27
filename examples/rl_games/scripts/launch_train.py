@@ -146,8 +146,12 @@ def _is_trainer_command_leaf(path: str) -> bool:
     return root not in CONFIG_GROUP_KEYS and root not in TRAINER_COMMAND_EXCLUDED_ROOTS
 
 
+def _override_prefix(path: str) -> str:
+    return "" if path.startswith("trainer.") else "++"
+
+
 def _append_leaf_override(cmd: list[str], path: str, value: Any) -> None:
-    cmd.append(f"++{path}={_hydra_value(value)}")
+    cmd.append(f"{_override_prefix(path)}{path}={_hydra_value(value)}")
 
 
 def _append_config_leaf_overrides(cmd: list[str], cfg: Any) -> None:

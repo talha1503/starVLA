@@ -103,8 +103,9 @@ trainer:
   per_latency_eval_num_batches: null
   # Log task-specific control-critical precision/recall/F1 on the held-out val set.
   # Supported tasks: flappy, demon_attack, deadly_corridor.
-  # Uses predict_action, so enabled tasks get an extra forward pass per eval batch.
-  eval_action_classification: true
+  # Disabled by default because online rollout eval is the training-time signal.
+  # Enable explicitly with trainer.eval_action_classification=true for offline checks.
+  eval_action_classification: false
   # Optional separate interval for action classification metrics. When null,
   # action classification runs with eval_interval.
   eval_action_classification_interval: null
