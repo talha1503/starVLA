@@ -11,6 +11,10 @@ framework:
     action_horizon: 1
     future_action_window_size: 0
     past_action_window_size: 0
+  kv_memory:
+    enabled: false
+    window: 4
+    rollout_len: 8
 
 datasets:
   vla_data:
