@@ -752,13 +752,34 @@ class VLATrainer(TrainerUtils):
         mode = str(getattr(env_eval, "distributed_mode", "none") or "none").strip().lower()
         return mode in {"rank_sharded", "distributed", "sharded"} and int(self.accelerator.num_processes) > 1
 
+    def _run_rl_games_eval_with_model_mode(
+        self,
+        *,
+        stage: str,
+        shard_rank: int = 0,
+        shard_count: int = 1,
+        save: bool = True,
+    ):
+        was_training = self.model.training
+        self.model.eval()
+        try:
+            return self._rl_games_eval_runner.run(
+                model=self.accelerator.unwrap_model(self.model),
+                step=self.completed_steps,
+                stage=stage,
+                shard_rank=int(shard_rank),
+                shard_count=int(shard_count),
+                save=save,
+            )
+        finally:
+            if was_training:
+                self.model.train()
+
     def _run_distributed_rl_games_eval(self, stage: str):
         if self._rl_games_eval_runner is None:
             return None
 
-        local_result = self._rl_games_eval_runner.run(
-            model=self.accelerator.unwrap_model(self.model),
-            step=self.completed_steps,
+        local_result = self._run_rl_games_eval_with_model_mode(
             stage=stage,
             shard_rank=int(self.accelerator.process_index),
             shard_count=int(self.accelerator.num_processes),
@@ -794,11 +815,7 @@ class VLATrainer(TrainerUtils):
         if self._distributed_rl_games_eval_enabled():
             eval_result = self._run_distributed_rl_games_eval(stage="mid_train")
         else:
-            eval_result = self._rl_games_eval_runner.run(
-                model=self.accelerator.unwrap_model(self.model),
-                step=self.completed_steps,
-                stage="mid_train",
-            )
+            eval_result = self._run_rl_games_eval_with_model_mode(stage="mid_train")
         step_metrics = self._append_rl_games_eval_metrics(
             step_metrics=step_metrics,
             eval_result=eval_result,
@@ -2126,11 +2143,7 @@ class VLATrainer(TrainerUtils):
             if self._distributed_rl_games_eval_enabled():
                 eval_result = self._run_distributed_rl_games_eval(stage="post_train")
             elif self.accelerator.is_main_process:
-                eval_result = self._rl_games_eval_runner.run(
-                    model=self.accelerator.unwrap_model(self.model),
-                    step=self.completed_steps,
-                    stage="post_train",
-                )
+                eval_result = self._run_rl_games_eval_with_model_mode(stage="post_train")
             else:
                 eval_result = None
 

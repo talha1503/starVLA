@@ -15,6 +15,13 @@ if str(STARVLA_ROOT) not in sys.path:
 
 
 def _load_policy_wrapper_module():
+    module_names = [
+        "starVLA.model.framework.base_framework",
+        "starVLA.model.framework.share_tools",
+        "deployment.model_server.policy_norm_processor",
+        "torch",
+    ]
+    original_modules = {name: sys.modules[name] for name in module_names if name in sys.modules}
     torch_module = ModuleType("torch")
     torch_module.bfloat16 = object()
     base_framework_module = ModuleType("starVLA.model.framework.base_framework")
@@ -31,7 +38,14 @@ def _load_policy_wrapper_module():
     module_path = STARVLA_ROOT / "deployment/model_server/policy_wrapper.py"
     spec = importlib.util.spec_from_file_location("policy_wrapper_module", module_path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        for name in module_names:
+            if name in original_modules:
+                sys.modules[name] = original_modules[name]
+            else:
+                sys.modules.pop(name, None)
     return module
 
 
@@ -52,6 +66,16 @@ class FakeFramework:
     def __init__(self, normalized_actions):
         self.normalized_actions = np.asarray(normalized_actions, dtype=np.float32)
         self.calls = []
+        self.to_calls = []
+        self.eval_calls = 0
+
+    def to(self, target):
+        self.to_calls.append(target)
+        return self
+
+    def eval(self):
+        self.eval_calls += 1
+        return self
 
     def predict_action(self, examples, **kwargs):
         self.calls.append({"examples": examples, "kwargs": kwargs})
@@ -205,3 +229,24 @@ def test_policy_wrapper_rl_games_mode_records_decode_timing():
     assert framework.calls[0]["kwargs"]["profiler"] is profiler
     assert profiler.timings["starvla_wrapper_rl_games_decode_ms"] == 1.0
     assert processor.calls == []
+
+
+def test_policy_wrapper_loads_checkpoint_framework_in_eval_mode():
+    policy_wrapper_module = _load_policy_wrapper_module()
+    framework = FakeFramework([[[0.1, 0.9]]])
+    policy_wrapper_module.baseframework.from_pretrained = lambda ckpt_path: framework
+    policy_wrapper_module.read_mode_config = lambda ckpt_path: (
+        {"framework": {"action_model": {"action_horizon": 1}}},
+        {},
+    )
+
+    wrapper = policy_wrapper_module.PolicyServerWrapper(
+        ckpt_path="/tmp/checkpoint",
+        device="cuda",
+        use_bf16=True,
+        action_output_mode="rl_games",
+        rl_games_env_name="flappy",
+    )
+
+    assert wrapper._framework is framework
+    assert framework.eval_calls == 1
