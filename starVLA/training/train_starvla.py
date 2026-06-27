@@ -28,7 +28,7 @@ import torch
 import torch.distributed as dist
 import wandb
 from accelerate import Accelerator, DeepSpeedPlugin
-from accelerate.utils import set_seed
+from accelerate.utils import DistributedType, set_seed
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
@@ -1210,7 +1210,8 @@ class VLATrainer(TrainerUtils):
             t_end_model = time.perf_counter()
             profile_model_seconds = self._profile_elapsed(t_profile_model) if profile_enabled else None
 
-            if self.accelerator.sync_gradients:
+            optimizer_stepped = bool(step_metrics.pop("_optimizer_step"))
+            if optimizer_stepped:
                 progress_bar.update(1)
                 self.completed_steps += 1
                 phase_ended = self._latency_curriculum_phase_end_at_step(self.completed_steps)
@@ -1255,7 +1256,7 @@ class VLATrainer(TrainerUtils):
                     }
                 )
 
-            gradients_synced = bool(self.accelerator.sync_gradients)
+            gradients_synced = optimizer_stepped
             if gradients_synced:
                 if should_run_step_interval_event(
                     completed_steps=self.completed_steps,
@@ -1914,6 +1915,43 @@ class VLATrainer(TrainerUtils):
         profile_next_step = self.completed_steps + 1
         profile_log = self._profile_timing_should_log(profile_next_step)
         profile_metrics = {}
+        if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            t_forward = self._profile_start() if profile_log else None
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                output_dict = self.model.forward(batch_vla)
+                action_loss = output_dict["action_loss"]
+                total_loss = action_loss
+            if profile_log:
+                profile_metrics["timing/forward"] = self._profile_elapsed(t_forward)
+                profile_metrics.update(output_dict["timing"])
+                profile_metrics.update(output_dict["batch_stats"])
+
+            t_backward = self._profile_start() if profile_log else None
+            self.model.backward(total_loss)
+            if profile_log:
+                profile_metrics["timing/backward"] = self._profile_elapsed(t_backward)
+
+            optimizer_stepped = bool(self.model.is_gradient_accumulation_boundary())
+            t_optimizer = self._profile_start() if profile_log else None
+            self.model.step()
+            if profile_log:
+                profile_metrics["timing/optimizer_step"] = self._profile_elapsed(t_optimizer)
+
+            t_scheduler = self._profile_start() if profile_log else None
+            if optimizer_stepped:
+                self.lr_scheduler.step()
+            if profile_log:
+                profile_metrics["timing/lr_scheduler"] = self._profile_elapsed(t_scheduler)
+
+            if not optimizer_stepped:
+                return {"_optimizer_step": False}
+            metrics = {
+                "train/loss": action_loss.item(),
+                "_optimizer_step": True,
+            }
+            metrics.update(profile_metrics)
+            return metrics
+
         with self.accelerator.accumulate(self.model):
             t_forward = self._profile_start() if profile_log else None
             with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -1960,10 +1998,11 @@ class VLATrainer(TrainerUtils):
                 profile_metrics["timing/zero_grad"] = self._profile_elapsed(t_zero_grad)
 
         if not gradients_synced:
-            return {}
+            return {"_optimizer_step": False}
         action_loss_value = action_loss.item()
         metrics = {
             "train/loss": action_loss_value,
+            "_optimizer_step": True,
         }
         metrics.update(profile_metrics)
         if grad_norm is not None:
