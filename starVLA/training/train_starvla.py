@@ -532,6 +532,8 @@ class VLATrainer(TrainerUtils):
         self._latency_curriculum_phase = None
         self._action_cc_f1_frame_loader = None
         self._action_cc_f1_frame_loader_key = None
+        self._train_loss_sum = 0.0
+        self._train_loss_weight = 0.0
         if hasattr(self.config, "rl_games") and hasattr(self.config.rl_games, "env_eval"):
             enabled = bool(getattr(self.config.rl_games.env_eval, "enabled", False))
             if enabled:
@@ -961,6 +963,23 @@ class VLATrainer(TrainerUtils):
         device = grads[0].device
         norms = torch.stack([torch.linalg.vector_norm(g.to(device), 2) for g in grads])
         return float(torch.linalg.vector_norm(norms, 2).item())
+
+    def _record_train_loss(self, action_loss, loss_weight) -> None:
+        weight = float(loss_weight)
+        self._train_loss_sum += float(action_loss.detach().float().item()) * weight
+        self._train_loss_weight += weight
+
+    def _finalize_train_loss(self, device) -> float:
+        loss_stats = torch.tensor(
+            [self._train_loss_sum, self._train_loss_weight],
+            device=device,
+            dtype=torch.float32,
+        )
+        if dist.is_initialized():
+            dist.all_reduce(loss_stats, op=dist.ReduceOp.SUM)
+        self._train_loss_sum = 0.0
+        self._train_loss_weight = 0.0
+        return float((loss_stats[0] / loss_stats[1]).item())
 
     @staticmethod
     def _append_rl_games_eval_metrics(step_metrics: Dict[str, float], eval_result, stage: str) -> Dict[str, float]:
@@ -1937,6 +1956,7 @@ class VLATrainer(TrainerUtils):
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
                 action_loss = output_dict["action_loss"]
+                loss_weight = output_dict["loss_weight"]
                 total_loss = action_loss
             if profile_log:
                 profile_metrics["timing/forward"] = self._profile_elapsed(t_forward)
@@ -1945,6 +1965,7 @@ class VLATrainer(TrainerUtils):
 
             t_backward = self._profile_start() if profile_log else None
             self.model.backward(total_loss)
+            self._record_train_loss(action_loss, loss_weight)
             if profile_log:
                 profile_metrics["timing/backward"] = self._profile_elapsed(t_backward)
 
@@ -1962,11 +1983,15 @@ class VLATrainer(TrainerUtils):
 
             if not optimizer_stepped:
                 return {"_optimizer_step": False}
+            grad_norm = self.model.get_global_grad_norm()
             metrics = {
-                "train/loss": action_loss.item(),
+                "train/loss": self._finalize_train_loss(action_loss.device),
                 "_optimizer_step": True,
             }
             metrics.update(profile_metrics)
+            if isinstance(grad_norm, torch.Tensor):
+                grad_norm = grad_norm.detach().float().item()
+            metrics["train/grad_norm_pre_clip"] = float(grad_norm)
             return metrics
 
         with self.accelerator.accumulate(self.model):
@@ -1974,6 +1999,7 @@ class VLATrainer(TrainerUtils):
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
                 action_loss = output_dict["action_loss"]
+                loss_weight = output_dict["loss_weight"]
                 total_loss = action_loss
             if profile_log:
                 profile_metrics["timing/forward"] = self._profile_elapsed(t_forward)
@@ -1982,6 +2008,7 @@ class VLATrainer(TrainerUtils):
 
             t_backward = self._profile_start() if profile_log else None
             self.accelerator.backward(total_loss)
+            self._record_train_loss(action_loss, loss_weight)
             if profile_log:
                 profile_metrics["timing/backward"] = self._profile_elapsed(t_backward)
 
@@ -2016,9 +2043,8 @@ class VLATrainer(TrainerUtils):
 
         if not gradients_synced:
             return {"_optimizer_step": False}
-        action_loss_value = action_loss.item()
         metrics = {
-            "train/loss": action_loss_value,
+            "train/loss": self._finalize_train_loss(action_loss.device),
             "_optimizer_step": True,
         }
         metrics.update(profile_metrics)

@@ -150,11 +150,12 @@ class baseframework(PreTrainedModel):
                 - action: np.ndarray shaped [T, action_dim]
 
         Returns:
-            dict: Must contain ``"action_loss"`` (torch.Tensor scalar).
+            dict: Must contain ``"action_loss"`` (torch.Tensor scalar) and
+                  ``"loss_weight"`` (float denominator for train/loss logging).
                   May contain extra keys for logging (e.g. ``"kl_loss"``).
         """
         raise NotImplementedError(
-            f"{type(self).__name__} must implement forward(examples) -> dict with 'action_loss' key."
+            f"{type(self).__name__} must implement forward(examples) -> dict with 'action_loss' and 'loss_weight' keys."
         )
 
     def predict_action(self, examples: List[dict], **kwargs) -> dict:
@@ -218,8 +219,9 @@ class baseframework(PreTrainedModel):
         else:
             return None
 
-        # Apply loss scale and filter to Tensor values only
-        return {k: v * scale for k, v in out.items() if isinstance(v, torch.Tensor)}
+        scaled = {k: v * scale for k, v in out.items() if isinstance(v, torch.Tensor)}
+        scaled["loss_weight"] = out["loss_weight"]
+        return scaled
 
     def forward_vlm(self, batch) -> Dict[str, torch.Tensor]:
         """VLM forward pass (default implementation).

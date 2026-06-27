@@ -133,6 +133,7 @@ def test_target_is_per_frame_action_and_density_weighted():
 
     expected = (2.0 * 1.0 + 4.0 * 2.0 + 6.0 * 3.0) / (1.0 + 2.0 + 3.0)
     assert out["action_loss"].item() == pytest.approx(expected)
+    assert out["loss_weight"] == pytest.approx(1.0 + 2.0 + 3.0)
 
 
 def test_same_layout_batches_and_different_valid_splits():

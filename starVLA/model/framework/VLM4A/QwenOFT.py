@@ -423,7 +423,7 @@ class Qwenvl_OFT(baseframework):
         if profile_timing:
             timing_metrics["timing/action_head_loss"] = self._profile_elapsed(t_action)
 
-        return {"action_loss": action_loss, "timing": timing_metrics, "batch_stats": batch_stats}
+        return {"action_loss": action_loss, "loss_weight": float(len(examples)), "timing": timing_metrics, "batch_stats": batch_stats}
 
     @torch.inference_mode()
     def predict_action(
@@ -720,7 +720,7 @@ class Qwenvl_OFT(baseframework):
                 total_weight += weight
 
         action_loss = total_weighted_loss / max(total_weight, 1e-6)
-        return {"action_loss": action_loss, "timing": timing, "batch_stats": {}}
+        return {"action_loss": action_loss, "loss_weight": total_weight, "timing": timing, "batch_stats": {}}
 
     @torch.inference_mode()
     def _predict_action_memory(self, examples: List[dict]) -> dict:
