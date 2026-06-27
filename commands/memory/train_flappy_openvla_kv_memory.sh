@@ -32,6 +32,7 @@ python examples/rl_games/scripts/launch_train.py \
   datasets.vla_data.num_obs_frames=8 \
   datasets.vla_data.image_mode=multiframe \
   framework.qwenvl.attn_implementation=flash_attention_2 \
+  framework.qwenvl.enable_gradient_checkpointing=false \
   framework.kv_memory.enabled=true \
   framework.kv_memory.window=4 \
   framework.kv_memory.rollout_len=8 \
