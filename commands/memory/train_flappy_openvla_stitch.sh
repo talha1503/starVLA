@@ -19,10 +19,10 @@ python examples/rl_games/scripts/launch_train.py \
   datasets.vla_data.image_mode=stitch \
   'datasets.vla_data.stitch_grid=[2,2]' \
   trainer.distributed_backend=none \
-  trainer.gradient_accumulation_steps=4 \
+  trainer.gradient_accumulation_steps=1 \
   datasets.vla_data.per_device_batch_size=32 \
-  trainer.max_train_steps=5000 \
-  trainer.save_interval=100 \
+  trainer.max_train_steps=4000 \
+  trainer.save_interval=500 \
   rl_games.env_eval.mid_train.enabled=false \
   rl_games.env_eval.post_train.enabled=false \
   checkpoint.save_pt_file=false \
