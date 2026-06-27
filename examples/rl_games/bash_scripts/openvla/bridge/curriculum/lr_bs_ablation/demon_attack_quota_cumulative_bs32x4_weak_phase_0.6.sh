@@ -11,13 +11,13 @@ python examples/rl_games/scripts/launch_train.py \
     env=demon_attack \
     init=bridge \
     mode=quota_cumulative \
-    run_id="openvla_demon_attack_mixed_latency_quota_cumulative_clean_exp1_bs32x4_weak_phase_6" \
+    run_id="openvla_demon_attack_mixed_latency_quota_cumulative_clean_exp2_bs32x4_weak_phase_0.6" \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
     wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_demon_attack_mixed_latency_quota_cumulative_clean_exp1_bs32x4_weak_phase_0.6" \
+    checkpoint.hf_repo_id="talha15032/openvla_demon_attack_mixed_latency_quota_cumulative_clean_exp2_bs32x4_weak_phase_0.6" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_demon_attack_mixed_latency_quota_cumulative_clean_exp1_bs32x4_weak_phase_0.6" \
+    checkpoint.sync.repo_id="talha15032/openvla_demon_attack_mixed_latency_quota_cumulative_clean_exp2_bs32x4_weak_phase_0.6" \
     dataset.source_hf="latency-sensitive-bench/demon_attack_200ep" \
     dataset.latency_filter=[0,2,4,6,8] \
     dataset.episodes_per_latency=40 \
@@ -33,6 +33,7 @@ python examples/rl_games/scripts/launch_train.py \
     datasets.vla_data.latency_curriculum.eval_at_phase_end=true \
     datasets.vla_data.latency_curriculum.save_at_phase_end=false \
     trainer.lr_scheduler_type=constant \
+    rl_games.env_eval.eval_backend=eval_core \
     trainer.scheduler_specific_kwargs={} \
     trainer.num_warmup_steps=0 \
     checkpoint.save_best_model=false \
