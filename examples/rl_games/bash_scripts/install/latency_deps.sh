@@ -1,0 +1,2 @@
+python -m pip install --no-deps -e /workspace/latency-sensitive-bench/flappy-bird-gymnasium
+python -m pip install pygame==2.6.1 pygame-ce==2.5.7 gymnasium==0.29.1 sample-factory==2.1.1 stable-baselines3==2.8.0 ale-py==0.10.2 AutoROM==0.6.1 AutoROM.accept-rom-license==0.6.1

@@ -46,7 +46,6 @@ from latency_bench.data.sf_teacher_rollout import (
 )
 
 SCRIPT_DIR = Path(__file__).parent
-DEFAULT_OUT_DIR = SCRIPT_DIR / "ghost_trail_test_outputs_demon_attack_raw_consecutive_15"
 DEFAULT_CHECKPOINT_CANDIDATES = [
     LATENCY_BENCH_ROOT / "checkpoints_old" / "demon_attack_sf_same_latency_l0_seed0",
     LATENCY_BENCH_ROOT / "checkpoints" / "demon_attack_sf_same_latency_l0_seed0",
@@ -412,9 +411,19 @@ def save_window_outputs(window: WindowCandidate, *, out_dir: Path, set_idx: int)
     save_contact_sheet(frames, set_dir / "contact_sheet_inputs.png")
 
     tracks = collect_tracks(frames)
-    final = render_tracks(frames, tracks)
-    bullets = render_tracks(frames, tracks, include_kinds={"player_bullet", "enemy_bullet"})
-    large = render_tracks(frames, tracks, include_kinds={"ship", "enemy"})
+    final = render_tracks(frames, tracks, render_all_history=True)
+    bullets = render_tracks(
+        frames,
+        tracks,
+        include_kinds={"player_bullet", "enemy_bullet"},
+        render_all_history=True,
+    )
+    large = render_tracks(
+        frames,
+        tracks,
+        include_kinds={"ship", "enemy"},
+        render_all_history=True,
+    )
     debug = debug_tracks_image(frames[-1], tracks)
     Image.fromarray(final).save(set_dir / "ghost_trail_composite.png")
     Image.fromarray(bullets).save(set_dir / "bullet_only_composite.png")
@@ -447,7 +456,7 @@ def save_window_outputs(window: WindowCandidate, *, out_dir: Path, set_idx: int)
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint-root", default="")
-    parser.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))
+    parser.add_argument("--out-dir", default="")
     parser.add_argument("--window-len", type=int, default=15)
     parser.add_argument("--num-windows", type=int, default=5)
     parser.add_argument("--episodes-to-scan", type=int, default=5)
@@ -459,11 +468,12 @@ def main() -> None:
     parser.add_argument("--deterministic", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
 
-    if int(args.window_len) != 15:
-        raise ValueError("this test-set collector is intentionally fixed to --window-len 15")
-
     checkpoint_root = resolve_checkpoint_root(args.checkpoint_root or None)
-    out_dir = Path(args.out_dir).expanduser().resolve()
+    out_dir = (
+        Path(args.out_dir).expanduser().resolve()
+        if args.out_dir
+        else (SCRIPT_DIR / f"ghost_trail_test_outputs_demon_attack_raw_consecutive_{int(args.window_len)}").resolve()
+    )
     scratch_dir = out_dir / "_scratch_runtime"
     out_dir.mkdir(parents=True, exist_ok=True)
 

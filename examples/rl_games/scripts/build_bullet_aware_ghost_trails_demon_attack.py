@@ -34,6 +34,7 @@ DEFAULT_OUT_DIR = SCRIPT_DIR / "ghost_trail_test_outputs_demon_attack_bullet_awa
 
 SCORE_ROW_END = 20
 GROUND_ROW_START = 188
+MAX_FOREGROUND_COMPONENT_AREA = 500
 
 
 @dataclass
@@ -96,7 +97,7 @@ def foreground_components(frame: np.ndarray, frame_idx: int) -> list[Component]:
     for lab in range(1, num):
         mask = labels == lab
         area = int(mask.sum())
-        if area < 1:
+        if area < 1 or area > MAX_FOREGROUND_COMPONENT_AREA:
             continue
         ys, xs = np.where(mask)
         x0, x1 = int(xs.min()), int(xs.max()) + 1
@@ -258,25 +259,48 @@ def dilate_mask(mask: np.ndarray, pixels: int) -> np.ndarray:
     return cv2.dilate(mask.astype(np.uint8), k, iterations=1) > 0
 
 
+def contour_mask(mask: np.ndarray) -> np.ndarray:
+    if int(mask.sum()) <= 8:
+        return mask
+    _require_cv2()
+    k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    eroded = cv2.erode(mask.astype(np.uint8), k, iterations=1) > 0
+    edge = mask & ~eroded
+    return edge if edge.any() else mask
+
+
 def render_tracks(
     frames: list[np.ndarray],
     tracks: list[Track],
     *,
     include_kinds: set[str] | None = None,
+    render_all_history: bool = False,
 ) -> np.ndarray:
     n = len(frames)
     H, W = frames[0].shape[:2]
     current_idx = n - 1
-    alpha_acc = np.zeros((H, W), dtype=np.float32)
-    color_acc = np.zeros((H, W, 3), dtype=np.float32)
+    base = frames[-1].astype(np.float32)
+    result = base.copy()
+    rows = np.arange(H)[:, None]
+    in_playfield = np.broadcast_to((rows >= SCORE_ROW_END) & (rows < GROUND_ROW_START), (H, W))
+    current_foreground = np.any(frames[-1] != 0, axis=-1) & in_playfield
 
-    params = {
-        "ship": {"gamma": 1.4, "min_alpha": 0, "max_alpha": 150, "dilate": 0, "linger": 0},
-        "enemy": {"gamma": 1.8, "min_alpha": 0, "max_alpha": 130, "dilate": 0, "linger": 1},
-        "player_bullet": {"gamma": 0.9, "min_alpha": 35, "max_alpha": 235, "dilate": 1, "linger": 3},
-        "enemy_bullet": {"gamma": 0.9, "min_alpha": 35, "max_alpha": 235, "dilate": 1, "linger": 3},
-    }
+    if render_all_history:
+        params = {
+            "ship": {"gamma": 2.3, "min_alpha": 0, "max_alpha": 72, "dilate": 0, "linger": n},
+            "enemy": {"gamma": 2.3, "min_alpha": 0, "max_alpha": 78, "dilate": 0, "linger": n},
+            "player_bullet": {"gamma": 1.8, "min_alpha": 4, "max_alpha": 120, "dilate": 1, "linger": n},
+            "enemy_bullet": {"gamma": 1.8, "min_alpha": 4, "max_alpha": 120, "dilate": 1, "linger": n},
+        }
+    else:
+        params = {
+            "ship": {"gamma": 1.4, "min_alpha": 0, "max_alpha": 150, "dilate": 0, "linger": 0},
+            "enemy": {"gamma": 1.8, "min_alpha": 0, "max_alpha": 130, "dilate": 0, "linger": 1},
+            "player_bullet": {"gamma": 0.9, "min_alpha": 35, "max_alpha": 235, "dilate": 1, "linger": 3},
+            "enemy_bullet": {"gamma": 0.9, "min_alpha": 35, "max_alpha": 235, "dilate": 1, "linger": 3},
+        }
 
+    draw_ops = []
     for track in tracks:
         if include_kinds is not None and track.kind not in include_kinds:
             continue
@@ -286,34 +310,29 @@ def render_tracks(
         if current_idx - track.history[-1].frame_idx > p["linger"]:
             continue
 
-        history = track.history if "bullet" in track.kind else truncate_by_direction(track.history)
+        history = track.history if (render_all_history or "bullet" in track.kind) else truncate_by_direction(track.history)
         ghosts = history[:-1] if history[-1].frame_idx == current_idx else history
         for comp in ghosts:
-            alpha = alpha_for_frame(
-                comp.frame_idx,
-                n,
-                gamma=p["gamma"],
-                min_alpha=p["min_alpha"],
-                max_alpha=p["max_alpha"],
-            )
-            mask = dilate_mask(comp.mask, int(p["dilate"]))
-            if "bullet" in track.kind:
-                color = comp.mean_color.astype(np.float32)
-                color_acc[mask] += alpha * color
-            else:
-                color_acc[mask] += alpha * frames[comp.frame_idx][mask].astype(np.float32)
-            alpha_acc[mask] += alpha
+            draw_ops.append((comp.frame_idx, track.kind, comp, p))
 
-    base = frames[-1].astype(np.float32)
-    has_ghost = alpha_acc > 1e-6
-    final_alpha = np.clip(alpha_acc, 0.0, 1.0)
-    blended_color = np.zeros((H, W, 3), dtype=np.float32)
-    blended_color[has_ghost] = color_acc[has_ghost] / alpha_acc[has_ghost, None]
-
-    result = base.copy()
-    result[has_ghost] = base[has_ghost] * (1.0 - final_alpha[has_ghost, None]) + blended_color[has_ghost] * final_alpha[
-        has_ghost, None
-    ]
+    for _, kind, comp, p in sorted(draw_ops, key=lambda item: item[0]):
+        alpha = alpha_for_frame(
+            comp.frame_idx,
+            n,
+            gamma=p["gamma"],
+            min_alpha=p["min_alpha"],
+            max_alpha=p["max_alpha"],
+        )
+        mask = dilate_mask(comp.mask, int(p["dilate"])) if "bullet" in kind else contour_mask(comp.mask)
+        mask = mask & ~current_foreground
+        if not mask.any() or alpha <= 0.0:
+            continue
+        if "bullet" in kind:
+            color = comp.mean_color.astype(np.float32)
+            result[mask] = result[mask] * (1.0 - alpha) + color * alpha
+        else:
+            source = frames[comp.frame_idx].astype(np.float32)
+            result[mask] = result[mask] * (1.0 - alpha) + source[mask] * alpha
     return np.clip(result, 0, 255).astype(np.uint8)
 
 
