@@ -544,6 +544,8 @@ class VLATrainer(TrainerUtils):
                 if backend == "eval_core":
                     runner_cls = RlGamesEvalRunner
                 else:
+                    # latency_bench is importable because the install registers the
+                    # parent repo root via a .pth file (see install/common.sh).
                     from latency_bench.integrations.starvla_rl_games_eval_runner import (
                         LatencyBenchRlGamesEvalRunner,
                     )
@@ -2048,6 +2050,110 @@ class VLATrainer(TrainerUtils):
         self.accelerator.wait_for_everyone()
 
 
+def _run_eval_batch_benchmark(trainer) -> None:
+    """Benchmark rl_games (latency_bench) eval wall-clock + VRAM across batch sizes.
+
+    Gated by env var LB_EVAL_BENCH=1. The plan is a comma list of
+    ``parallel:episodes`` pairs in LB_EVAL_BENCH_PLAN (default
+    ``1:4,5:20,10:20,20:20``). Model is loaded ONCE; every config runs against
+    the same live model so the comparison is apples-to-apples. The serial 1:4
+    row is meant to be linearly extrapolated to 20 eps (4x serial is too slow).
+    """
+    import os
+    import time
+
+    plan_str = os.environ.get("LB_EVAL_BENCH_PLAN", "1:4,5:20,10:20,20:20")
+    plan = []
+    for item in plan_str.split(","):
+        p, e = item.strip().split(":")
+        plan.append((int(p), int(e)))
+
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        _nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(torch.cuda.current_device())
+    except Exception:
+        pynvml = None
+        _nvml_handle = None
+
+    def _nvml_used_mb():
+        if _nvml_handle is None:
+            return None
+        return pynvml.nvmlDeviceGetMemoryInfo(_nvml_handle).used / 1024 / 1024
+
+    runner = trainer._rl_games_eval_runner
+    model = trainer.accelerator.unwrap_model(trainer.model)
+
+    def _set(parallel, episodes):
+        # The trainer cfg is an access-tracked wrapper that OmegaConf.update can't
+        # touch, so override the runner's per-stage getters directly instead.
+        runner._eval_parallel_envs = lambda *a, **k: int(parallel)
+        runner._num_episodes = lambda *a, **k: int(episodes)
+
+    import threading
+
+    def _timed_run(parallel, episodes, label):
+        _set(parallel, episodes)
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        nvml_peak = {"v": 0.0}
+        stop = threading.Event()
+
+        def _sample():
+            while not stop.is_set():
+                u = _nvml_used_mb()
+                if u is not None and u > nvml_peak["v"]:
+                    nvml_peak["v"] = u
+                time.sleep(0.1)
+
+        t = threading.Thread(target=_sample, daemon=True)
+        t.start()
+        t0 = time.perf_counter()
+        result = runner.run(model=model, step=0, stage="mid_train", save=False)
+        torch.cuda.synchronize()
+        dt = time.perf_counter() - t0
+        stop.set()
+        t.join(timeout=1.0)
+        torch_peak = torch.cuda.max_memory_reserved() / 1024 / 1024
+        mean_r = result.aggregate.get("mean_reward")
+        logger.info(
+            "[LB_EVAL_BENCH] %s | parallel=%d eps=%d | wall=%.1fs | torch_reserved_peak=%.0fMB | "
+            "nvml_used_peak=%sMB | mean_reward=%s",
+            label, parallel, episodes, dt, torch_peak,
+            f"{nvml_peak['v']:.0f}" if _nvml_handle is not None else "n/a", mean_r,
+        )
+        return {"parallel": parallel, "episodes": episodes, "wall_s": dt,
+                "torch_peak_mb": torch_peak, "nvml_peak_mb": nvml_peak["v"], "mean_reward": mean_r}
+
+    logger.info("[LB_EVAL_BENCH] warmup (parallel=1 eps=2, untimed) to trigger CUDA init/autotune ...")
+    _set(1, 2)
+    runner.run(model=model, step=0, stage="mid_train", save=False)
+    torch.cuda.synchronize()
+
+    rows = []
+    for parallel, episodes in plan:
+        rows.append(_timed_run(parallel, episodes, label="bench"))
+
+    # Summary table with serial-extrapolation + speedup vs the 1:* serial row.
+    serial = next((r for r in rows if r["parallel"] == 1), None)
+    serial_per_ep = (serial["wall_s"] / serial["episodes"]) if serial else None
+    logger.info("[LB_EVAL_BENCH] ==== SUMMARY ====")
+    logger.info("[LB_EVAL_BENCH] parallel | eps | wall_s | s/ep | extrap_20ep_s | speedup_vs_serial20 | torch_peak_MB | nvml_peak_MB | mean_reward")
+    serial20 = serial_per_ep * 20 if serial_per_ep else None
+    for r in rows:
+        s_per_ep = r["wall_s"] / r["episodes"]
+        extrap20 = s_per_ep * 20
+        speedup = (serial20 / extrap20) if serial20 else float("nan")
+        logger.info(
+            "[LB_EVAL_BENCH] %8d | %3d | %6.1f | %5.2f | %12.1f | %18.2fx | %12.0f | %11.0f | %s",
+            r["parallel"], r["episodes"], r["wall_s"], s_per_ep, extrap20, speedup,
+            r["torch_peak_mb"], r["nvml_peak_mb"], r["mean_reward"],
+        )
+    if serial20 is not None:
+        logger.info("[LB_EVAL_BENCH] serial 20-ep estimate (1:4 x5) = %.1fs", serial20)
+
+
 def main(cfg) -> None:
     _pin_cuda_device_from_local_rank()
     logger.info("VLA Training :: Warming Up")
@@ -2084,6 +2190,16 @@ def main(cfg) -> None:
     )
 
     trainer.prepare_training()
+
+    import os as _os
+    if _os.environ.get("LB_EVAL_BENCH"):
+        _run_eval_batch_benchmark(trainer)
+        logger.info("[LB_EVAL_BENCH] done; skipping training.")
+        if dist.is_initialized():
+            dist.barrier()
+            dist.destroy_process_group()
+        return
+
     trainer.train()
 
     logger.info("... and that's all, folks!")
