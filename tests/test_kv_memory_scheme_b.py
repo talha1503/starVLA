@@ -154,3 +154,45 @@ def test_returns_timing_and_batch_stats_keys():
     a = _example("p", ["f0"], [True], [[[0.0, 0.0]]], [1.0])
     _, out = _run([a])
     assert "timing" in out and "batch_stats" in out
+
+
+def test_mixture_dataset_preserves_kv_memory_fields_from_single_dataset():
+    from starVLA.dataloader.gr00t_lerobot.datasets import LeRobotMixtureDataset
+
+    class SingleDataset:
+        dataset_name = "fake"
+        lerobot_info_meta = {"total_videos": 0}
+        modality_keys = {"video": ["video.image"]}
+
+        def get_step_data(self, trajectory_id, base_index):
+            return {"trajectory_id": trajectory_id, "base_index": base_index}
+
+        def transforms(self, raw_data):
+            return raw_data
+
+        def _pack_sample(self, data, trajectory_id=None, base_index=None):
+            if trajectory_id is None or base_index is None:
+                return {"action": np.array([[0.0]], dtype=np.float32), "image": ["frame"], "lang": "play"}
+            return {
+                "action": np.array([[0.0]], dtype=np.float32),
+                "image": ["frame"],
+                "lang": "play",
+                "valid": np.array([True], dtype=bool),
+                "actions_per_frame": np.array([[[1.0]]], dtype=np.float32),
+                "density_weight": np.array([1.0], dtype=np.float32),
+            }
+
+        def _attach_rl_games_metadata(self, sample, base_index):
+            sample["latency"] = 2
+
+    mixture = LeRobotMixtureDataset.__new__(LeRobotMixtureDataset)
+    mixture._getitem_count = 0
+    mixture.datasets = [SingleDataset()]
+    mixture.sample_step = lambda index: (mixture.datasets[0], 7, 3)
+
+    sample = LeRobotMixtureDataset.__getitem__(mixture, 0)
+
+    assert sample["valid"].tolist() == [True]
+    assert sample["actions_per_frame"].shape == (1, 1, 1)
+    assert sample["density_weight"].tolist() == [1.0]
+    assert sample["latency"] == 2

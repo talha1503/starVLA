@@ -28,6 +28,28 @@ _ACTION_TOKEN_MAX = (
 import torch.nn as nn
 
 
+def _patch_qwen3vl_flash_attention_position_ids() -> None:
+    from transformers.models.qwen3_vl import modeling_qwen3_vl as qwen3_vl
+
+    text_attention_cls = qwen3_vl.Qwen3VLTextAttention
+    if hasattr(text_attention_cls, "_starvla_flash_attention_position_ids_patched"):
+        return
+
+    original_forward = text_attention_cls.forward
+
+    def forward_without_flash_attention_position_ids(self, *args, **kwargs):
+        # Qwen3-VL already applies M-RoPE through position_embeddings before
+        # attention. Passing the repeated temporal M-RoPE ids into HF's FA2
+        # wrapper makes Transformers 4.57 mis-detect packed sequences and build
+        # empty cu_seqlens on KV-memory cache steps.
+        if self.config._attn_implementation == "flash_attention_2" and "position_ids" in kwargs:
+            del kwargs["position_ids"]
+        return original_forward(self, *args, **kwargs)
+
+    text_attention_cls.forward = forward_without_flash_attention_position_ids
+    text_attention_cls._starvla_flash_attention_position_ids_patched = True
+
+
 class _QWen3_VL_Interface(nn.Module):
     """
     This exists because of the diversity of VLMs, so we encapsulate the changes here.
@@ -64,6 +86,8 @@ class _QWen3_VL_Interface(nn.Module):
             except ImportError:
                 print("[WARNING] flash_attn not installed, falling back to sdpa")
                 attn_implementation = "sdpa"
+            else:
+                _patch_qwen3vl_flash_attention_position_ids()
 
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_id,
