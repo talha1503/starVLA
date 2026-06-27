@@ -1910,12 +1910,98 @@ class VLATrainer(TrainerUtils):
             logger.info(f"  Gradient accumulation steps = {self.accelerator.gradient_accumulation_steps}")
             logger.info(f"  Total batch size = {self.total_batch_size}")
 
+    def _kv_memory_train_rebatch_enabled(self) -> bool:
+        kv_cfg = self.config.framework.kv_memory
+        return bool(kv_cfg.enabled) and bool(kv_cfg.train_rebatch)
+
+    def _deepspeed_finish_step(self, action_loss, profile_metrics, profile_log):
+        """Shared DeepSpeed step tail used by both DeepSpeed train paths.
+
+        Reads the accumulation boundary BEFORE ``step()`` (step() advances the
+        micro-step counter), steps the LR scheduler only on a real boundary, and
+        returns metrics only when the optimizer actually stepped.
+        """
+        optimizer_stepped = bool(self.model.is_gradient_accumulation_boundary())
+        t_optimizer = self._profile_start() if profile_log else None
+        self.model.step()
+        if profile_log:
+            profile_metrics["timing/optimizer_step"] = self._profile_elapsed(t_optimizer)
+
+        t_scheduler = self._profile_start() if profile_log else None
+        if optimizer_stepped:
+            self.lr_scheduler.step()
+        if profile_log:
+            profile_metrics["timing/lr_scheduler"] = self._profile_elapsed(t_scheduler)
+
+        if not optimizer_stepped:
+            return {"_optimizer_step": False}
+        metrics = {
+            "train/loss": action_loss.item(),
+            "_optimizer_step": True,
+        }
+        metrics.update(profile_metrics)
+        return metrics
+
+    def _train_step_deepspeed_kv_memory_rebatch(self, batch_vla, profile_log: bool):
+        profile_metrics = {}
+        module = self.model.module
+
+        # This path issues one backward() per layout group before a single step().
+        # That accumulates into the right gradient only when DeepSpeed reduce-scatters
+        # every backward into partitioned buffers, i.e. ZeRO stage >= 2. On stage 0/1
+        # the boundary backward would re-all-reduce earlier groups' grads and corrupt
+        # them, so fail loudly rather than train on silently-wrong gradients.
+        zero_stage = self.model.zero_optimization_stage()
+        assert zero_stage >= 2, (
+            "framework.kv_memory.train_rebatch requires DeepSpeed ZeRO stage >= 2 "
+            f"(gradient partitioning); got stage {zero_stage}."
+        )
+
+        t_forward = self._profile_start() if profile_log else None
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            plan = module.build_kv_memory_rebatch_loss_plan(batch_vla)
+        if profile_log:
+            profile_metrics["timing/forward"] = self._profile_elapsed(t_forward)
+            profile_metrics.update(plan["timing"])
+            profile_metrics.update(plan["batch_stats"])
+            profile_metrics["timing/backward"] = 0.0
+
+        # Process groups one at a time, dropping each group's detached KV snapshots
+        # right after its backward so peak memory tracks a single group, not the whole
+        # plan (the point of rebatching is to NOT hold every step's graph at once).
+        groups = plan["groups"]
+        action_loss = None
+        for i in range(len(groups)):
+            t_group_forward = self._profile_start() if profile_log else None
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                loss_dict = module.compute_kv_memory_rebatch_group_loss(groups[i], plan["total_weight"])
+            loss = loss_dict["loss"]
+            if profile_log:
+                profile_metrics["timing/forward"] += self._profile_elapsed(t_group_forward)
+                for key, value in loss_dict["timing"].items():
+                    profile_metrics[key] = profile_metrics.get(key, 0.0) + value
+                profile_metrics.update(loss_dict["batch_stats"])
+
+            action_loss = loss.detach() if action_loss is None else action_loss + loss.detach()
+            t_backward = self._profile_start() if profile_log else None
+            self.model.backward(loss)
+            if profile_log:
+                profile_metrics["timing/backward"] += self._profile_elapsed(t_backward)
+            loss = None
+            loss_dict = None
+            groups[i] = None  # release this group's snapshots before the next forward
+
+        return self._deepspeed_finish_step(action_loss, profile_metrics, profile_log)
+
     def _train_step(self, batch_vla, batch_vlm=None):
         """Execute single training step."""
         profile_next_step = self.completed_steps + 1
         profile_log = self._profile_timing_should_log(profile_next_step)
         profile_metrics = {}
         if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            if self._kv_memory_train_rebatch_enabled():
+                return self._train_step_deepspeed_kv_memory_rebatch(batch_vla, profile_log)
+
             t_forward = self._profile_start() if profile_log else None
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
@@ -1931,26 +2017,7 @@ class VLATrainer(TrainerUtils):
             if profile_log:
                 profile_metrics["timing/backward"] = self._profile_elapsed(t_backward)
 
-            optimizer_stepped = bool(self.model.is_gradient_accumulation_boundary())
-            t_optimizer = self._profile_start() if profile_log else None
-            self.model.step()
-            if profile_log:
-                profile_metrics["timing/optimizer_step"] = self._profile_elapsed(t_optimizer)
-
-            t_scheduler = self._profile_start() if profile_log else None
-            if optimizer_stepped:
-                self.lr_scheduler.step()
-            if profile_log:
-                profile_metrics["timing/lr_scheduler"] = self._profile_elapsed(t_scheduler)
-
-            if not optimizer_stepped:
-                return {"_optimizer_step": False}
-            metrics = {
-                "train/loss": action_loss.item(),
-                "_optimizer_step": True,
-            }
-            metrics.update(profile_metrics)
-            return metrics
+            return self._deepspeed_finish_step(action_loss, profile_metrics, profile_log)
 
         with self.accelerator.accumulate(self.model):
             t_forward = self._profile_start() if profile_log else None
