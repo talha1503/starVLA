@@ -33,9 +33,11 @@ class _LiveEvalRunner:
     def __init__(self, *, raises=False):
         self.raises = raises
         self.model_modes = []
+        self.run_kwargs = []
 
     def run(self, *, model, step, stage, **kwargs):
         self.model_modes.append(model.training)
+        self.run_kwargs.append(kwargs)
         if self.raises:
             raise RuntimeError("eval failed")
         from starVLA.training.rl_games.eval_core import EvalResult
@@ -90,3 +92,18 @@ def test_live_rl_games_eval_restores_train_mode_when_runner_raises():
     assert runner.model_modes == [False]
     assert trainer.model.training is True
 
+
+def test_distributed_live_rl_games_eval_passes_rank_shard_arguments():
+    runner = _LiveEvalRunner()
+    trainer = _trainer(runner)
+    trainer.accelerator.process_index = 1
+    trainer.accelerator.num_processes = 2
+
+    result = trainer._run_distributed_rl_games_eval(stage="mid_train")
+
+    assert runner.model_modes == [False]
+    assert runner.run_kwargs == [{"shard_rank": 1, "shard_count": 2, "save": False}]
+    assert result.aggregate["mean_reward"] == 4.0
+    assert runner.saved[1:] == (250, "mid_train")
+    assert trainer.accelerator.wait_calls == 1
+    assert trainer.model.training is True

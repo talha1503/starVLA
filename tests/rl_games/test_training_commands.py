@@ -55,6 +55,15 @@ def test_training_commands_are_valid_bash() -> None:
     subprocess.run(["bash", "-n", *command_paths], check=True, cwd=REPO_ROOT)
 
 
+def test_kv_memory_training_command_shards_mid_train_latency_bench_eval() -> None:
+    command_text = (REPO_ROOT / "commands" / "memory" / "train_flappy_openvla_kv_memory.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "launch.num_processes=2" in command_text
+    assert "rl_games.env_eval.distributed_mode=rank_sharded" in command_text
+
+
 def test_openvla_deadly_cross_task_scripts_are_valid_bash() -> None:
     script_dir = REPO_ROOT / "examples" / "rl_games" / "bash_scripts" / "openvla" / "bridge" / "cross_task"
     command_paths = [str(script_dir / f"{setup}.sh") for setup in OPENVLA_DEADLY_CROSS_TASK_SETUPS]

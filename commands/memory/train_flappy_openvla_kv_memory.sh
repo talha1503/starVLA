@@ -47,6 +47,7 @@ python examples/rl_games/scripts/launch_train.py \
   trainer.max_train_steps=4000 \
   trainer.save_interval=500 \
   rl_games.env_eval.eval_parallel_envs=5 \
+  rl_games.env_eval.distributed_mode=rank_sharded \
   rl_games.env_eval.mid_train.enabled=true \
   rl_games.env_eval.mid_train.latencies=[2] \
   rl_games.env_eval.mid_train.interval_steps=250 \
