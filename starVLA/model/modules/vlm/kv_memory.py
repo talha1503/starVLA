@@ -108,16 +108,6 @@ def chunked_prefill_last_hidden(
 _Block = tuple  # (K0_list: List[Tensor], V_list: List[Tensor], length: int)
 
 
-def _detach_block(block: _Block) -> _Block:
-    """Detach a stored block's tensors (shares storage, drops the autograd graph).
-
-    Used for truncated BPTT (``detach_``) and for snapshotting a memory layout
-    (``fork_detached``); both want detached views, never copies.
-    """
-    k0, v, n = block
-    return ([k.detach() for k in k0], [vv.detach() for vv in v], n)
-
-
 class FrameKVMemory:
     """Fixed-size streaming KV memory for one stream (one env slot / one rollout).
 
@@ -197,17 +187,13 @@ class FrameKVMemory:
 
     def detach_(self) -> None:
         """Detach all stored tensors (truncated BPTT: history is a fixed memory)."""
-        if self.text is not None:
-            self.text = _detach_block(self.text)
-        self.frames = [_detach_block(b) for b in self.frames]
+        def _d(block):
+            k0, v, n = block
+            return ([k.detach() for k in k0], [vv.detach() for vv in v], n)
 
-    def fork_detached(self) -> "FrameKVMemory":
-        """Return a detached snapshot with the same layout and tensor storage."""
-        out = FrameKVMemory(self.rotary_emb, self.window, self.num_layers, self.text_config)
         if self.text is not None:
-            out.text = _detach_block(self.text)
-        out.frames = [_detach_block(b) for b in self.frames]
-        return out
+            self.text = _d(self.text)
+        self.frames = [_d(b) for b in self.frames]
 
     # ── Batching across streams (eval slots) ────────────────────────────
     # The rotation / cache math is already batch-general (positions carry B),

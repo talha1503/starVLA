@@ -62,10 +62,7 @@ def _trainer(boundary_every=4):
     trainer.accelerator = _ForbiddenAccelerator()
     trainer.lr_scheduler = _Scheduler()
     trainer.completed_steps = 0
-    trainer.config = SimpleNamespace(
-        framework=SimpleNamespace(kv_memory=SimpleNamespace(enabled=False, train_rebatch=False)),
-        trainer=SimpleNamespace(gradient_clipping=None),
-    )
+    trainer.config = SimpleNamespace(trainer=SimpleNamespace(gradient_clipping=None))
     trainer._profile_timing_should_log = lambda *args, **kwargs: False
     return trainer
 

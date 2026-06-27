@@ -15,7 +15,6 @@ framework:
     enabled: false
     window: 4
     rollout_len: 8
-    train_rebatch: false
 
 datasets:
   vla_data:

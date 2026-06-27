@@ -93,32 +93,6 @@ class QwenOFTDefaultConfig:
     )
 
 
-@dataclass
-class _RebatchSegment:
-    """One supervised (source-group, step) slice inside a rebatched layout group.
-
-    ``[start:end)`` indexes the group's stacked rows; ``weight`` is that step's
-    summed density weight, carried so the grouped loss reproduces the sequential
-    per-step weighting exactly.
-    """
-    start: int
-    end: int
-    weight: float
-    action_env_dims: List[int]
-    rl_games_tasks: Optional[List[str]]
-
-
-@dataclass
-class _RebatchGroup:
-    """All supervised steps that share a prompt and cache layout, stacked to run
-    as one batched grad forward (then backpropped on their own)."""
-    instruction: str
-    memories: list = field(default_factory=list)
-    frames: list = field(default_factory=list)
-    targets: list = field(default_factory=list)
-    segments: List[_RebatchSegment] = field(default_factory=list)
-
-
 @FRAMEWORK_REGISTRY.register("QwenOFT")
 class Qwenvl_OFT(baseframework):
     """
@@ -174,7 +148,6 @@ class Qwenvl_OFT(baseframework):
         self.kv_memory_enabled = bool(getattr(kv_cfg, "enabled", False)) if kv_cfg is not None else False
         self.kv_window = int(getattr(kv_cfg, "window", 4)) if kv_cfg is not None else 4
         self.kv_rollout_len = int(getattr(kv_cfg, "rollout_len", max(self.kv_window + 1, 2))) if kv_cfg is not None else self.kv_window + 1
-        self.kv_train_rebatch = bool(kv_cfg.train_rebatch) if kv_cfg is not None else False
         # Per-stream (eval slot) memories; rebuilt per sample during training.
         self._kv_memories: dict = {}
 
@@ -658,169 +631,6 @@ class Qwenvl_OFT(baseframework):
             return instruction
         return self.add_discretized_state_to_instruction([instruction], [state])[0]
 
-    # ── Shared per-step plumbing for the KV-memory training paths ───────────
-    # `_forward_memory` (sequential) and `build_kv_memory_rebatch_loss_plan`
-    # (rebatched) replay the SAME rollout with the SAME grouping, targets and
-    # density weighting; only the forward/backward strategy differs. These
-    # helpers hold the shared bookkeeping so the two paths cannot drift.
-
-    def _kv_source_groups(self, examples: List[dict]):
-        """Instructions + sample indices grouped by ``(instruction, valid pattern)``.
-
-        Rollouts that share the prompt AND the same real/padding pattern march
-        through identical window states each step, so they batch cleanly.
-        Returns ``(instructions, {(instruction, valid_tuple): [indices]})``.
-        """
-        instructions = [
-            self._instruction_with_state(ex["lang"], ex.get("state") if "state" in ex else None)
-            for ex in examples
-        ]
-        groups: dict = {}
-        for idx, instruction in enumerate(instructions):
-            valid = np.asarray(examples[idx]["valid"], dtype=bool)
-            groups.setdefault((instruction, tuple(valid.tolist())), []).append(idx)
-        return instructions, groups
-
-    def _kv_group_context(self, examples: List[dict], valid_key, indices):
-        """Per-source-group replay state shared by the sequential and rebatch paths.
-
-        Returns ``(real_positions, memories, rollout, action_env_dims, rl_games_tasks)``.
-        """
-        valid = np.asarray(valid_key, dtype=bool)
-        real_positions = [k for k in range(len(valid)) if valid[k]]
-        memories = [self._new_kv_memory() for _ in indices]
-        rollout = [examples[i]["image"] for i in indices]
-        action_env_dims = [int(examples[i].get("action_env_dim", self.action_env_dim)) for i in indices]
-        rl_games_tasks = [str(examples[i].get("rl_games_task", "")) for i in indices]
-        if not any(rl_games_tasks):
-            rl_games_tasks = None
-        return real_positions, memories, rollout, action_env_dims, rl_games_tasks
-
-    def _kv_step_targets(self, examples: List[dict], indices, k):
-        """Action-chunk targets for frame ``k`` across a source group's samples."""
-        return [self._prepare_action_array(examples[i]["actions_per_frame"][k]) for i in indices]
-
-    def _kv_step_weight(self, examples: List[dict], indices, k) -> float:
-        """Summed per-frame density weight at frame ``k`` across a source group."""
-        return float(sum(float(np.asarray(examples[i]["density_weight"])[k]) for i in indices))
-
-    def _kv_predict_actions(self, last_hidden, new_ids):
-        """Action predictions ``[B, chunk, dim]`` for one batched memory forward."""
-        with torch.autocast("cuda", dtype=torch.float32):
-            action_queries = self._gather_action_token_embeddings(
-                last_hidden, new_ids, action_token_id=self.action_token_id
-            )
-            return self.action_model.predict_action(action_queries)
-
-    def _kv_action_loss(self, preds, targets, action_env_dims, rl_games_tasks):
-        """Regression action loss for a (slice of a) batched forward. ``targets``
-        may be a list of per-sample arrays or an already-stacked tensor."""
-        with torch.autocast("cuda", dtype=torch.float32):
-            if not torch.is_tensor(targets):
-                targets = torch.tensor(np.array(targets), device=preds.device, dtype=preds.dtype)
-            targets = targets[:, -self.action_horizon :, :]
-            return self._compute_action_loss(
-                preds, targets, action_env_dims=action_env_dims, rl_games_tasks=rl_games_tasks
-            )
-
-    def build_kv_memory_rebatch_loss_plan(self, examples: List[dict]) -> dict:
-        """Replay rollout memory under no-grad and group supervised steps by layout.
-
-        Memory states here are rebuilt by a SEPARATE no-grad forward (not the grad
-        forward that produces the loss), so the model must be dropout-free in train
-        mode for the rebatched memory to match the sequential path bit-for-bit.
-        """
-        profile = self._profile_timing_enabled()
-        timing = {"timing/mem_nograd_fwd": 0.0}
-
-        _, source_groups = self._kv_source_groups(examples)
-
-        rebatch_groups: dict = {}
-        total_weight = 0.0
-        for (instruction, valid_key), indices in source_groups.items():
-            real_positions, memories, rollout, action_env_dims, rl_games_tasks = self._kv_group_context(
-                examples, valid_key, indices
-            )
-
-            for step_pos, k in enumerate(real_positions):
-                if step_pos > 0:
-                    for memory in memories:
-                        memory.detach_()
-
-                snapshots = [memory.fork_detached() for memory in memories]
-                step_frames = [frames[k] for frames in rollout]
-
-                group_key = (instruction, snapshots[0].layout_key())
-                group = rebatch_groups.get(group_key)
-                if group is None:
-                    group = _RebatchGroup(instruction=instruction)
-                    rebatch_groups[group_key] = group
-                start = len(group.memories)
-                group.memories.extend(snapshots)
-                group.frames.extend(step_frames)
-                group.targets.extend(self._kv_step_targets(examples, indices, k))
-                weight = self._kv_step_weight(examples, indices, k)
-                group.segments.append(
-                    _RebatchSegment(
-                        start=start,
-                        end=start + len(indices),
-                        weight=weight,
-                        action_env_dims=action_env_dims,
-                        rl_games_tasks=rl_games_tasks,
-                    )
-                )
-                total_weight += weight
-
-                t_fwd = self._profile_start() if profile else None
-                with torch.no_grad():
-                    self._kv_forward_step_batched(memories, step_frames, instruction)
-                if profile:
-                    timing["timing/mem_nograd_fwd"] += self._profile_elapsed(t_fwd)
-
-        groups = list(rebatch_groups.values())
-        return {
-            "groups": groups,
-            "total_weight": total_weight,
-            "timing": timing,
-            "batch_stats": {
-                "batch/kv_rebatch_groups": float(len(groups)),
-                "batch/kv_rebatch_items": float(sum(len(group.memories) for group in groups)),
-            },
-        }
-
-    def compute_kv_memory_rebatch_group_loss(self, group: "_RebatchGroup", total_weight: float) -> dict:
-        """Compute one grouped grad forward contribution for a rebatch plan group."""
-        profile = self._profile_timing_enabled()
-        timing = {"timing/mem_grad_fwd": 0.0, "timing/mem_action_head": 0.0}
-
-        t_fwd = self._profile_start() if profile else None
-        last_hidden, new_ids = self._kv_forward_step_batched(
-            group.memories, group.frames, group.instruction
-        )
-        if profile:
-            timing["timing/mem_grad_fwd"] += self._profile_elapsed(t_fwd)
-
-        t_head = self._profile_start() if profile else None
-        group_preds = self._kv_predict_actions(last_hidden, new_ids)
-        targets = torch.tensor(np.array(group.targets), device=group_preds.device, dtype=group_preds.dtype)
-        weighted_loss = None
-        for segment in group.segments:
-            seg = slice(segment.start, segment.end)
-            step_loss = self._kv_action_loss(
-                group_preds[seg], targets[seg], segment.action_env_dims, segment.rl_games_tasks
-            )
-            contribution = step_loss * segment.weight
-            weighted_loss = contribution if weighted_loss is None else weighted_loss + contribution
-        loss = weighted_loss / max(total_weight, 1e-6)
-        if profile:
-            timing["timing/mem_action_head"] += self._profile_elapsed(t_head)
-
-        return {
-            "loss": loss,
-            "timing": timing,
-            "batch_stats": {"batch/kv_rebatch_group_size": float(len(group.memories))},
-        }
-
     def _forward_memory(self, examples: List[dict]) -> dict:
         """Training forward with the streaming KV memory: per-frame supervision.
 
@@ -842,14 +652,29 @@ class Qwenvl_OFT(baseframework):
         profile = self._profile_timing_enabled()
         timing = {"timing/mem_nograd_fwd": 0.0, "timing/mem_grad_fwd": 0.0, "timing/mem_action_head": 0.0}
 
-        _, groups = self._kv_source_groups(examples)
+        instructions = [
+            self._instruction_with_state(ex["lang"], ex.get("state") if "state" in ex else None)
+            for ex in examples
+        ]
+
+        # Group rollouts that share the prompt AND the same real/padding pattern: those
+        # march through identical window states each step, so they batch cleanly.
+        groups: dict = {}
+        for idx, instruction in enumerate(instructions):
+            valid = np.asarray(examples[idx]["valid"], dtype=bool)
+            groups.setdefault((instruction, tuple(valid.tolist())), []).append(idx)
 
         total_weighted_loss = None
         total_weight = 0.0
         for (instruction, valid_key), indices in groups.items():
-            real_positions, memories, rollout, action_env_dims, rl_games_tasks = self._kv_group_context(
-                examples, valid_key, indices
-            )
+            valid = np.asarray(valid_key, dtype=bool)
+            real_positions = [k for k in range(len(valid)) if valid[k]]
+            memories = [self._new_kv_memory() for _ in indices]
+            rollout = [examples[i]["image"] for i in indices]
+            action_env_dims = [int(examples[i].get("action_env_dim", self.action_env_dim)) for i in indices]
+            rl_games_tasks = [str(examples[i].get("rl_games_task", "")) for i in indices]
+            if not any(rl_games_tasks):
+                rl_games_tasks = None
 
             for step_pos, k in enumerate(real_positions):
                 if step_pos > 0:
@@ -863,20 +688,33 @@ class Qwenvl_OFT(baseframework):
                     timing["timing/mem_grad_fwd"] += self._profile_elapsed(t_fwd)
 
                 t_head = self._profile_start() if profile else None
-                group_preds = self._kv_predict_actions(last_hidden, new_ids)  # [Bg, chunk, dim]
-                step_loss = self._kv_action_loss(
-                    group_preds,
-                    self._kv_step_targets(examples, indices, k),
-                    action_env_dims,
-                    rl_games_tasks,
-                )
+                with torch.autocast("cuda", dtype=torch.float32):
+                    action_queries = self._gather_action_token_embeddings(
+                        last_hidden, new_ids, action_token_id=self.action_token_id
+                    )
+                    group_preds = self.action_model.predict_action(action_queries)  # [Bg, chunk, dim]
+                    targets = [
+                        self._prepare_action_array(examples[i]["actions_per_frame"][k]) for i in indices
+                    ]
+                    targets = torch.tensor(
+                        np.array(targets), device=group_preds.device, dtype=group_preds.dtype
+                    )  # [Bg, H, dim]
+                    targets = targets[:, -self.action_horizon :, :]
+                    step_loss = self._compute_action_loss(
+                        group_preds,
+                        targets,
+                        action_env_dims=action_env_dims,
+                        rl_games_tasks=rl_games_tasks,
+                    )
                 if profile:
                     timing["timing/mem_action_head"] += self._profile_elapsed(t_head)
 
                 # Per-supervised-step density weight: sum of the group's per-frame
                 # weights at frame k. Uniform weights reduce this to a sample-count
                 # weighting, i.e. the exact mean over all supervised (sample, step).
-                weight = self._kv_step_weight(examples, indices, k)
+                weight = float(
+                    sum(float(np.asarray(examples[i]["density_weight"])[k]) for i in indices)
+                )
                 contribution = step_loss * weight
                 total_weighted_loss = contribution if total_weighted_loss is None else total_weighted_loss + contribution
                 total_weight += weight

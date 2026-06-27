@@ -21,9 +21,8 @@ cd "$(dirname "$0")/../.."
 #
 # Effective batch = per_device_batch_size * num_processes * gradient_accumulation_steps
 #                 = 4 * 2 * 4 = 32. Tune per_device_batch_size / num_processes on the
-# real GPUs by watching memory; train_rebatch groups same-layout supervised steps and
-# backprops each group immediately, so it should hold fewer live step graphs than the
-# original sequential scheme-B path.
+# real GPUs by watching memory; per-frame scheme-B holds R step-graphs until the single
+# backward, so keep per_device_batch_size modest at first.
 python examples/rl_games/scripts/launch_train.py \
   model=openvla \
   env=flappy \
@@ -36,7 +35,6 @@ python examples/rl_games/scripts/launch_train.py \
   framework.kv_memory.enabled=true \
   framework.kv_memory.window=4 \
   framework.kv_memory.rollout_len=8 \
-  framework.kv_memory.train_rebatch=true \
   trainer.distributed_backend=deepspeed \
   trainer.eval_interval=250 \
   trainer.eval_num_batches=50 \
@@ -44,8 +42,8 @@ python examples/rl_games/scripts/launch_train.py \
   launch.use_accelerate=true \
   launch.num_processes=2 \
   paths.accelerate_config=starVLA/config/deepseeds/deepspeed_zero2.yaml \
-  trainer.gradient_accumulation_steps=2 \
-  datasets.vla_data.per_device_batch_size=8 \
+  trainer.gradient_accumulation_steps=4 \
+  datasets.vla_data.per_device_batch_size=4 \
   trainer.max_train_steps=4000 \
   trainer.save_interval=500 \
   rl_games.env_eval.eval_parallel_envs=5 \
