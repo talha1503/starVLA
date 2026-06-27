@@ -31,6 +31,7 @@ pip_install --force-reinstall --no-deps "pygame==2.6.1" pillow
 import os
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
+import flappy_bird_gymnasium  # noqa: F401
 import gymnasium as gym
 
 env = gym.make("FlappyBird-v0", render_mode="rgb_array", use_lidar=False)
