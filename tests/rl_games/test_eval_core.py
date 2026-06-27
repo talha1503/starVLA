@@ -227,6 +227,95 @@ def test_demon_attack_env_uses_noop_reset_max_30_by_default(monkeypatch):
     assert fake_env.step_actions == [0] * 30
 
 
+class _OneStepEnv:
+    def __init__(self):
+        self.reset_calls = []
+        self.close_calls = 0
+
+    def reset(self, **kwargs):
+        self.reset_calls.append(kwargs)
+        return np.zeros((12, 16, 3), dtype=np.uint8), {}
+
+    def step(self, action):
+        return np.zeros((12, 16, 3), dtype=np.uint8), 0.0, True, False, {}
+
+    def close(self):
+        self.close_calls += 1
+
+
+class _SlotTrackingModel:
+    def __init__(self):
+        self.reset_memory_calls = []
+        self.example_slot_ids = []
+
+    def reset_memory(self, slot_id=None):
+        self.reset_memory_calls.append(slot_id)
+
+    def predict_action(self, *, examples):
+        self.example_slot_ids.append([example["slot_id"] for example in examples])
+        return {"normalized_actions": np.zeros((len(examples), 1, 6), dtype=np.float32)}
+
+
+def _single_step_eval_cfg(*, vectorized: bool = False):
+    env_eval = {
+        "frameskip": 1,
+    }
+    if vectorized:
+        env_eval["vectorized"] = {
+            "enabled": True,
+            "batch_size": 2,
+        }
+    return OmegaConf.create(
+        {
+            "seed": 42,
+            "rl_games": {
+                "env_eval": env_eval,
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+
+def test_task_evaluator_resets_serial_model_memory_at_each_episode(monkeypatch):
+    evaluator = _TaskEvaluator(task="demon_attack", cfg=_single_step_eval_cfg())
+    model = _SlotTrackingModel()
+    monkeypatch.setattr(evaluator, "_make_env", lambda: _OneStepEnv())
+
+    evaluator.run_latency(
+        model=model,
+        latency=0,
+        prompt="prompt",
+        max_steps=1,
+        num_episodes=2,
+        episode_indices=[0, 1],
+    )
+
+    assert model.reset_memory_calls == [0, 0]
+    assert model.example_slot_ids == [[0], [0]]
+
+
+def test_task_evaluator_resets_vectorized_model_memory_per_slot(monkeypatch):
+    evaluator = _TaskEvaluator(task="demon_attack", cfg=_single_step_eval_cfg(vectorized=True))
+    model = _SlotTrackingModel()
+    monkeypatch.setattr(evaluator, "_make_env", lambda: _OneStepEnv())
+
+    evaluator.run_latency(
+        model=model,
+        latency=0,
+        prompt="prompt",
+        max_steps=1,
+        num_episodes=3,
+        episode_indices=[0, 1, 2],
+    )
+
+    assert model.reset_memory_calls == [0, 1, 0]
+    assert model.example_slot_ids == [[0, 1], [0]]
+
+
 def test_eval_runner_saves_result_after_each_episode(monkeypatch, tmp_path):
     cfg = OmegaConf.create(
         {

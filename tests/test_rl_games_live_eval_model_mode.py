@@ -4,6 +4,7 @@ from types import SimpleNamespace
 class _ModeTrackingModel:
     def __init__(self):
         self.training = True
+        self.reset_memory_calls = []
 
     def train(self):
         self.training = True
@@ -12,6 +13,9 @@ class _ModeTrackingModel:
     def eval(self):
         self.training = False
         return self
+
+    def reset_memory(self, slot_id=None):
+        self.reset_memory_calls.append(slot_id)
 
 
 class _Accelerator:
@@ -69,7 +73,11 @@ def _trainer(runner):
     return trainer
 
 
-def test_live_rl_games_eval_runs_with_model_in_eval_mode_and_restores_train_mode():
+def test_live_rl_games_eval_runs_with_model_in_eval_mode_and_restores_train_mode(monkeypatch):
+    from starVLA.training import train_starvla
+
+    empty_cache_calls = []
+    monkeypatch.setattr(train_starvla.torch.cuda, "empty_cache", lambda: empty_cache_calls.append(True))
     runner = _LiveEvalRunner()
     trainer = _trainer(runner)
 
@@ -77,10 +85,16 @@ def test_live_rl_games_eval_runs_with_model_in_eval_mode_and_restores_train_mode
 
     assert runner.model_modes == [False]
     assert result.aggregate["mean_reward"] == 3.0
+    assert trainer.model.reset_memory_calls == [None]
+    assert empty_cache_calls == [True]
     assert trainer.model.training is True
 
 
-def test_live_rl_games_eval_restores_train_mode_when_runner_raises():
+def test_live_rl_games_eval_restores_train_mode_when_runner_raises(monkeypatch):
+    from starVLA.training import train_starvla
+
+    empty_cache_calls = []
+    monkeypatch.setattr(train_starvla.torch.cuda, "empty_cache", lambda: empty_cache_calls.append(True))
     runner = _LiveEvalRunner(raises=True)
     trainer = _trainer(runner)
 
@@ -90,6 +104,8 @@ def test_live_rl_games_eval_restores_train_mode_when_runner_raises():
         assert str(exc) == "eval failed"
 
     assert runner.model_modes == [False]
+    assert trainer.model.reset_memory_calls == [None]
+    assert empty_cache_calls == [True]
     assert trainer.model.training is True
 
 

@@ -472,7 +472,12 @@ class _TaskEvaluator:
     def _queue_default_action(self):
         return [0] * 7 if self.task == "deadly_corridor" else 0
 
-    def _make_model_example(self, model_obs, prompt: str) -> Dict[str, Any]:
+    def _reset_model_memory(self, model, slot_id: int) -> None:
+        reset = getattr(model, "reset_memory", None)
+        if callable(reset):
+            reset(slot_id)
+
+    def _make_model_example(self, model_obs, prompt: str, slot_id: int) -> Dict[str, Any]:
         obs_rgb = _resize_rgb(
             model_obs,
             image_size=self.image_size,
@@ -481,6 +486,7 @@ class _TaskEvaluator:
         example = {
             "image": [Image.fromarray(obs_rgb)],
             "lang": prompt,
+            "slot_id": int(slot_id),
         }
         if self.include_state:
             example["state"] = np.zeros((1, self.state_dim), dtype=np.float32)
@@ -581,6 +587,7 @@ class _TaskEvaluator:
                 episode=episode,
                 seed_overrides=seed_overrides,
             )
+            self._reset_model_memory(model, slot["slot_id"])
             obs, _ = self._reset_env(slot["env"], episode_seed)
             slot.update({
                 "active": True,
@@ -594,10 +601,11 @@ class _TaskEvaluator:
             seeds_by_episode[int(episode)] = episode_seed
 
         try:
-            for _ in range(min(max(1, int(batch_size)), len(pending))):
+            for slot_id in range(min(max(1, int(batch_size)), len(pending))):
                 env = self._make_env()
                 slot = {
                     "env": env,
+                    "slot_id": int(slot_id),
                     "runtime_button_order": _get_available_button_names(env) if self.task == "deadly_corridor" else None,
                     "active": False,
                 }
@@ -614,7 +622,10 @@ class _TaskEvaluator:
             try:
                 while any(slot.get("active", False) for slot in slots):
                     active_slots = [slot for slot in slots if slot.get("active", False)]
-                    examples = [self._make_model_example(slot["model_obs"], prompt) for slot in active_slots]
+                    examples = [
+                        self._make_model_example(slot["model_obs"], prompt, slot["slot_id"])
+                        for slot in active_slots
+                    ]
                     output = model.predict_action(examples=examples)
                     actions = output["normalized_actions"]
                     if actions.ndim != 3:
@@ -743,6 +754,7 @@ class _TaskEvaluator:
             position=progress_position,
             dynamic_ncols=True,
         )
+        slot_id = 0
         for episode in episode_iter:
             episode_seed = self._episode_seed_for_run(
                 latency=latency,
@@ -750,6 +762,7 @@ class _TaskEvaluator:
                 seed_overrides=seed_overrides,
             )
             episode_seeds.append(episode_seed)
+            self._reset_model_memory(model, slot_id)
             obs, _ = self._reset_env(env, episode_seed)
             model_obs = self._model_observation(env, obs)
             queue.reset()
@@ -763,7 +776,7 @@ class _TaskEvaluator:
                     frames.append(frame)
 
             while not done and steps < max_steps:
-                example = self._make_model_example(model_obs, prompt)
+                example = self._make_model_example(model_obs, prompt, slot_id)
                 output = model.predict_action(examples=[example])
                 actions = output["normalized_actions"]
                 if actions.ndim != 3:

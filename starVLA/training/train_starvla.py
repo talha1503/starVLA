@@ -764,9 +764,10 @@ class VLATrainer(TrainerUtils):
     ):
         was_training = self.model.training
         self.model.eval()
+        unwrapped = self.accelerator.unwrap_model(self.model)
         try:
             return self._rl_games_eval_runner.run(
-                model=self.accelerator.unwrap_model(self.model),
+                model=unwrapped,
                 step=self.completed_steps,
                 stage=stage,
                 shard_rank=int(shard_rank),
@@ -774,8 +775,14 @@ class VLATrainer(TrainerUtils):
                 save=save,
             )
         finally:
-            if was_training:
-                self.model.train()
+            try:
+                reset = getattr(unwrapped, "reset_memory", None)
+                if callable(reset):
+                    reset()
+                torch.cuda.empty_cache()
+            finally:
+                if was_training:
+                    self.model.train()
 
     def _run_distributed_rl_games_eval(self, stage: str):
         if self._rl_games_eval_runner is None:
