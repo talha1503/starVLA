@@ -2803,7 +2803,7 @@ class LeRobotMixtureDataset(Dataset):
                     
                 raw_data = dataset.get_step_data(trajectory_id, step)    
                 data = dataset.transforms(raw_data)
-                sample = dataset._pack_sample(data)
+                sample = dataset._pack_sample(data, trajectory_id=trajectory_id, base_index=step)
                 dataset._attach_rl_games_metadata(sample, step)
                 
                 return sample
