@@ -7,7 +7,11 @@ from torch.utils.data import DataLoader, Dataset
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from starVLA.dataloader.worker_context import CPU_ONLY_WORKER_CONTEXT, _DISTRIBUTED_ENV_KEYS
+from starVLA.dataloader.worker_context import (
+    CPU_ONLY_WORKER_CONTEXT,
+    _DISTRIBUTED_ENV_KEYS,
+    build_cpu_only_dataloader_kwargs,
+)
 
 
 class _WorkerEnvDataset(Dataset):
@@ -61,5 +65,37 @@ def test_cpu_only_worker_context_survives_dataloader_reconstruction(monkeypatch)
 
     worker_env = next(iter(reconstructed))
 
+    assert worker_env["CUDA_VISIBLE_DEVICES"] == [""]
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "0,1"
+
+
+def test_cpu_only_dataloader_kwargs_skips_context_without_workers():
+    kwargs = build_cpu_only_dataloader_kwargs(
+        0,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=4,
+    )
+
+    assert kwargs == {"pin_memory": True}
+
+
+def test_cpu_only_dataloader_kwargs_supports_persistent_workers(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1")
+
+    loader = DataLoader(
+        _WorkerEnvDataset(),
+        batch_size=1,
+        num_workers=1,
+        **build_cpu_only_dataloader_kwargs(
+            1,
+            pin_memory=False,
+            persistent_workers=True,
+            prefetch_factor=2,
+        ),
+    )
+    worker_env = next(iter(loader))
+
+    assert loader.persistent_workers is True
     assert worker_env["CUDA_VISIBLE_DEVICES"] == [""]
     assert os.environ["CUDA_VISIBLE_DEVICES"] == "0,1"

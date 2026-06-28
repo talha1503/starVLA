@@ -37,7 +37,7 @@ from transformers import AutoProcessor, get_scheduler
 
 # Local Modules
 from starVLA.dataloader import build_dataloader
-from starVLA.dataloader.worker_context import CPU_ONLY_WORKER_CONTEXT
+from starVLA.dataloader.worker_context import build_cpu_only_dataloader_kwargs
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
 from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias, sync_kv_memory_obs_window, validate_rl_games_config
@@ -1409,7 +1409,11 @@ class VLATrainer(TrainerUtils):
                 )
                 if action_classification_interval is None:
                     action_classification_interval = self.config.trainer.eval_interval
-                if should_run_step_interval_event(
+                eval_action_classification_enabled = _as_bool(
+                    getattr(self.config.trainer, "eval_action_classification", True),
+                    default=True,
+                )
+                if eval_action_classification_enabled and should_run_step_interval_event(
                     completed_steps=self.completed_steps,
                     interval=action_classification_interval,
                     gradients_synced=gradients_synced,
@@ -1853,16 +1857,25 @@ class VLATrainer(TrainerUtils):
         if eval_num_workers is None:
             eval_num_workers = self.config.datasets.vla_data.num_workers
         eval_num_workers = int(eval_num_workers)
-        dataloader_kwargs = {
-            "pin_memory": _as_bool(self.config.datasets.vla_data.pin_memory),
-        }
-        if eval_num_workers > 0:
-            dataloader_kwargs["multiprocessing_context"] = CPU_ONLY_WORKER_CONTEXT
-            dataloader_kwargs["persistent_workers"] = _as_bool(self.config.datasets.vla_data.persistent_workers)
-            if "prefetch_factor" in self.config.datasets.vla_data:
-                dataloader_kwargs["prefetch_factor"] = int(self.config.datasets.vla_data.prefetch_factor)
+        dataloader_kwargs = build_cpu_only_dataloader_kwargs(
+            eval_num_workers,
+            pin_memory=self.config.datasets.vla_data.pin_memory,
+            persistent_workers=self.config.datasets.vla_data.persistent_workers,
+            prefetch_factor=(
+                self.config.datasets.vla_data.prefetch_factor
+                if "prefetch_factor" in self.config.datasets.vla_data
+                else None
+            ),
+        )
         frame_loader_key = (tuple(frame_records), bs, eval_num_workers)
         if self._action_cc_f1_frame_loader_key != frame_loader_key:
+            if self.accelerator.is_main_process:
+                logger.info(
+                    "Created action CC-F1 frame dataloader with num_workers=%s, persistent_workers=%s, cpu_only_workers=%s",
+                    eval_num_workers,
+                    dataloader_kwargs.get("persistent_workers", False),
+                    "multiprocessing_context" in dataloader_kwargs,
+                )
             self._action_cc_f1_frame_loader = DataLoader(
                 _ActionCCF1FrameDataset(single_datasets, frame_records),
                 batch_size=bs,
