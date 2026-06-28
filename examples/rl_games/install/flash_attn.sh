@@ -2,17 +2,16 @@
 set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
-FLASH_ATTN_VERSION="${STARVLA_FLASH_ATTN_VERSION:-2.8.3}"
+FLASH_ATTN_VERSION="${STARVLA_FLASH_ATTN_VERSION:-2.8.3.post1}"
 
 usage() {
   cat <<'EOF'
 Usage: bash examples/rl_games/install/flash_attn.sh [--print-url|--check]
 
-Installs flash-attn into the active env, matching a prebuilt wheel to the active
-torch/CUDA/Python/ABI. Falls back to a source build when no prebuilt wheel matches
-(e.g. torch 2.10 / CUDA 13 on datacenter Blackwell). Best-effort by default: if no
-install path works it warns and exits 0 (models fall back to sdpa); set
-STARVLA_FLASH_ATTN_REQUIRED=1 to make failure fatal instead.
+Installs legacy flash-attn into the active env, matching a prebuilt wheel to the
+active torch/CUDA/Python/ABI. Best-effort by default: if no wheel matches it warns
+and exits 0 (models fall back to sdpa). Set STARVLA_FLASH_ATTN_BUILD_FROM_SOURCE=1
+to allow a source build, or STARVLA_FLASH_ATTN_REQUIRED=1 to make failure fatal.
 
 Options:
   --print-url   Print the resolved prebuilt wheel URL and exit (fails on an
@@ -22,8 +21,10 @@ Options:
 
 Environment:
   PYTHON_BIN                         Python executable to inspect and install into.
-  STARVLA_FLASH_ATTN_VERSION         FlashAttention release version (default: 2.8.3).
+  STARVLA_FLASH_ATTN_VERSION         FlashAttention release version (default: 2.8.3.post1).
   STARVLA_FLASH_ATTN_WHEEL_URL       Exact wheel URL override.
+  STARVLA_FLASH_ATTN_BUILD_FROM_SOURCE
+                                     Set to 1 to build when no wheel matches.
   STARVLA_FLASH_ATTN_REQUIRED        Set to 1 to fail the install when flash-attn
                                      cannot be installed (default: best-effort).
 EOF
@@ -64,9 +65,9 @@ PY
   torch_mm="${fields[1]}"
   cuda_tag="${fields[2]}"
   abi="${fields[3]}"
-  # Prebuilt-wheel matrix: combos Dao-AILab ships wheels for that our torch.sh
-  # installs. Anything else (e.g. torch 2.10 / cu13) resolves via the source-build
-  # fallback in the install path instead.
+  # Prebuilt-wheel matrix: combos Dao-AILab ships legacy flash-attn wheels for.
+  # torch 2.12 / CUDA 13 uses flash-attn-4 for FlexAttention BACKEND=FLASH and
+  # should not silently source-build this legacy package.
   case "${torch_mm}/${cuda_tag}" in
     2.6/cu12|2.7/cu12) ;;
     *)
@@ -100,8 +101,9 @@ install_from_source() {
   "$PYTHON_BIN" -m pip install "flash-attn==${FLASH_ATTN_VERSION}" --no-build-isolation
 }
 
-# Best-effort install: prebuilt wheel -> source build. Returns non-zero only when
-# both paths fail (the caller decides whether that is fatal).
+# Best-effort install: prebuilt wheel by default. Source builds are explicit only
+# because missing wheels on torch/CUDA 13 otherwise block fresh installs for a
+# package that FlexAttention BACKEND=FLASH does not use.
 do_install() {
   local url
   if url="$(flash_attn_wheel_url 2>/dev/null)"; then
@@ -109,9 +111,14 @@ do_install() {
       echo "[install/flash_attn] installed from prebuilt wheel"
       return 0
     fi
-    echo "[install/flash_attn] prebuilt wheel path failed; falling back to source build" >&2
+    echo "[install/flash_attn] prebuilt wheel path failed" >&2
   else
-    echo "[install/flash_attn] no matching prebuilt wheel for this torch/CUDA; building from source" >&2
+    echo "[install/flash_attn] no matching prebuilt wheel for this torch/CUDA" >&2
+  fi
+
+  if [[ "${STARVLA_FLASH_ATTN_BUILD_FROM_SOURCE:-0}" != "1" ]]; then
+    echo "[install/flash_attn] source build disabled; set STARVLA_FLASH_ATTN_BUILD_FROM_SOURCE=1 to build" >&2
+    return 1
   fi
 
   if install_from_source && verify_import; then

@@ -66,6 +66,7 @@ install_torch() {
 if [[ "${TORCH_PROFILE}" == "auto" ]]; then
   TORCH_PROFILE="$(detect_torch_profile)"
 fi
+export STARVLA_TORCH_PROFILE="${TORCH_PROFILE}"
 
 install_torch "${TORCH_PROFILE}"
 
