@@ -264,6 +264,17 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _apply_prompt_mode(prompt: str, prompt_mode: Any) -> str:
+    mode = str(prompt_mode or "").strip().lower()
+    if mode in {"", "default", "none", "raw"}:
+        return prompt
+    if mode == "latency_neutral":
+        marker = " Current action latency is "
+        head, found, _tail = str(prompt).partition(marker)
+        return head.rstrip() if found else str(prompt)
+    raise ValueError(f"Unsupported rl_games.env_eval.prompt_mode={prompt_mode!r}")
+
+
 def _as_int(value: Any, default: int) -> int:
     if value is None:
         return default
@@ -397,6 +408,7 @@ class _TaskEvaluator:
         self.latency_seed_stride = _as_int(getattr(self.env_eval_cfg, "latency_seed_stride", None), 0)
         self.task_seed_stride = _as_int(getattr(self.env_eval_cfg, "task_seed_stride", None), 0)
         self.image_transform_config = self._resolve_image_transform_config()
+        self.prompt_mode = self._resolve_prompt_mode()
 
     def _resolve_image_transform_config(self) -> Dict[str, Any]:
         image_transform = str(
@@ -420,6 +432,13 @@ class _TaskEvaluator:
             "ground_fraction": float(ghost_cfg.get("ground_fraction", 0.22)),
             "scroll_px_per_step": float(ghost_cfg.get("scroll_px_per_step", 4.0)),
         }
+
+    def _resolve_prompt_mode(self) -> str:
+        stage_mode = _cfg_get(self.stage_eval_cfg, "prompt_mode", None)
+        task_mode = _cfg_get(self.task_eval_cfg, "prompt_mode", None)
+        env_mode = _cfg_get(self.env_eval_cfg, "prompt_mode", "default")
+        mode = stage_mode if stage_mode is not None else task_mode if task_mode is not None else env_mode
+        return str(mode or "default").strip().lower()
 
     def _make_image_transform(self) -> _LiveImageTransform:
         return _LiveImageTransform(task=self.task, config=self.image_transform_config)
@@ -1043,7 +1062,8 @@ class RlGamesEvalRunner:
 
     def _resolve_prompt(self, latency: int, mapping: Dict[int, Dict[str, Any]], task: str | None = None) -> str:
         if latency in mapping:
-            return str(mapping[latency]["prompt"])
+            prompt = str(mapping[latency]["prompt"])
+            return _apply_prompt_mode(prompt, self.prompt_mode)
         task_cfg = self._cross_task_cfg(task) if task is not None else None
         if task_cfg is not None and self._prompt_map_path(task):
             raise ValueError(f"No eval prompt found for task={task!r}, latency={latency} in {self._prompt_map_path(task)}")
@@ -1051,19 +1071,28 @@ class RlGamesEvalRunner:
         if not prompt:
             prompt = str(getattr(self.cfg.rl_games.env_eval, "task_description", "") or "")
         if prompt:
-            return prompt
+            return _apply_prompt_mode(prompt, self.prompt_mode)
         task = task or str(getattr(self.cfg.rl_games, "task", "flappy"))
         if task == "flappy":
-            return "You are playing Flappy Bird. Pass through the pipe gaps and stay alive. Choose the action: NOOP, FLAP."
-        if task == "demon_attack":
-            return "You are playing Demon Attack from a single game image. Choose exactly one action from: NOOP, FIRE, RIGHT, LEFT, RIGHTFIRE, LEFTFIRE."
-        if task == "deadly_corridor":
-            return (
-                "You are playing Deadly Corridor in VizDoom. Your goal is to survive the corridor, "
-                "fight enemies, and reach the green armor vest at the far end. The available actions are: "
-                "MOVE_FORWARD, MOVE_BACKWARD, MOVE_LEFT, MOVE_RIGHT, TURN_LEFT, TURN_RIGHT, and ATTACK."
+            return _apply_prompt_mode(
+                "You are playing Flappy Bird. Pass through the pipe gaps and stay alive. Choose the action: NOOP, FLAP.",
+                self.prompt_mode,
             )
-        return "Act optimally in the current environment."
+        if task == "demon_attack":
+            return _apply_prompt_mode(
+                "You are playing Demon Attack from a single game image. Choose exactly one action from: NOOP, FIRE, RIGHT, LEFT, RIGHTFIRE, LEFTFIRE.",
+                self.prompt_mode,
+            )
+        if task == "deadly_corridor":
+            return _apply_prompt_mode(
+                (
+                    "You are playing Deadly Corridor in VizDoom. Your goal is to survive the corridor, "
+                    "fight enemies, and reach the green armor vest at the far end. The available actions are: "
+                    "MOVE_FORWARD, MOVE_BACKWARD, MOVE_LEFT, MOVE_RIGHT, TURN_LEFT, TURN_RIGHT, and ATTACK."
+                ),
+                self.prompt_mode,
+            )
+        return _apply_prompt_mode("Act optimally in the current environment.", self.prompt_mode)
 
     def _get_tasks(self) -> List[str]:
         task = str(getattr(self.cfg.rl_games, "task", "flappy"))

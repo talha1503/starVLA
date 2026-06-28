@@ -7,10 +7,12 @@ from starVLA.training.rl_games.eval_core import (
     ActionLatencyQueue,
     RlGamesEvalRunner,
     _TaskEvaluator,
+    _apply_prompt_mode as apply_eval_prompt_mode,
     decode_deadly_factorized_11,
     decode_deadly_multibinary_7,
     decode_discrete_argmax,
 )
+from starVLA.dataloader.gr00t_lerobot.datasets import _apply_prompt_mode as apply_train_prompt_mode
 
 
 def test_decode_discrete_argmax():
@@ -50,6 +52,21 @@ def test_action_latency_queue():
     assert outputs == [0, 0, 1, 2]
 
 
+def test_prompt_mode_latency_neutral_strips_timing_suffix():
+    prompt = (
+        "You are playing Flappy Bird. Pass through the pipe gaps and stay alive. "
+        "Choose the action: NOOP, FLAP. Current action latency is 2 raw frames (66.67 ms). "
+        "The environment runs at 30 FPS and observations are emitted at 30 FPS. Choose the best next action."
+    )
+
+    assert apply_train_prompt_mode(prompt, "latency_neutral") == (
+        "You are playing Flappy Bird. Pass through the pipe gaps and stay alive. Choose the action: NOOP, FLAP."
+    )
+    assert apply_eval_prompt_mode(prompt, "latency_neutral") == (
+        "You are playing Flappy Bird. Pass through the pipe gaps and stay alive. Choose the action: NOOP, FLAP."
+    )
+
+
 def test_eval_runner_infers_latencies_from_prompt_map_when_values_empty(tmp_path):
     prompt_map = tmp_path / "latency_prompt_map.json"
     prompt_map.write_text(
@@ -76,6 +93,36 @@ def test_eval_runner_infers_latencies_from_prompt_map_when_values_empty(tmp_path
     runner = RlGamesEvalRunner(cfg=cfg, output_dir=str(tmp_path))
 
     assert runner._get_latency_values(stage="mid_train") == [0, 2]
+
+
+def test_task_evaluator_latency_neutral_prompt_mode_strips_prompt_map_prompts(tmp_path):
+    prompt_map = tmp_path / "latency_prompt_map.json"
+    prompt_map.write_text(
+        '{"0": {"latency": 0, "latency_ms": 0.0, "prompt": "zero Current action latency is 0 raw frames (0.00 ms)."}}',
+        encoding="utf-8",
+    )
+    cfg = OmegaConf.create(
+        {
+            "seed": 42,
+            "rl_games": {
+                "env_eval": {
+                    "prompt_mode": "latency_neutral",
+                    "latency": {
+                        "values": [0],
+                        "prompt_map_path": str(prompt_map),
+                    },
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+    evaluator = _TaskEvaluator(task="flappy", cfg=cfg)
+    assert evaluator._resolve_prompt(latency=0, mapping={0: {"prompt": "zero Current action latency is 0 raw frames (0.00 ms)."}}, task="flappy") == "zero"
 
 
 def test_task_evaluator_reuses_episode_seeds_across_tasks_and_latencies_by_default():

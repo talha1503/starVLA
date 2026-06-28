@@ -303,6 +303,15 @@ def _configure_quota_cumulative_training_steps(cfg, dataloader, accelerator) -> 
             )
 
 
+def _parse_phase_distributions(raw: Any) -> list[dict[int, float]] | None:
+    if raw is None:
+        return None
+    phases = list(raw)
+    if not phases:
+        return None
+    return [{int(k): float(v) for k, v in dict(phase).items()} for phase in phases]
+
+
 def _dataset_latency_values(dataset) -> list[int]:
     values: set[int] = set()
     single_datasets = list(getattr(dataset, "datasets", None) or [dataset])
@@ -1068,6 +1077,22 @@ class VLATrainer(TrainerUtils):
             return None
         return cfg
 
+    def _distribution_curriculum_phase_steps(self, cfg, num_phases: int) -> list[int]:
+        explicit = _optional_int_list(getattr(cfg, "phase_steps", None))
+        if explicit:
+            if len(explicit) != num_phases:
+                raise ValueError(
+                    "datasets.vla_data.latency_curriculum.phase_steps must have one value per phase "
+                    f"(got {len(explicit)} steps for {num_phases} phases)."
+                )
+            if any(step <= 0 for step in explicit):
+                raise ValueError("latency_curriculum.phase_steps values must be positive.")
+            return explicit
+        total_steps = int(getattr(self.config.trainer, "max_train_steps"))
+        base = total_steps // num_phases
+        remainder = total_steps % num_phases
+        return [base + (1 if idx < remainder else 0) for idx in range(num_phases)]
+
     def _latency_curriculum_phase_steps(self, cfg, latencies: list[int]) -> list[int]:
         explicit = _optional_int_list(getattr(cfg, "phase_steps", None))
         if explicit:
@@ -1123,6 +1148,23 @@ class VLATrainer(TrainerUtils):
             active = sorted(quotas)
             return int(phase["phase_idx"]), active, quotas, quota_starts, str(phase.get("name", f"phase_{phase['phase_idx']}"))
 
+        if strategy == "curriculum_cumulative_distribution":
+            phase_distributions = _parse_phase_distributions(getattr(cfg, "phase_distributions", None))
+            if not phase_distributions:
+                raise ValueError("curriculum_cumulative_distribution requires phase_distributions to be configured.")
+            num_phases = len(phase_distributions)
+            phase_steps = self._distribution_curriculum_phase_steps(cfg, num_phases)
+            cursor = 0
+            phase_idx = num_phases - 1
+            for idx, num_steps in enumerate(phase_steps):
+                cursor += int(num_steps)
+                if int(step) < cursor:
+                    phase_idx = idx
+                    break
+            distribution = phase_distributions[phase_idx]
+            active = sorted(distribution)
+            return phase_idx, active, distribution, {}, f"phase_{phase_idx}"
+
         latencies = _optional_int_list(getattr(cfg, "latencies", None))
         if not latencies:
             latencies = _dataset_latency_values(getattr(self.vla_train_dataloader, "dataset", None))
@@ -1131,7 +1173,8 @@ class VLATrainer(TrainerUtils):
         latencies = sorted(dict.fromkeys(int(value) for value in latencies))
         if strategy not in {"exclusive", "cumulative"}:
             raise ValueError(
-                f"Unsupported latency_curriculum.strategy={strategy!r}; expected exclusive, cumulative, or quota_cumulative."
+                f"Unsupported latency_curriculum.strategy={strategy!r}; "
+                "expected exclusive, cumulative, quota_cumulative, or curriculum_cumulative_distribution."
             )
 
         phase_steps = self._latency_curriculum_phase_steps(cfg, latencies)
@@ -1158,6 +1201,19 @@ class VLATrainer(TrainerUtils):
             plan = self._quota_curriculum_plan()
             final_step = int(getattr(self.config.trainer, "max_train_steps"))
             return any(int(phase["end_step"]) == int(step) and int(step) < final_step for phase in plan)
+
+        if strategy == "curriculum_cumulative_distribution":
+            phase_distributions = _parse_phase_distributions(getattr(cfg, "phase_distributions", None))
+            if not phase_distributions:
+                return False
+            phase_steps = self._distribution_curriculum_phase_steps(cfg, len(phase_distributions))
+            cursor = 0
+            final_step = int(getattr(self.config.trainer, "max_train_steps"))
+            for num_steps in phase_steps[:-1]:
+                cursor += int(num_steps)
+                if cursor == int(step) and int(step) < final_step:
+                    return True
+            return False
 
         latencies = _optional_int_list(getattr(cfg, "latencies", None))
         if not latencies:
@@ -1192,7 +1248,7 @@ class VLATrainer(TrainerUtils):
             raise ValueError("latency curriculum requires a train dataset.")
         if active_quotas is not None:
             if not callable(getattr(dataset, "set_latency_quota_filter", None)):
-                raise ValueError("quota_cumulative requires a train dataset with set_latency_quota_filter(...).")
+                raise ValueError("latency curriculum with quotas requires a train dataset with set_latency_quota_filter(...).")
             dataset.set_latency_quota_filter(active_quotas, quota_starts=quota_starts)
         else:
             if not callable(getattr(dataset, "set_active_latency_filter", None)):

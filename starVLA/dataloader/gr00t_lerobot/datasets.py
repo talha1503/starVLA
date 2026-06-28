@@ -67,6 +67,7 @@ LE_ROBOT_DATA_FILENAME = "data/*/*.parquet"
 LE_ROBOT_STEPS_FILENAME = "meta/steps.pkl"
 LE_ROBOT_STATS_FORMAT_VERSION = 2
 EPSILON = 5e-4
+LATENCY_PROMPT_MARKER = " Current action latency is "
 
 
 def _as_bool(value, default: bool = False) -> bool:
@@ -77,6 +78,16 @@ def _as_bool(value, default: bool = False) -> bool:
     if isinstance(value, str):
         return value.strip().lower() not in {"false", "0", "no", "off"}
     return bool(value)
+
+
+def _apply_prompt_mode(prompt: str, prompt_mode: str | None) -> str:
+    mode = str(prompt_mode or "").strip().lower()
+    if mode in {"", "default", "none", "raw"}:
+        return prompt
+    if mode == "latency_neutral":
+        head, marker, _tail = str(prompt).partition(LATENCY_PROMPT_MARKER)
+        return head.rstrip() if marker else str(prompt)
+    raise ValueError(f"Unsupported datasets.vla_data.prompt_mode={prompt_mode!r}")
 
 
 #  LeRobot v3.0 dataset file names 
@@ -1404,6 +1415,7 @@ class LeRobotSingleDataset(Dataset):
                 step_images.extend(p.resize((224, 224)) for p in pil_frames)
 
         language = data[self.modality_keys["language"][0]][0]
+        language = _apply_prompt_mode(language, self.data_cfg.get("prompt_mode") if self.data_cfg is not None else None)
         action = []
         for action_key in self.modality_keys["action"]:
             action.append(data[action_key])
