@@ -36,7 +36,7 @@ from transformers import AutoProcessor, get_scheduler
 
 # Local Modules
 from starVLA.dataloader import build_dataloader
-from starVLA.dataloader.cpu_only_worker_dataloader import CpuOnlyWorkerDataLoader
+from starVLA.dataloader.worker_init import cpu_only_worker_init
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
 from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias, sync_kv_memory_obs_window, validate_rl_games_config
@@ -1770,13 +1770,14 @@ class VLATrainer(TrainerUtils):
             "pin_memory": _as_bool(self.config.datasets.vla_data.pin_memory),
         }
         if eval_num_workers > 0:
+            dataloader_kwargs["multiprocessing_context"] = "spawn"
+            dataloader_kwargs["worker_init_fn"] = cpu_only_worker_init
             dataloader_kwargs["persistent_workers"] = _as_bool(self.config.datasets.vla_data.persistent_workers)
             if "prefetch_factor" in self.config.datasets.vla_data:
                 dataloader_kwargs["prefetch_factor"] = int(self.config.datasets.vla_data.prefetch_factor)
-        dataloader_cls = CpuOnlyWorkerDataLoader if eval_num_workers > 0 else DataLoader
         frame_loader_key = (tuple(frame_records), bs, eval_num_workers)
         if self._action_cc_f1_frame_loader_key != frame_loader_key:
-            self._action_cc_f1_frame_loader = dataloader_cls(
+            self._action_cc_f1_frame_loader = DataLoader(
                 _ActionCCF1FrameDataset(single_datasets, frame_records),
                 batch_size=bs,
                 shuffle=False,

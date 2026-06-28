@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 import torch.distributed as dist
 from pathlib import Path
-from starVLA.dataloader.cpu_only_worker_dataloader import CpuOnlyWorkerDataLoader
+from starVLA.dataloader.worker_init import cpu_only_worker_init
 from starVLA.dataloader.vlm_datasets import make_vlm_dataloader
 
 logger = get_logger(__name__)
@@ -76,12 +76,13 @@ def build_dataloader(
             "pin_memory": _cfg_bool(vla_dataset_cfg.pin_memory),
         }
         if num_workers > 0:
+            dataloader_kwargs["multiprocessing_context"] = "spawn"
+            dataloader_kwargs["worker_init_fn"] = cpu_only_worker_init
             dataloader_kwargs["persistent_workers"] = _cfg_bool(vla_dataset_cfg.persistent_workers)
             if "prefetch_factor" in vla_dataset_cfg:
                 dataloader_kwargs["prefetch_factor"] = int(vla_dataset_cfg.prefetch_factor)
-        dataloader_cls = CpuOnlyWorkerDataLoader if num_workers > 0 else DataLoader
-        
-        vla_train_dataloader = dataloader_cls(
+
+        vla_train_dataloader = DataLoader(
             vla_dataset,
             batch_size=cfg.datasets.vla_data.per_device_batch_size,
             collate_fn=collate_fn,
