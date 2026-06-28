@@ -50,6 +50,30 @@ def _patch_qwen3vl_flash_attention_position_ids() -> None:
     text_attention_cls._starvla_flash_attention_position_ids_patched = True
 
 
+def _patch_qwen3vl_flex_attention_support() -> None:
+    """Allow loading Qwen3-VL with ``attn_implementation='flex_attention'``.
+
+    Qwen3-VL's attention already dispatches through the generic
+    ``ALL_ATTENTION_FUNCTIONS`` interface (which includes the ``flex_attention``
+    integration), but the model classes conservatively declare
+    ``_supports_flex_attn = False``, so Transformers 4.57 refuses to load with
+    flex at __init__. Flipping the flag lets the official dispatch path run; the
+    packed KV-memory training (`QwenOFT._forward_memory_packed`) passes a
+    BlockMask that FlexAttention consumes natively.
+    """
+    from transformers.models.qwen3_vl import modeling_qwen3_vl as qwen3_vl
+
+    for cls_name in (
+        "Qwen3VLForConditionalGeneration",
+        "Qwen3VLModel",
+        "Qwen3VLTextModel",
+        "Qwen3VLPreTrainedModel",
+    ):
+        cls = getattr(qwen3_vl, cls_name, None)
+        if cls is not None:
+            cls._supports_flex_attn = True
+
+
 class _QWen3_VL_Interface(nn.Module):
     """
     This exists because of the diversity of VLMs, so we encapsulate the changes here.
@@ -88,6 +112,9 @@ class _QWen3_VL_Interface(nn.Module):
                 attn_implementation = "sdpa"
             else:
                 _patch_qwen3vl_flash_attention_position_ids()
+
+        if attn_implementation == "flex_attention":
+            _patch_qwen3vl_flex_attention_support()
 
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_id,

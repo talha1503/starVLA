@@ -15,6 +15,13 @@ framework:
     enabled: false
     window: 4
     rollout_len: 8
+    # Packed single-forward training (StreamingLLM-style sliding-window+sink mask
+    # via FlexAttention) instead of the per-frame Python loop. Big-matmul, high GPU
+    # util, and re-enables gradient checkpointing (use_cache no longer needed).
+    # REQUIRES framework.qwenvl.attn_implementation=flex_attention (forward AND the
+    # checkpointing recompute must stay on flex to consume the BlockMask). Eval
+    # streaming also runs fine under flex. Leave false to use the legacy loop.
+    packed_train: false
 
 datasets:
   vla_data:
