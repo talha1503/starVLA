@@ -68,34 +68,45 @@ def _dense(kind, step, W):
 
 
 def _rebased_layout(W):
-    """Per-step [sink_k][f_k][a_k] with the sink re-based by o_k = j0*F, mirroring
-    QwenOFT._packed_window_layout's rebased_sink branch for a text-only rollout.
-    Frames keep their global frames-only positions (T + k*F); sink_k is shifted so
-    it sits one position before step k's oldest visible frame."""
-    Lr = R * (T + BLOCK)
-    kind = torch.zeros(Lr, dtype=torch.long)
-    step = torch.full((Lr,), -1, dtype=torch.long)
-    pos = torch.zeros(3, 1, Lr, dtype=torch.long)
-    action_idx = []
+    """Dedup re-based layout mirroring QwenOFT._packed_window_layout's rebased_sink
+    branch for a text-only rollout: ONE shared front sink (step=-2) serving the
+    pre-eviction steps k<W, plus a re-based sink (step=k, shifted by o_k=(k-W+1)*F)
+    before each step k>=W. Frames keep their global frames-only positions (T + k*F);
+    the saved (W-1) sinks are the redundant pre-eviction copies (all at o_k=0)."""
+    kind_parts, step_parts, pos_parts, action_idx = [], [], [], []
     cur = 0
+    # shared front sink (step=-2, position [0,T), visible to steps k<W)
+    kind_parts.append(torch.zeros(T, dtype=torch.long))
+    step_parts.append(torch.full((T,), -2, dtype=torch.long))
+    pos_parts.append(torch.arange(T))
+    cur += T
     for k in range(R):
-        j0 = max(0, k - W + 1)
-        o_k = j0 * F
-        kind[cur:cur + T] = 0
-        step[cur:cur + T] = k
-        pos[:, 0, cur:cur + T] = torch.arange(T) + o_k
-        fk = cur + T
-        kind[fk:fk + F] = 1
-        step[fk:fk + F] = k
+        if k >= W:  # re-based sink for an evicting step
+            o_k = (k - W + 1) * F
+            kind_parts.append(torch.zeros(T, dtype=torch.long))
+            step_parts.append(torch.full((T,), k, dtype=torch.long))
+            pos_parts.append(torch.arange(T) + o_k)
+            cur += T
         frame_pos = torch.arange(T + k * F, T + k * F + F)
-        pos[:, 0, fk:fk + F] = frame_pos
-        ak = fk + F
-        kind[ak:ak + A] = 2
-        step[ak:ak + A] = k
-        pos[:, 0, ak:ak + A] = torch.arange(1, A + 1) + int(frame_pos.max())
-        action_idx.append(list(range(ak, ak + A)))
-        cur += T + BLOCK
+        kind_parts.append(torch.ones(F, dtype=torch.long))
+        step_parts.append(torch.full((F,), k, dtype=torch.long))
+        pos_parts.append(frame_pos)
+        kind_parts.append(torch.full((A,), 2, dtype=torch.long))
+        step_parts.append(torch.full((A,), k, dtype=torch.long))
+        pos_parts.append(torch.arange(1, A + 1) + int(frame_pos.max()))
+        action_idx.append(list(range(cur + F, cur + F + A)))
+        cur += BLOCK
+    kind = torch.cat(kind_parts)
+    step = torch.cat(step_parts)
+    pos = torch.cat(pos_parts).view(1, 1, -1).expand(3, 1, -1).contiguous()
     return kind, step, pos, torch.tensor(action_idx)
+
+
+def _sink_last(kind, step, t, k, W):
+    """Position of the last token of the sink that step k attends (shared front
+    sink for k<W, the re-based sink tagged step=k otherwise)."""
+    m = (kind == 0) & (step == (-2 if k < W else k))
+    return int(t[m].max())
 
 
 def _run(model, ids, pos, add):
@@ -172,12 +183,11 @@ def test_rebased_sink_distance_matches_eval_window():
     W = 3  # < R=5 so steps 3,4 evict the oldest frame(s)
     kind, step, pos, _ = _rebased_layout(W)
     t = pos[0, 0]  # temporal M-RoPE dim
-    blk = T + BLOCK
     for k in range(R):
         j0 = max(0, k - W + 1)  # oldest visible frame at step k
-        sink_last = int(t[k * blk + T - 1])
+        sink_last = _sink_last(kind, step, t, k, W)
         for i, j in enumerate(range(j0, k + 1)):
-            f_first = int(t[j * blk + T])  # frame j's first token (its own block)
+            f_first = int(t[(kind == 1) & (step == j)].min())  # frame j's first token
             assert f_first - sink_last == i * F + 1, f"rebased step {k} frame {j}"
 
     # Control: legacy single global sink — distance to the oldest visible frame
@@ -193,8 +203,9 @@ def test_rebased_sink_distance_matches_eval_window():
 
 
 def test_rebased_sink_no_fully_masked_row():
-    """Re-based per-step sinks (step>=0, visible only to their own step) still
-    leave every query able to see at least its own sink + itself -> no NaN."""
+    """The deduped sinks (one shared front sink for k<W + a re-based sink per
+    evicting step k>=W) still leave every query able to see at least its sink +
+    itself -> no NaN."""
     W = 3
     kind, step, pos, _ = _rebased_layout(W)
     Lr = kind.shape[0]
@@ -202,6 +213,24 @@ def test_rebased_sink_no_fully_masked_row():
     qg, kg = torch.meshgrid(torch.arange(Lr), torch.arange(Lr), indexing="ij")
     boolm = mod(0, 0, qg, kg)
     assert bool(boolm.any(dim=1).all()), "a query row is fully masked"
-    # each step's frame/action query sees exactly one sink block: its own.
+    # sink blocks present: the shared front sink (-2) + one per evicting step (>=W).
     sink_steps = step[(kind == 0)]
-    assert set(sink_steps.tolist()) == set(range(R))
+    assert set(sink_steps.tolist()) == {-2} | set(range(W, R))
+
+
+def test_rebased_dedup_sink_visibility_per_step():
+    """Each step attends exactly ONE sink block: the shared front sink (-2) for the
+    pre-eviction steps k<W, its own re-based sink (step=k) for k>=W. A step never
+    sees another step's sink (no double-sink), which is what keeps the packed
+    forward bit-identical to eval's rolling KV."""
+    W = 3
+    kind, step, pos, _ = _rebased_layout(W)
+    Lr = kind.shape[0]
+    mod = make_packed_sliding_mask_mod(kind, step, W)
+    qg, kg = torch.meshgrid(torch.arange(Lr), torch.arange(Lr), indexing="ij")
+    boolm = mod(0, 0, qg, kg)
+    sink_cols = kind == 0
+    for k in range(R):
+        fq = ((kind == 1) & (step == k)).nonzero().flatten()[-1].item()  # a step-k frame query
+        vis_sink_steps = set(step[boolm[fq] & sink_cols].tolist())
+        assert vis_sink_steps == ({-2} if k < W else {k}), f"step {k} saw sinks {vis_sink_steps}"

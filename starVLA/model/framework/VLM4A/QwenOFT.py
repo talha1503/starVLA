@@ -728,29 +728,45 @@ class Qwenvl_OFT(baseframework):
         parts, pos_parts, kind_parts, step_parts, action_idx_rows = [], [], [], [], []
 
         if self.kv_rebased_sink:
-            # Per-step block [sink_k][frame_k][action_k]; sink_k is the text prefix
-            # re-based so it sits right before step k's oldest visible frame → the
-            # sink→frame distance equals eval's rolling-KV layout (bit-exact, not
-            # the growing-distance approximation of the single global sink).
+            # Per-step re-based sink, with the redundant pre-eviction sinks deduped.
+            # Steps k < W all have j0=0 → o_k=0 → an identical sink at [0,P), so they
+            # share ONE front sink (step=-2, visible to queries with step < W). This
+            # is exactly eval before any eviction (sink pinned at the front, frames
+            # growing from P). Steps k >= W each carry their own re-based sink
+            # ([sink_k][frame_k][action_k]) at o_k so the sink→frame distance equals
+            # eval's rolling-KV layout (bit-exact). Net: 1 + max(0,R-W) sinks instead
+            # of R, saving (W-1) prefix copies while staying numerically identical.
             base0 = int(full_pos_f[0, 0, prefix_len].item())  # frame 0's temporal start
-            cursor = 0
+
+            # Shared front sink for the pre-eviction steps (step=-2).
+            parts.append(prefix)
+            pos_parts.append(text_pos)
+            kind_parts.append(torch.zeros(prefix_len, dtype=torch.long, device=device))
+            step_parts.append(torch.full((prefix_len,), -2, dtype=torch.long, device=device))
+            cursor = prefix_len
+
             for k in range(R):
-                j0 = max(0, k - W + 1)  # oldest visible frame at step k
-                o_k = int(full_pos_f[0, 0, prefix_len + j0 * frame_len].item()) - base0
-                sink_pos = text_pos + o_k  # shift all 3 M-RoPE dims by o_k
+                if k >= W:
+                    # Re-based sink_k sits right before step k's oldest visible frame.
+                    j0 = k - W + 1
+                    o_k = int(full_pos_f[0, 0, prefix_len + j0 * frame_len].item()) - base0
+                    parts.append(prefix)
+                    pos_parts.append(text_pos + o_k)  # shift all 3 M-RoPE dims by o_k
+                    kind_parts.append(torch.zeros(prefix_len, dtype=torch.long, device=device))
+                    step_parts.append(torch.full((prefix_len,), k, dtype=torch.long, device=device))
+                    cursor += prefix_len
                 frame_pos_k = _frame_pos(k)
-                parts += [prefix, frame_block, action_block]
-                pos_parts += [sink_pos, frame_pos_k, _action_pos(frame_pos_k)]
+                parts += [frame_block, action_block]
+                pos_parts += [frame_pos_k, _action_pos(frame_pos_k)]
                 kind_parts.append(
                     torch.cat([
-                        torch.zeros(prefix_len, dtype=torch.long, device=device),
                         torch.ones(frame_len, dtype=torch.long, device=device),
                         torch.full((action_len,), 2, dtype=torch.long, device=device),
                     ])
                 )
-                step_parts.append(torch.full((prefix_len + block_len,), k, dtype=torch.long, device=device))
-                action_idx_rows.append(cursor + prefix_len + frame_len + action_offsets)
-                cursor += prefix_len + block_len
+                step_parts.append(torch.full((block_len,), k, dtype=torch.long, device=device))
+                action_idx_rows.append(cursor + frame_len + action_offsets)
+                cursor += block_len
         else:
             # Legacy single global sink: [sink][f0 a0]...[f_{R-1} a_{R-1}]. Sink at
             # the front (step=-1, always visible); sink→frame distance grows with k.
