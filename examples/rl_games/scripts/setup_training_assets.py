@@ -535,7 +535,15 @@ def _carrier_dataset_name(data_mix: str, action_carrier: str) -> str:
     return f"{data_mix}__bridge"
 
 
-def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset, frameskip: int = 1) -> dict[str, Any]:
+def _ensure_rl_games_lerobot_dataset(
+    args,
+    *,
+    convert_dataset,
+    verify_dataset,
+    env_name: str = "",
+    env_fps: float = 0.0,
+    obs_fps: float = 0.0,
+) -> dict[str, Any]:
     data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
     action_carrier = _action_carrier(args)
     action_layout = str(getattr(args, "deadly_action_layout", "") or "")
@@ -662,25 +670,37 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset, f
         eval_validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=eval_data_mix)
 
     # If training used a latency_filter the embedded prompt map only has the filtered
-    # latencies. Regenerate it from the full source dataset so post-train eval at any
-    # latency gets a correct prompt (correct env fps, not a hardcoded guess).
+    # latencies. Load the missing latency subdirs from HF (already cached for training
+    # latencies; downloads only the needed eval-only ones) and fill in the map so that
+    # post-train eval at non-training latencies gets the correct dataset prompt.
     latency_filter = getattr(args, "latency_filter", None)
-    if latency_filter and source_dataset:
+    eval_latencies = getattr(args, "eval_latencies", None)
+    all_needed = sorted({
+        *(int(v) for v in (latency_filter or [])),
+        *(int(v) for v in (eval_latencies or [])),
+    })
+    if all_needed and source_dataset:
         existing_map: dict = {}
         if prompt_map.exists():
             try:
                 existing_map = json.loads(prompt_map.read_text(encoding="utf-8"))
             except Exception:
                 pass
-        if len(existing_map) <= len(latency_filter):
+        missing = [lat for lat in all_needed if str(lat) not in existing_map]
+        if missing:
             full_map = _load_source_latency_prompt_map(
                 source_dataset,
                 cache_dir=getattr(args, "dataset_cache_dir", None),
                 dataset_config_name=source_config_name,
-                dataset_source_subdir=None,  # no subdir filter → all latencies
-                frameskip=frameskip,
+                dataset_source_subdir=source_subdir,  # use resolved subdir template
+                latencies=all_needed,                  # only fetch the subdirs we need
+                frameskip=round(env_fps / obs_fps) if env_fps and obs_fps else 1,
             )
-            prompt_map.write_text(json.dumps(full_map, indent=2), encoding="utf-8")
+            merged = {**existing_map, **full_map}
+            prompt_map.write_text(
+                json.dumps({str(k): merged[str(k)] for k in sorted(int(k) for k in merged)}, indent=2),
+                encoding="utf-8",
+            )
 
     return {
         "dataset_ready": True,
@@ -707,6 +727,9 @@ def _ensure_flappy_dataset(args) -> dict[str, Any]:
         args,
         convert_dataset=convert_dataset,
         verify_dataset=verify_dataset,
+        env_name="flappy",
+        env_fps=30.0,
+        obs_fps=30.0,
     )
 
 
@@ -718,7 +741,9 @@ def _ensure_demon_attack_dataset(args) -> dict[str, Any]:
         args,
         convert_dataset=convert_dataset,
         verify_dataset=verify_dataset,
-        frameskip=4,
+        env_name="demon_attack",
+        env_fps=60.0,
+        obs_fps=15.0,
     )
 
 
@@ -985,7 +1010,9 @@ def _ensure_deadly_corridor_dataset(args) -> dict[str, Any]:
         args,
         convert_dataset=convert_dataset,
         verify_dataset=verify_dataset,
-        frameskip=4,
+        env_name="deadly_corridor",
+        env_fps=35.0,
+        obs_fps=8.75,
     )
 
 

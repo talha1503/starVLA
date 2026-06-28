@@ -268,6 +268,11 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         action_carrier=str(_cfg_get(cfg, "rl_games.action_carrier") or ""),
         deadly_action_layout=str(_cfg_get(cfg, "rl_games.env_eval.deadly.action_layout") or ""),
         latency_mode=str(_cfg_get(cfg, "rl_games.env_eval.latency.mode") or ""),
+        eval_latencies=sorted({
+            *(int(v) for v in (_optional_int_list(_cfg_get(cfg, "rl_games.env_eval.latency.values")) or [])),
+            *(int(v) for v in (_optional_int_list(_cfg_get(cfg, "rl_games.env_eval.post_train.latencies")) or [])),
+            *(int(v) for v in (_optional_int_list(_cfg_get(cfg, "rl_games.env_eval.mid_train.latencies")) or [])),
+        }) or None,
         source_dataset_hf=str(_cfg_get(cfg, "dataset.source_hf") or ""),
         source_dataset_config_name=(
             None
