@@ -1,5 +1,6 @@
 import multiprocessing.context
 import os
+from typing import Any
 
 
 _DISTRIBUTED_ENV_KEYS = (
@@ -44,3 +45,33 @@ class CpuOnlyWorkerSpawnContext(multiprocessing.context.SpawnContext):
 
 
 CPU_ONLY_WORKER_CONTEXT = CpuOnlyWorkerSpawnContext()
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"false", "0", "no", "off"}
+    return bool(value)
+
+
+def build_cpu_only_dataloader_kwargs(
+    num_workers: int,
+    *,
+    pin_memory: Any = False,
+    persistent_workers: Any = False,
+    prefetch_factor: Any = None,
+) -> dict[str, Any]:
+    dataloader_kwargs: dict[str, Any] = {
+        "pin_memory": _as_bool(pin_memory),
+    }
+    if int(num_workers) <= 0:
+        return dataloader_kwargs
+
+    dataloader_kwargs["multiprocessing_context"] = CPU_ONLY_WORKER_CONTEXT
+    dataloader_kwargs["persistent_workers"] = _as_bool(persistent_workers)
+    if prefetch_factor is not None:
+        dataloader_kwargs["prefetch_factor"] = int(prefetch_factor)
+    return dataloader_kwargs

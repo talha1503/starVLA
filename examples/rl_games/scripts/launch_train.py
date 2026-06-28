@@ -5,9 +5,11 @@ import argparse
 import contextlib
 import os
 import re
+import signal
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Sequence
@@ -24,6 +26,7 @@ DEFAULT_ENV = "flappy"
 DEFAULT_INIT = "scratch"
 DEFAULT_MODE = "single"
 DEFAULT_RUN_ROOT_DIR = "results/Checkpoints"
+STOP_FILE_NAME = "STOP"
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -377,6 +380,63 @@ def build_launch_command(cfg: Any, trainer_cmd: list[str], workspace_dir: Path) 
     return [sys.executable, *trainer_cmd]
 
 
+def graceful_run_launch_command(launch_cmd: list[str], *, cwd: Path, stop_file: Path, env: dict[str, str] | None = None) -> int:
+    stop_file.parent.mkdir(parents=True, exist_ok=True)
+    if stop_file.exists():
+        stop_file.unlink()
+
+    child_env = dict(os.environ if env is None else env)
+    child_env["STARVLA_STOP_FILE"] = str(stop_file)
+    interrupt_count = 0
+    process = subprocess.Popen(
+        launch_cmd,
+        cwd=str(cwd),
+        env=child_env,
+        start_new_session=True,
+    )
+
+    def _request_stop(signum, frame):
+        nonlocal interrupt_count
+        interrupt_count += 1
+        if interrupt_count == 1:
+            stop_file.write_text(
+                f"signal={signal.Signals(signum).name}\ntime={time.time():.6f}\n",
+                encoding="utf-8",
+            )
+            print(
+                f"\nGraceful stop requested; wrote {stop_file}. "
+                "Waiting for the trainer to stop at a safe step boundary. "
+                "Press Ctrl-C again to send SIGTERM.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+        if interrupt_count == 2:
+            print("\nSecond interrupt received; sending SIGTERM to training process group.", file=sys.stderr, flush=True)
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            return
+        print("\nThird interrupt received; sending SIGKILL to training process group.", file=sys.stderr, flush=True)
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    previous_handlers = {
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+    }
+    signal.signal(signal.SIGINT, _request_stop)
+    signal.signal(signal.SIGTERM, _request_stop)
+    try:
+        return process.wait()
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
+
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-name", default=DEFAULT_CONFIG_NAME)
@@ -447,6 +507,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     trainer_cmd = build_trainer_command(cfg, setup, workspace_dir, run_root_dir)
     launch_cmd = build_launch_command(cfg, trainer_cmd, workspace_dir)
+    stop_file = Path(run_root_dir) / str(_cfg_get(cfg, "run_id")) / STOP_FILE_NAME
 
     print("Setup summary:")
     for key in sorted(setup):
@@ -457,8 +518,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if _as_bool(_cfg_get(cfg, "launch.dry_run")):
         return 0
 
-    subprocess.run(launch_cmd, check=True, cwd=str(REPO_ROOT))
-    return 0
+    returncode = graceful_run_launch_command(launch_cmd, cwd=REPO_ROOT, stop_file=stop_file)
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, launch_cmd)
+    return returncode
 
 
 if __name__ == "__main__":

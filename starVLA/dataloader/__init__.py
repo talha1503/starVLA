@@ -7,20 +7,10 @@ from torch.utils.data import DataLoader
 import numpy as np
 import torch.distributed as dist
 from pathlib import Path
-from starVLA.dataloader.worker_context import CPU_ONLY_WORKER_CONTEXT
+from starVLA.dataloader.worker_context import build_cpu_only_dataloader_kwargs
 from starVLA.dataloader.vlm_datasets import make_vlm_dataloader
 
 logger = get_logger(__name__)
-
-
-def _cfg_bool(value, default=False):
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() not in {"false", "0", "no", "off"}
-    return bool(value)
 
 
 def save_dataset_statistics(dataset_statistics, run_dir):
@@ -72,14 +62,20 @@ def build_dataloader(
             eval_num_workers = vla_dataset_cfg.get("eval_num_workers", None)
             if eval_num_workers is not None:
                 num_workers = int(eval_num_workers)
-        dataloader_kwargs = {
-            "pin_memory": _cfg_bool(vla_dataset_cfg.pin_memory),
-        }
-        if num_workers > 0:
-            dataloader_kwargs["multiprocessing_context"] = CPU_ONLY_WORKER_CONTEXT
-            dataloader_kwargs["persistent_workers"] = _cfg_bool(vla_dataset_cfg.persistent_workers)
-            if "prefetch_factor" in vla_dataset_cfg:
-                dataloader_kwargs["prefetch_factor"] = int(vla_dataset_cfg.prefetch_factor)
+        dataloader_kwargs = build_cpu_only_dataloader_kwargs(
+            num_workers,
+            pin_memory=vla_dataset_cfg.pin_memory,
+            persistent_workers=vla_dataset_cfg.persistent_workers,
+            prefetch_factor=vla_dataset_cfg.prefetch_factor if "prefetch_factor" in vla_dataset_cfg else None,
+        )
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            logger.info(
+                "Created %s VLA dataloader with num_workers=%s, persistent_workers=%s, cpu_only_workers=%s",
+                mode,
+                num_workers,
+                dataloader_kwargs.get("persistent_workers", False),
+                "multiprocessing_context" in dataloader_kwargs,
+            )
 
         vla_train_dataloader = DataLoader(
             vla_dataset,

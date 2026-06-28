@@ -154,6 +154,14 @@ class Qwenvl_OFT(baseframework):
         # legacy loop stays the reference; enable per experiment via
         # `framework.kv_memory.packed_train: true`.
         self.kv_train_packed = bool(getattr(kv_cfg, "packed_train", False)) if kv_cfg is not None else False
+        # Per-step re-based sink for the packed path: replicate the (short) text
+        # prefix once per step and re-base its M-RoPE positions so the sink→frame
+        # distance matches the eval rolling-KV layout exactly (StreamingLLM
+        # "positions within the cache"), instead of one global sink whose distance
+        # grows with the step index. ON by default — the growing-distance sink was
+        # the train/eval forward mismatch behind the packed run's eval collapse.
+        # Set false to fall back to the single global sink for A/B.
+        self.kv_rebased_sink = bool(getattr(kv_cfg, "rebased_sink", True)) if kv_cfg is not None else True
         # Per-stream (eval slot) memories; rebuilt per sample during training.
         self._kv_memories: dict = {}
 
@@ -686,25 +694,19 @@ class Qwenvl_OFT(baseframework):
         prefix = ids1[:prefix_len]
         frame_block = ids1[prefix_len : prefix_len + frame_len]
         action_block = ids1[prefix_len + frame_len :]  # incl. assistant header
+        block_len = frame_len + action_len
 
-        # Packed input ids (token-replicated), pixels in frame order.
-        parts = [prefix]
-        for _ in range(R):
-            parts += [frame_block, action_block]
-        input_ids = torch.cat(parts).unsqueeze(0)  # [1, L]
         pixel_values = torch.cat([pf["pixel_values"] for pf in per_frame], dim=0)
         grid = grid1.repeat(R, 1)  # [R, 3]
 
-        # Custom M-RoPE positions: frames laid out consecutively (frames-only
-        # get_rope_index), each action block glued right after its own frame.
+        # Frames-only M-RoPE positions: frames laid out consecutively (no action
+        # in between), so frame→frame / action→frame relative distances match eval
+        # ("positions within the cache"). These are the canonical frame positions
+        # reused regardless of where the frame sits in the packed token sequence.
         frames_only_ids = torch.cat([prefix] + [frame_block] * R).unsqueeze(0)
         full_pos_f, _ = backbone.get_rope_index(frames_only_ids, image_grid_thw=grid)  # [3,1,Lf]
         text_pos = full_pos_f[:, :, :prefix_len]
-        pos_parts = [text_pos]
-        block_len = frame_len + action_len
-        L = prefix_len + R * block_len
-        kind = torch.zeros(L, dtype=torch.long, device=device)
-        step = torch.full((L,), -1, dtype=torch.long, device=device)
+
         action_offsets = (action_block == self.action_token_id).nonzero(as_tuple=False).flatten()
         if action_offsets.numel() < self.chunk_len:
             raise RuntimeError(
@@ -712,21 +714,85 @@ class Qwenvl_OFT(baseframework):
                 f"tokens (< chunk_len={self.chunk_len})."
             )
         action_offsets = action_offsets[-self.chunk_len :]  # last chunk_len, matches gather
-        action_idx_rows = []
-        for k in range(R):
-            f_start = prefix_len + k * frame_len  # within frames_only
-            frame_pos_k = full_pos_f[:, :, f_start : f_start + frame_len]
+
+        def _frame_pos(k):
+            s = prefix_len + k * frame_len
+            return full_pos_f[:, :, s : s + frame_len]
+
+        def _action_pos(frame_pos_k):
             fk_max = int(frame_pos_k.max().item())
-            action_pos_k = (torch.arange(1, action_len + 1, device=device) + fk_max)
-            action_pos_k = action_pos_k.view(1, 1, -1).expand(3, 1, -1)
-            pos_parts += [frame_pos_k, action_pos_k]
-            # kind/step for this block in the packed layout
-            blk_start = prefix_len + k * block_len
-            kind[blk_start : blk_start + frame_len] = 1
-            kind[blk_start + frame_len : blk_start + block_len] = 2
-            step[blk_start : blk_start + block_len] = k
-            action_idx_rows.append(blk_start + frame_len + action_offsets)
+            ap = torch.arange(1, action_len + 1, device=device) + fk_max
+            return ap.view(1, 1, -1).expand(3, 1, -1)
+
+        W = self.kv_window
+        parts, pos_parts, kind_parts, step_parts, action_idx_rows = [], [], [], [], []
+
+        if self.kv_rebased_sink:
+            # Per-step re-based sink, with the redundant pre-eviction sinks deduped.
+            # Steps k < W all have j0=0 → o_k=0 → an identical sink at [0,P), so they
+            # share ONE front sink (step=-2, visible to queries with step < W). This
+            # is exactly eval before any eviction (sink pinned at the front, frames
+            # growing from P). Steps k >= W each carry their own re-based sink
+            # ([sink_k][frame_k][action_k]) at o_k so the sink→frame distance equals
+            # eval's rolling-KV layout (bit-exact). Net: 1 + max(0,R-W) sinks instead
+            # of R, saving (W-1) prefix copies while staying numerically identical.
+            base0 = int(full_pos_f[0, 0, prefix_len].item())  # frame 0's temporal start
+
+            # Shared front sink for the pre-eviction steps (step=-2).
+            parts.append(prefix)
+            pos_parts.append(text_pos)
+            kind_parts.append(torch.zeros(prefix_len, dtype=torch.long, device=device))
+            step_parts.append(torch.full((prefix_len,), -2, dtype=torch.long, device=device))
+            cursor = prefix_len
+
+            for k in range(R):
+                if k >= W:
+                    # Re-based sink_k sits right before step k's oldest visible frame.
+                    j0 = k - W + 1
+                    o_k = int(full_pos_f[0, 0, prefix_len + j0 * frame_len].item()) - base0
+                    parts.append(prefix)
+                    pos_parts.append(text_pos + o_k)  # shift all 3 M-RoPE dims by o_k
+                    kind_parts.append(torch.zeros(prefix_len, dtype=torch.long, device=device))
+                    step_parts.append(torch.full((prefix_len,), k, dtype=torch.long, device=device))
+                    cursor += prefix_len
+                frame_pos_k = _frame_pos(k)
+                parts += [frame_block, action_block]
+                pos_parts += [frame_pos_k, _action_pos(frame_pos_k)]
+                kind_parts.append(
+                    torch.cat([
+                        torch.ones(frame_len, dtype=torch.long, device=device),
+                        torch.full((action_len,), 2, dtype=torch.long, device=device),
+                    ])
+                )
+                step_parts.append(torch.full((block_len,), k, dtype=torch.long, device=device))
+                action_idx_rows.append(cursor + frame_len + action_offsets)
+                cursor += block_len
+        else:
+            # Legacy single global sink: [sink][f0 a0]...[f_{R-1} a_{R-1}]. Sink at
+            # the front (step=-1, always visible); sink→frame distance grows with k.
+            parts.append(prefix)
+            pos_parts.append(text_pos)
+            kind_parts.append(torch.zeros(prefix_len, dtype=torch.long, device=device))
+            step_parts.append(torch.full((prefix_len,), -1, dtype=torch.long, device=device))
+            cursor = prefix_len
+            for k in range(R):
+                frame_pos_k = _frame_pos(k)
+                parts += [frame_block, action_block]
+                pos_parts += [frame_pos_k, _action_pos(frame_pos_k)]
+                kind_parts.append(
+                    torch.cat([
+                        torch.ones(frame_len, dtype=torch.long, device=device),
+                        torch.full((action_len,), 2, dtype=torch.long, device=device),
+                    ])
+                )
+                step_parts.append(torch.full((block_len,), k, dtype=torch.long, device=device))
+                action_idx_rows.append(cursor + frame_len + action_offsets)
+                cursor += block_len
+
+        input_ids = torch.cat(parts).unsqueeze(0)  # [1, L]
         position_ids = torch.cat(pos_parts, dim=2)  # [3,1,L]
+        kind = torch.cat(kind_parts)
+        step = torch.cat(step_parts)
         action_idx = torch.stack(action_idx_rows, dim=0)  # [R, chunk_len]
 
         return {
