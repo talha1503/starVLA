@@ -977,6 +977,9 @@ class RlGamesEvalRunner:
         self.output_dir = output_dir
         self.video_output_dir = video_output_dir
         self.video_fps = int(video_fps)
+        self.prompt_mode = str(
+            getattr(cfg.rl_games.env_eval, "prompt_mode", "raw") or "raw"
+        ).strip().lower()
 
     def _stage_cfg(self, stage: str):
         env_eval = self.cfg.rl_games.env_eval

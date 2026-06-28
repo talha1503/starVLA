@@ -33,7 +33,7 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.local.keep_last_n=1 \
     trainer.max_train_steps=5000 \
     trainer.save_interval=5000 \
-    trainer.num_warmup.steps=0 \
+    trainer.num_warmup_steps=0 \
     trainer.eval_interval=1000 \
     trainer.logging_frequency=1 \
     trainer.gradient_accumulation_steps=4 \
