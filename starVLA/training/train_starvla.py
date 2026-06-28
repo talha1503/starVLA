@@ -795,7 +795,8 @@ class VLATrainer(TrainerUtils):
         self.model.eval()
         unwrapped = self.accelerator.unwrap_model(self.model)
         try:
-            return self._rl_games_eval_runner.run(
+            run_eval = torch._dynamo.disable(self._rl_games_eval_runner.run)
+            return run_eval(
                 model=unwrapped,
                 step=self.completed_steps,
                 stage=stage,
@@ -808,7 +809,6 @@ class VLATrainer(TrainerUtils):
                 reset = getattr(unwrapped, "reset_memory", None)
                 if callable(reset):
                     reset()
-                torch.cuda.empty_cache()
             finally:
                 if was_training:
                     self.model.train()

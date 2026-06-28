@@ -60,14 +60,17 @@ class _Accelerator:
 
 
 class _LiveEvalRunner:
-    def __init__(self, *, raises=False):
+    def __init__(self, *, raises=False, record_dynamo_disabled=None):
         self.raises = raises
+        self.record_dynamo_disabled = record_dynamo_disabled
         self.model_modes = []
         self.run_kwargs = []
 
     def run(self, *, model, step, stage, **kwargs):
         self.model_modes.append(model.training)
         self.run_kwargs.append(kwargs)
+        if self.record_dynamo_disabled is not None:
+            self.record_dynamo_disabled()
         if self.raises:
             raise RuntimeError("eval failed")
         from starVLA.training.rl_games.eval_core import EvalResult
@@ -112,7 +115,7 @@ def test_live_rl_games_eval_runs_with_model_in_eval_mode_and_restores_train_mode
     assert runner.model_modes == [False]
     assert result.aggregate["mean_reward"] == 3.0
     assert trainer.model.reset_memory_calls == [None]
-    assert empty_cache_calls == [True]
+    assert empty_cache_calls == []
     assert trainer.model.training is True
 
 
@@ -131,8 +134,33 @@ def test_live_rl_games_eval_restores_train_mode_when_runner_raises(monkeypatch):
 
     assert runner.model_modes == [False]
     assert trainer.model.reset_memory_calls == [None]
-    assert empty_cache_calls == [True]
+    assert empty_cache_calls == []
     assert trainer.model.training is True
+
+
+def test_live_rl_games_eval_runs_with_torch_dynamo_disabled(monkeypatch):
+    from starVLA.training import train_starvla
+
+    state = {"depth": 0, "observed": []}
+
+    def disable(fn):
+        def wrapped(*args, **kwargs):
+            state["depth"] += 1
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                state["depth"] -= 1
+
+        return wrapped
+
+    monkeypatch.setattr(train_starvla.torch._dynamo, "disable", disable)
+
+    runner = _LiveEvalRunner(record_dynamo_disabled=lambda: state["observed"].append(state["depth"] > 0))
+    trainer = _trainer(runner)
+
+    trainer._run_rl_games_eval_with_model_mode(stage="mid_train")
+
+    assert state["observed"] == [True]
 
 
 def test_distributed_live_rl_games_eval_passes_rank_shard_arguments():
