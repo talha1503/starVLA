@@ -3,8 +3,8 @@
 framework:
   qwenvl:
     base_vlm: ${paths.base_model_dir}
-    attn_implementation: flash_attention_2
-    flex_backend: triton
+    attn_implementation: flex_attention
+    flex_backend: flash
     enable_gradient_checkpointing: true
   action_model:
     state_dim: 1
