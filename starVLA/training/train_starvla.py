@@ -25,6 +25,7 @@ from typing import Any, Dict, Tuple
 # Third-Party Libraries
 import numpy as np
 import torch
+import torch._dynamo
 import torch.distributed as dist
 import wandb
 from accelerate import Accelerator, DeepSpeedPlugin
@@ -52,6 +53,18 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Initialize logger
 logger = logging.getLogger(__name__)
+
+_DYNAMO_RECOMPILE_LIMIT = 64
+_DYNAMO_ACCUMULATED_RECOMPILE_LIMIT = 1024
+
+
+def _configure_torch_dynamo_recompile_limits() -> None:
+    config = torch._dynamo.config
+    config.recompile_limit = max(config.recompile_limit, _DYNAMO_RECOMPILE_LIMIT)
+    config.accumulated_recompile_limit = max(
+        config.accumulated_recompile_limit,
+        _DYNAMO_ACCUMULATED_RECOMPILE_LIMIT,
+    )
 
 
 def _as_bool(value, default: bool = False) -> bool:
@@ -573,6 +586,8 @@ class VLATrainer(TrainerUtils):
         return not self._save_best_model_enabled
 
     def prepare_training(self):
+        _configure_torch_dynamo_recompile_limits()
+
         rank = dist.get_rank() if dist.is_initialized() else 0
         seed = self.config.seed + rank if hasattr(self.config, "seed") else rank + 3047
         set_seed(seed)

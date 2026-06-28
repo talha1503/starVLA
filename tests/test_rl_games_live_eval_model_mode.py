@@ -1,6 +1,32 @@
 from types import SimpleNamespace
 
 
+def test_configure_torch_dynamo_recompile_limits_raises_default_limits(monkeypatch):
+    from starVLA.training import train_starvla
+
+    config = train_starvla.torch._dynamo.config
+    monkeypatch.setattr(config, "recompile_limit", 8)
+    monkeypatch.setattr(config, "accumulated_recompile_limit", 256)
+
+    train_starvla._configure_torch_dynamo_recompile_limits()
+
+    assert config.recompile_limit == 64
+    assert config.accumulated_recompile_limit == 1024
+
+
+def test_configure_torch_dynamo_recompile_limits_preserves_higher_limits(monkeypatch):
+    from starVLA.training import train_starvla
+
+    config = train_starvla.torch._dynamo.config
+    monkeypatch.setattr(config, "recompile_limit", 128)
+    monkeypatch.setattr(config, "accumulated_recompile_limit", 2048)
+
+    train_starvla._configure_torch_dynamo_recompile_limits()
+
+    assert config.recompile_limit == 128
+    assert config.accumulated_recompile_limit == 2048
+
+
 class _ModeTrackingModel:
     def __init__(self):
         self.training = True
