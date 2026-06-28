@@ -535,7 +535,7 @@ def _carrier_dataset_name(data_mix: str, action_carrier: str) -> str:
     return f"{data_mix}__bridge"
 
 
-def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -> dict[str, Any]:
+def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset, frameskip: int = 1) -> dict[str, Any]:
     data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
     action_carrier = _action_carrier(args)
     action_layout = str(getattr(args, "deadly_action_layout", "") or "")
@@ -660,6 +660,28 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
     else:
         validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=data_mix)
         eval_validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=eval_data_mix)
+
+    # If training used a latency_filter the embedded prompt map only has the filtered
+    # latencies. Regenerate it from the full source dataset so post-train eval at any
+    # latency gets a correct prompt (correct env fps, not a hardcoded guess).
+    latency_filter = getattr(args, "latency_filter", None)
+    if latency_filter and source_dataset:
+        existing_map: dict = {}
+        if prompt_map.exists():
+            try:
+                existing_map = json.loads(prompt_map.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        if len(existing_map) <= len(latency_filter):
+            full_map = _load_source_latency_prompt_map(
+                source_dataset,
+                cache_dir=getattr(args, "dataset_cache_dir", None),
+                dataset_config_name=source_config_name,
+                dataset_source_subdir=None,  # no subdir filter → all latencies
+                frameskip=frameskip,
+            )
+            prompt_map.write_text(json.dumps(full_map, indent=2), encoding="utf-8")
+
     return {
         "dataset_ready": True,
         "dataset_converted": converted,
@@ -696,6 +718,7 @@ def _ensure_demon_attack_dataset(args) -> dict[str, Any]:
         args,
         convert_dataset=convert_dataset,
         verify_dataset=verify_dataset,
+        frameskip=4,
     )
 
 
@@ -962,6 +985,7 @@ def _ensure_deadly_corridor_dataset(args) -> dict[str, Any]:
         args,
         convert_dataset=convert_dataset,
         verify_dataset=verify_dataset,
+        frameskip=4,
     )
 
 
