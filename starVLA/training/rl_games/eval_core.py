@@ -716,11 +716,11 @@ class _TaskEvaluator:
                 while any(slot.get("active", False) for slot in slots):
                     active_slots = [slot for slot in slots if slot.get("active", False)]
                     examples = [
-<<<<<<< Updated upstream
-                        self._make_model_example(slot["model_obs"], prompt, slot["slot_id"])
-=======
-                        self._make_model_example(slot["image_transform"].current(slot["model_obs"]), prompt)
->>>>>>> Stashed changes
+                        self._make_model_example(
+                            slot["image_transform"].current(slot["model_obs"]),
+                            prompt,
+                            slot["slot_id"],
+                        )
                         for slot in active_slots
                     ]
                     output = model.predict_action(examples=examples)
@@ -883,11 +883,7 @@ class _TaskEvaluator:
                     frames.append(frame)
 
             while not done and steps < max_steps:
-<<<<<<< Updated upstream
-                example = self._make_model_example(model_obs, prompt, slot_id)
-=======
-                example = self._make_model_example(image_transform.current(model_obs), prompt)
->>>>>>> Stashed changes
+                example = self._make_model_example(image_transform.current(model_obs), prompt, slot_id)
                 output = model.predict_action(examples=[example])
                 actions = output["normalized_actions"]
                 if actions.ndim != 3:
