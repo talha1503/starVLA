@@ -4,6 +4,13 @@ rl_games:
   env_eval:
     image_size: 224
     frameskip: 1
+    image_transform: raw_rgb
+    ghost_trail:
+      history_frames: 5
+      gamma: 1.3
+      min_alpha: 35
+      scroll_px_per_step: 4.0
+      ground_fraction: 0.22
     seed: ${seed}
     fixed_episode_seeds: true
     latency_seed_stride: 0

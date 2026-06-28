@@ -26,6 +26,8 @@ python examples/rl_games/scripts/launch_train.py \
     dataset.latency_filter=[0,2,4,6,8] \
     checkpoint.local.keep_last_n=1 \
     trainer.per_latency_eval_num_batches=40 \
+    datasets.vla_data.sequential_step_sampling=true \
+    datasets.vla_data.shuffle=true 
     dataset.episodes_per_latency=40 \
     checkpoint.save_best_model=false \
     checkpoint.local.keep_last_n=1 \
