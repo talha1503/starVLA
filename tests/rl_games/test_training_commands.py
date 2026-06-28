@@ -64,6 +64,15 @@ def test_kv_memory_training_command_shards_mid_train_latency_bench_eval() -> Non
     assert "rl_games.env_eval.distributed_mode=rank_sharded" in command_text
 
 
+def test_memory_training_commands_save_bf16_safetensors_model_file() -> None:
+    command_paths = sorted((REPO_ROOT / "commands" / "memory").glob("*.sh"))
+
+    for command_path in command_paths:
+        command_text = command_path.read_text(encoding="utf-8")
+        assert "checkpoint.save_safetensors_file=true" in command_text, command_path
+        assert "checkpoint.save_pt_file=false" in command_text, command_path
+
+
 def test_openvla_deadly_cross_task_scripts_are_valid_bash() -> None:
     script_dir = REPO_ROOT / "examples" / "rl_games" / "bash_scripts" / "openvla" / "bridge" / "cross_task"
     command_paths = [str(script_dir / f"{setup}.sh") for setup in OPENVLA_DEADLY_CROSS_TASK_SETUPS]
@@ -587,6 +596,29 @@ def test_vla_trainer_pt_checkpoint_file_is_optional() -> None:
     assert 'model_checkpoint_path = checkpoint_path + "_pytorch_model.pt"' in trainer_text
     assert "torch.save(state_dict, model_checkpoint_path)" in trainer_text
     assert "model_path=model_checkpoint_path" in trainer_text
+
+
+def test_vla_trainer_can_save_bf16_safetensors_model_checkpoint() -> None:
+    trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
+
+    assert "self._save_safetensors_file_enabled" in trainer_text
+    assert 'model_checkpoint_path = checkpoint_path + "_model.safetensors"' in trainer_text
+    assert "torch.bfloat16" in trainer_text
+    assert "save_file(safetensors_state_dict, model_checkpoint_path)" in trainer_text
+
+
+def test_memory_upload_scripts_drop_training_state_before_upload() -> None:
+    script_dir = REPO_ROOT.parent / "scripts" / "bash_scripts" / "memory"
+    script_paths = sorted(script_dir.glob("*.sh"))
+
+    for script_path in script_paths:
+        script_text = script_path.read_text(encoding="utf-8")
+        if "hf upload latency-sensitive-bench/memory" not in script_text:
+            continue
+        assert 'compgen -G "${CHECKPOINT_DIR}/steps_*_model.safetensors"' in script_text, script_path
+        assert 'find "${CHECKPOINT_DIR}" -maxdepth 1 -type d -name "steps_*_state" -exec rm -rf {} +' in script_text, script_path
+        assert '--exclude "checkpoints/_initialization/**"' in script_text, script_path
+        assert '--exclude "checkpoints/*_state/**"' in script_text, script_path
 
 
 def test_run_train_accepts_explicit_resume_checkpoint() -> None:

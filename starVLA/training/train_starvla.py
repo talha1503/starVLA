@@ -526,6 +526,10 @@ class VLATrainer(TrainerUtils):
             getattr(getattr(self.config, "checkpoint", {}), "save_pt_file", None),
             default=False,
         )
+        self._save_safetensors_file_enabled = _as_bool(
+            getattr(getattr(self.config, "checkpoint", {}), "save_safetensors_file", None),
+            default=False,
+        )
         self._best_score = float("-inf")
         self._best_step = 0
         self._best_state_path = None
@@ -919,10 +923,22 @@ class VLATrainer(TrainerUtils):
 
         if self.accelerator.is_main_process:
             model_checkpoint_path = None
-            if self._save_pt_file_enabled:
+            if self._save_pt_file_enabled or self._save_safetensors_file_enabled:
                 state_dict = self.accelerator.get_state_dict(self.model)
+
+            if self._save_pt_file_enabled:
                 model_checkpoint_path = checkpoint_path + "_pytorch_model.pt"
                 torch.save(state_dict, model_checkpoint_path)
+
+            if self._save_safetensors_file_enabled:
+                from safetensors.torch import save_file
+
+                safetensors_state_dict = {
+                    name: tensor.detach().to(torch.bfloat16) if torch.is_floating_point(tensor) else tensor.detach()
+                    for name, tensor in state_dict.items()
+                }
+                model_checkpoint_path = checkpoint_path + "_model.safetensors"
+                save_file(safetensors_state_dict, model_checkpoint_path)
 
             summary_data = {"steps": self.completed_steps}
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
