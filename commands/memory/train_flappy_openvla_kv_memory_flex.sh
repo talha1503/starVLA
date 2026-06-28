@@ -60,6 +60,7 @@ python examples/rl_games/scripts/launch_train.py \
   rl_games.env_eval.post_train.latencies=[2] \
   rl_games.env_eval.post_train.num_episodes=50 \
   checkpoint.save_pt_file=false \
+  checkpoint.save_safetensors_file=true \
   checkpoint.save_best_model=false \
   checkpoint.local.keep_last_n=1 \
   checkpoint.load=none

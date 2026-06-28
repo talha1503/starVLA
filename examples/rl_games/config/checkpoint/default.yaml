@@ -6,6 +6,7 @@ checkpoint:
   save_best_model: true
   save_final_model: true
   save_pt_file: false
+  save_safetensors_file: false
   local:
     keep_last_n: 1
   sync:
