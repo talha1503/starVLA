@@ -63,4 +63,5 @@ python examples/rl_games/scripts/launch_train.py \
   checkpoint.save_safetensors_file=true \
   checkpoint.save_best_model=false \
   checkpoint.local.keep_last_n=1 \
-  checkpoint.load=none
+  checkpoint.load=none \
+  "$@"

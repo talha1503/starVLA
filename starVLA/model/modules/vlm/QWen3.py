@@ -50,28 +50,17 @@ def _patch_qwen3vl_flash_attention_position_ids() -> None:
     text_attention_cls._starvla_flash_attention_position_ids_patched = True
 
 
-# FlexAttention Triton-kernel shared-memory cap. torch 2.7.1's flex default-tile
-# picker (`_get_nv_config`) buckets every CUDA capability >= (9, 0) as "H100" and
-# selects H100-sized tiles (bf16/head_dim=128: forward (128, 64, 8, 3) needs
-# ~104.5 KB; backward (64, 128, 8, 3) is larger). That overflows GPUs whose
-# per-block shared-memory cap is only ~99 KB (101376 B) — notably the RTX PRO 6000
-# Blackwell Workstation (sm_120), which despite being newer than A100 has the
-# workstation-class 100 KB/SM budget rather than the datacenter 164-228 KB. The
-# result is "No valid triton configs. OutOfResources: shared memory" at compile.
-#
-# `num_stages` is NOT a compute tile — it is how many K/V prefetch buffers the
-# kernel software-pipelines, so trimming it costs only memory-latency overlap, not
-# FLOPs (and block dims can only step in powers of two, which would waste far more
-# than needed). We therefore keep full-size blocks and only cut pipeline depth,
-# per side via the fwd_/bwd_ prefixes (torch strips the prefix for the matching
-# kernel and drops the other's keys):
-#   - forward: 3 -> 2 stages  (~104.5 KB -> fits, keeps throughput)
-#   - backward: 3 -> 1 stage  (forward-at-2 still left backward at ~99.5 KB, just
-#     512 B over; one fewer prefetch buffer recovers it with margin, no tile shrink)
-_FLEX_KERNEL_OPTIONS = {"fwd_num_stages": 2, "bwd_num_stages": 1}
+# FlexAttention backend selector. PyTorch 2.12 has native sm_120 Triton flex
+# configs, so the old torch-2.7 small-smem num_stages override is intentionally
+# not injected on the Triton path. FA4 is a distinct FlexAttention backend and
+# should receive only the backend selector.
+_FLEX_KERNEL_OPTIONS_BY_BACKEND = {
+    "triton": {"BACKEND": "TRITON"},
+    "flash": {"BACKEND": "FLASH"},
+}
 
 
-def _patch_qwen3vl_flex_attention_support() -> None:
+def _patch_qwen3vl_flex_attention_support(flex_backend: str) -> None:
     """Allow loading Qwen3-VL with ``attn_implementation='flex_attention'``.
 
     Qwen3-VL's attention already dispatches through the generic
@@ -82,9 +71,8 @@ def _patch_qwen3vl_flex_attention_support() -> None:
     packed KV-memory training (`QwenOFT._forward_memory_packed`) passes a
     BlockMask that FlexAttention consumes natively.
 
-    Also wraps the registered ``flex_attention`` interface to inject
-    ``_FLEX_KERNEL_OPTIONS`` so the Triton kernel fits small-shared-memory GPUs
-    (see the constant above). Wrapping the dispatch entry — rather than threading
+    Also wraps the registered ``flex_attention`` interface to inject the explicit
+    backend selector. Wrapping the dispatch entry — rather than threading
     ``kernel_options`` through the top-level forward kwargs — guarantees both the
     forward and the gradient-checkpointing backward recompile pick it up.
     """
@@ -104,13 +92,19 @@ def _patch_qwen3vl_flex_attention_support() -> None:
 
     base_flex = ALL_ATTENTION_FUNCTIONS["flex_attention"]
     if getattr(base_flex, "_starvla_kernel_options_patched", False):
-        return
+        if base_flex._starvla_flex_backend == flex_backend:
+            return
+        base_flex = base_flex._starvla_base_flex_attention
+
+    kernel_options = _FLEX_KERNEL_OPTIONS_BY_BACKEND[flex_backend]
 
     def flex_attention_with_kernel_options(*args, **kwargs):
-        kwargs.setdefault("kernel_options", _FLEX_KERNEL_OPTIONS)
+        kwargs["kernel_options"] = kernel_options
         return base_flex(*args, **kwargs)
 
     flex_attention_with_kernel_options._starvla_kernel_options_patched = True
+    flex_attention_with_kernel_options._starvla_flex_backend = flex_backend
+    flex_attention_with_kernel_options._starvla_base_flex_attention = base_flex
     ALL_ATTENTION_FUNCTIONS["flex_attention"] = flex_attention_with_kernel_options
 
 
@@ -154,7 +148,7 @@ class _QWen3_VL_Interface(nn.Module):
                 _patch_qwen3vl_flash_attention_position_ids()
 
         if attn_implementation == "flex_attention":
-            _patch_qwen3vl_flex_attention_support()
+            _patch_qwen3vl_flex_attention_support(qwenvl_config["flex_backend"])
 
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_id,
