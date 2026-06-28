@@ -37,16 +37,22 @@ def make_packed_sliding_mask_mod(kind: torch.Tensor, step: torch.Tensor, window:
     Qwen3-VL forward under this mask instead of a per-frame Python loop.
 
     ``kind`` (0=text/sink, 1=frame, 2=action) and ``step`` (frame/step index;
-    -1 for text) are per-token 1D long tensors on the attention device. ``window``
-    is the number of visible frames (``kv_window``). The predicate composes:
+    text is -1 for the single global sink, or the step index ``k`` for the
+    per-step re-based sink) are per-token 1D long tensors on the attention
+    device. ``window`` is the number of visible frames (``kv_window``). The
+    predicate composes:
       * base causal (``kv <= q``);
-      * the text prefix (sink, StreamingLLM) is visible to every query;
+      * a sink (text) key is visible to a query if it is the legacy global sink
+        (``step < 0``, visible to every query) OR a per-step sink that belongs to
+        the query's own step (``step[q] == step[kv]``). The latter lets each step
+        attend its own re-based text prefix so the text→frame distance matches
+        the eval rolling-KV layout exactly;
       * a frame key is visible to any non-text query within the last ``window``
         frames (``step[q]-window < step[kv] <= step[q]``);
       * an action key is visible ONLY to its own step's action query (read-out
         isolation), so frames never attend any action and the frame KV stream is
         bit-identical to the streaming loop / eval.
-    Every query sees at least the sink and itself → no fully-masked row → no NaN.
+    Every query sees at least its own sink and itself → no fully-masked row → no NaN.
     """
     W = int(window)
 
@@ -56,7 +62,7 @@ def make_packed_sliding_mask_mod(kind: torch.Tensor, step: torch.Tensor, window:
         kk = kind[kv_idx]
         sq = step[q_idx]
         sk = step[kv_idx]
-        sink = kk == 0
+        sink = (kk == 0) & ((sk < 0) | (sq == sk))
         frame_vis = (kk == 1) & (kq != 0) & (sk <= sq) & (sk > sq - W)
         action_vis = (kk == 2) & (kq == 2) & (sq == sk)
         return causal & (sink | frame_vis | action_vis)

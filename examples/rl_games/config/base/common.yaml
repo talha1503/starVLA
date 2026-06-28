@@ -23,6 +23,13 @@ framework:
     # checkpointing recompute must stay on flex to consume the BlockMask). Eval
     # streaming also runs fine under flex. Leave false to use the legacy loop.
     packed_train: false
+    # Per-step re-based sink (packed path only): replicate the short text prefix
+    # once per step with M-RoPE positions re-based to sit right before each step's
+    # window, so the sink→frame distance matches the eval rolling-KV layout exactly.
+    # The single global sink (false) has a sink→frame distance that grows with the
+    # step index — a train/eval forward mismatch that collapsed online eval. ON by
+    # default; set false only for A/B against the legacy single-sink packing.
+    rebased_sink: true
 
 datasets:
   vla_data:

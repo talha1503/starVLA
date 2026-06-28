@@ -67,6 +67,37 @@ def _dense(kind, step, W):
     return add.view(1, 1, L, L), boolm
 
 
+def _rebased_layout(W):
+    """Per-step [sink_k][f_k][a_k] with the sink re-based by o_k = j0*F, mirroring
+    QwenOFT._packed_window_layout's rebased_sink branch for a text-only rollout.
+    Frames keep their global frames-only positions (T + k*F); sink_k is shifted so
+    it sits one position before step k's oldest visible frame."""
+    Lr = R * (T + BLOCK)
+    kind = torch.zeros(Lr, dtype=torch.long)
+    step = torch.full((Lr,), -1, dtype=torch.long)
+    pos = torch.zeros(3, 1, Lr, dtype=torch.long)
+    action_idx = []
+    cur = 0
+    for k in range(R):
+        j0 = max(0, k - W + 1)
+        o_k = j0 * F
+        kind[cur:cur + T] = 0
+        step[cur:cur + T] = k
+        pos[:, 0, cur:cur + T] = torch.arange(T) + o_k
+        fk = cur + T
+        kind[fk:fk + F] = 1
+        step[fk:fk + F] = k
+        frame_pos = torch.arange(T + k * F, T + k * F + F)
+        pos[:, 0, fk:fk + F] = frame_pos
+        ak = fk + F
+        kind[ak:ak + A] = 2
+        step[ak:ak + A] = k
+        pos[:, 0, ak:ak + A] = torch.arange(1, A + 1) + int(frame_pos.max())
+        action_idx.append(list(range(ak, ak + A)))
+        cur += T + BLOCK
+    return kind, step, pos, torch.tensor(action_idx)
+
+
 def _run(model, ids, pos, add):
     emb = model.embed_tokens(ids)
     return model(inputs_embeds=emb, position_ids=pos, attention_mask=add, use_cache=False).last_hidden_state
@@ -128,3 +159,49 @@ def test_action_readout_isolation():
     assert (base[:, action_idx[1], :] - other[:, action_idx[1], :]).abs().max().item() < 1e-5
     frames = (kind == 1).nonzero().flatten()
     assert (base[:, frames, :] - other[:, frames, :]).abs().max().item() < 1e-5
+
+
+def test_rebased_sink_distance_matches_eval_window():
+    """The per-step re-based sink reproduces the eval rolling-KV layout's BOUNDED
+    sink->frame distance: at every step the visible frames sit at consecutive
+    offsets 1, 1+F, 1+2F, ... after the sink (i.e. the window glued right behind
+    the sink), regardless of how deep into the rollout the step is. The legacy
+    single global sink (control) instead has a distance that GROWS with the step
+    index once frames are evicted — the train/eval forward mismatch the re-based
+    sink removes."""
+    W = 3  # < R=5 so steps 3,4 evict the oldest frame(s)
+    kind, step, pos, _ = _rebased_layout(W)
+    t = pos[0, 0]  # temporal M-RoPE dim
+    blk = T + BLOCK
+    for k in range(R):
+        j0 = max(0, k - W + 1)  # oldest visible frame at step k
+        sink_last = int(t[k * blk + T - 1])
+        for i, j in enumerate(range(j0, k + 1)):
+            f_first = int(t[j * blk + T])  # frame j's first token (its own block)
+            assert f_first - sink_last == i * F + 1, f"rebased step {k} frame {j}"
+
+    # Control: legacy single global sink — distance to the oldest visible frame
+    # grows as j0*F+1 (eval wants 1), confirming the systematic mismatch.
+    _, _, pos_legacy, _ = _layout()
+    t2 = pos_legacy[0, 0]
+    sink_last2 = int(t2[T - 1])
+    for k in range(R):
+        j0 = max(0, k - W + 1)
+        f_oldest = int(t2[T + j0 * BLOCK])  # frame j0's first token (legacy layout)
+        assert f_oldest - sink_last2 == j0 * F + 1
+    assert max(0, (R - 1) - W + 1) > 0  # the test actually exercises eviction
+
+
+def test_rebased_sink_no_fully_masked_row():
+    """Re-based per-step sinks (step>=0, visible only to their own step) still
+    leave every query able to see at least its own sink + itself -> no NaN."""
+    W = 3
+    kind, step, pos, _ = _rebased_layout(W)
+    Lr = kind.shape[0]
+    mod = make_packed_sliding_mask_mod(kind, step, W)
+    qg, kg = torch.meshgrid(torch.arange(Lr), torch.arange(Lr), indexing="ij")
+    boolm = mod(0, 0, qg, kg)
+    assert bool(boolm.any(dim=1).all()), "a query row is fully masked"
+    # each step's frame/action query sees exactly one sink block: its own.
+    sink_steps = step[(kind == 0)]
+    assert set(sink_steps.tolist()) == set(range(R))
