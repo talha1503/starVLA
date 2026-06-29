@@ -1,10 +1,12 @@
-cd starVLA
+bash /workspace/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh
 
-bash examples/rl_games/install/install_stack.sh openvla cross_task
+cd /workspace/starVLA
+
+bash examples/rl_games/install/install_stack.sh openvla flappy
 
 conda activate starvla_rl_games_openvla
 
-bash examples/rl_games/install/flash_attn.sh --check >/dev/null 2>&1 || bash examples/rl_games/install/flash_attn.sh
+bash /workspace/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh 
 
 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
@@ -12,13 +14,13 @@ python examples/rl_games/scripts/launch_train.py \
     init=bridge \
     mode=cross_task \
     cross_task_setup=demon_mixed_flappy_zero \
-    run_id="openvla_bridge_cross_demon_024_flappy_zero_clean_data_exp1" \
+    run_id="openvla_bridge_cross_demon_024_flappy_zero_clean_data_exp2" \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
     wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_bridge_cross_demon_024_flappy_zero_clean_data_exp1" \
+    checkpoint.hf_repo_id="talha15032/openvla_bridge_cross_demon_024_flappy_zero_clean_data_exp2" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_bridge_cross_demon_024_flappy_zero_clean_data_exp1" \
+    checkpoint.sync.repo_id="talha15032/openvla_bridge_cross_demon_024_flappy_zero_clean_data_exp2" \
     checkpoint.save_best_model=false \
     trainer.max_train_steps=7000 \
     trainer.num_warmup_steps=0 \
@@ -48,7 +50,6 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.1.episodes_per_latency=40 \
     rl_games.cross_task.train_tasks.0.max_episodes=null \
     rl_games.cross_task.train_tasks.1.max_episodes=null \
-    rl_games.env_eval.mid_train.interval_steps=500 \
     rl_games.cross_task.eval_tasks.demon_attack.mid_train.enabled=false \
     rl_games.cross_task.eval_tasks.demon_attack.post_train.latencies=[0,2,4] \
     rl_games.cross_task.eval_tasks.demon_attack.post_train.num_episodes=20 \
