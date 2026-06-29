@@ -48,6 +48,7 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.1.eval_latency_filter=[0,2,4] \
     rl_games.cross_task.train_tasks.1.episodes_per_latency=40 \
     rl_games.cross_task.train_tasks.1.action_layout=multibinary_7 \
+    rl_games.env_eval.eval_backend=eval_core \
     rl_games.env_eval.deadly.multibinary_threshold=0.0 \
     rl_games.cross_task.train_tasks.0.max_episodes=null \
     rl_games.cross_task.train_tasks.1.max_episodes=null \

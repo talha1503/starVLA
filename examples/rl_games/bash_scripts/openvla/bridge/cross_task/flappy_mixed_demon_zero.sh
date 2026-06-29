@@ -33,6 +33,7 @@ python examples/rl_games/scripts/launch_train.py \
     framework.action_model.loss_type=discrete_ce \
     framework.action_model.action_dim=7 \
     framework.action_model.action_env_dim=7 \
+    rl_games.env_eval.eval_backend=eval_core \
     trainer.per_latency_eval_num_batches=5 \
     rl_games.cross_task.train_tasks.0.name=demon_attack \
     rl_games.cross_task.train_tasks.0.converted_name=demon_attack_0_200ep_cross_train \

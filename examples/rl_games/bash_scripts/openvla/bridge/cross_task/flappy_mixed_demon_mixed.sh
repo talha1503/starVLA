@@ -50,6 +50,7 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.1.episodes_per_latency=40 \
     rl_games.cross_task.train_tasks.0.max_episodes=null \
     rl_games.cross_task.train_tasks.1.max_episodes=null \
+    rl_games.env_eval.eval_backend=eval_core \
     rl_games.cross_task.eval_tasks.demon_attack.mid_train.enabled=false \
     rl_games.cross_task.eval_tasks.demon_attack.post_train.latencies=[0,2,4] \
     rl_games.cross_task.eval_tasks.demon_attack.post_train.num_episodes=20 \
