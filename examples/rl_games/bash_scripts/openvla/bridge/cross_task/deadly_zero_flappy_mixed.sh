@@ -34,6 +34,7 @@ python examples/rl_games/scripts/launch_train.py \
     framework.action_model.action_env_dim=7 \
     trainer.per_latency_eval_num_batches=5 \
     rl_games.cross_task.train_tasks.0.name=flappy \
+    trainer.eval_action_classification=true \
     rl_games.cross_task.train_tasks.0.converted_name=flappy_200ep_cross_0_train \
     rl_games.cross_task.train_tasks.0.train_source_hf=latency-sensitive-bench/flappy_200ep \
     rl_games.cross_task.train_tasks.0.prompt_source_hf=latency-sensitive-bench/flappy_200ep \
