@@ -963,6 +963,15 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 manifest["train_episodes_per_latency"] = episodes_per_latency
                 manifest["eval_episodes_per_latency"] = eval_episodes_per_latency
                 manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            # The per-task derived names (e.g. ..._lat0_2_4__40ep_per_lat__bridge)
+            # are not in any static data_config, and the combined cross__ mixture
+            # is only registered after this loop. Register each as a trivial
+            # single-dataset mixture so the per-task materialize below can resolve
+            # it via get_dataset_named_mixture.
+            from starVLA.dataloader.gr00t_lerobot.registry import DATASET_NAMED_MIXTURES
+
+            DATASET_NAMED_MIXTURES[data_mix] = [[data_mix, weight, robot_type]]
+            DATASET_NAMED_MIXTURES[eval_data_mix] = [[eval_data_mix, weight, robot_type]]
             _materialize_starvla_runtime_cache(data_root_dir=data_root_dir, data_mix=data_mix)
             _materialize_starvla_runtime_cache(data_root_dir=data_root_dir, data_mix=eval_data_mix)
             converted = True
