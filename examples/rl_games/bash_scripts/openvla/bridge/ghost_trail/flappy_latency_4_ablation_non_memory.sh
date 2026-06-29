@@ -45,3 +45,5 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.env_eval.post_train.latencies=[0,1,2,3,4] \
     rl_games.env_eval.post_train.num_episodes=20 \
     rl_games.env_eval.post_train.max_steps_per_episode=3600
+
+

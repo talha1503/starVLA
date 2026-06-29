@@ -26,7 +26,7 @@ python examples/rl_games/scripts/launch_train.py \
     trainer.per_latency_eval_num_batches=5 \
     dataset.episodes_per_latency=200 \
     rl_games.env_eval.image_transform=flappy_ghost_trail \
-    rl_games.env_eval.eval_backend=latency_bench \
+    rl_games.env_eval.eval_backend=eval_core \
     datasets.vla_data.shuffle=true \
     checkpoint.local.keep_last_n=1 \
     trainer.max_train_steps=5000 \
