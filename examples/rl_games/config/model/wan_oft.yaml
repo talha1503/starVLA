@@ -28,6 +28,7 @@ framework:
   world_model:
     base_wm: ${paths.base_model_dir}
     extract_layers: [-1]
+    num_frames: null
   action_model:
     action_model_type: MLP
     action_dim: 7
@@ -37,6 +38,8 @@ framework:
     future_action_window_size: 7
     past_action_window_size: 0
     loss_type: discrete_ce
+    action_query_source: mean
+    action_query_num_heads: 24
 
 datasets:
   vla_data:

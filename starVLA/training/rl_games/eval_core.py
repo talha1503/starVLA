@@ -158,9 +158,11 @@ def _extract_image_observation(obs: Any) -> Any:
     return obs
 
 
-def _resize_rgb(raw_obs: Any, image_size: int, *, prefer_area: bool = False) -> np.ndarray:
+def _resize_rgb(raw_obs: Any, image_size: Optional[int], *, prefer_area: bool = False) -> np.ndarray:
     raw_obs = _extract_image_observation(raw_obs)
     if raw_obs is None:
+        if image_size is None:
+            raise ValueError("Cannot create an empty RGB observation when image_size is None")
         return np.zeros((image_size, image_size, 3), dtype=np.uint8)
     raw_obs = np.asarray(raw_obs)
     if raw_obs.dtype != np.uint8:
@@ -169,6 +171,8 @@ def _resize_rgb(raw_obs: Any, image_size: int, *, prefer_area: bool = False) -> 
         raw_obs = np.stack([raw_obs] * 3, axis=-1)
     elif raw_obs.ndim == 3 and raw_obs.shape[2] == 1:
         raw_obs = np.repeat(raw_obs, 3, axis=2)
+    if image_size is None:
+        return raw_obs
     if raw_obs.shape[:2] == (image_size, image_size):
         return raw_obs
     if prefer_area:
@@ -255,6 +259,12 @@ def _as_int(value: Any, default: int) -> int:
     return int(value)
 
 
+def _as_optional_int(value: Any) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
 def _stable_task_seed_index(task: str) -> int:
     if task in TASK_SEED_INDEX:
         return TASK_SEED_INDEX[task]
@@ -317,11 +327,12 @@ class _TaskEvaluator:
         self.default_prompt = str(getattr(self.env_eval_cfg, "task_description", "") or "")
         if task_eval_cfg is not None:
             self.default_prompt = str(getattr(task_eval_cfg, "task_description", self.default_prompt) or self.default_prompt)
-        self.image_size = int(
+        image_size_value = (
             getattr(task_eval_cfg, "image_size", getattr(self.env_eval_cfg, "image_size", 84))
             if task_eval_cfg is not None
             else getattr(self.env_eval_cfg, "image_size", 84)
         )
+        self.image_size = _as_optional_int(image_size_value)
         self.frameskip = max(1, int(
             getattr(task_eval_cfg, "frameskip", getattr(self.env_eval_cfg, "frameskip", 1))
             if task_eval_cfg is not None
@@ -334,6 +345,19 @@ class _TaskEvaluator:
         if self.image_sequence_length <= 0:
             raise ValueError(f"image_sequence_length must be positive, got {self.image_sequence_length}")
         self.state_dim = int(getattr(cfg.framework.action_model, "state_dim", 1) or 1)
+        chunk_execution_cfg = getattr(self.env_eval_cfg, "action_chunk_execution", None)
+        self.action_chunk_execution_enabled = _as_bool(
+            getattr(chunk_execution_cfg, "enabled", False),
+            default=False,
+        )
+        action_horizon = int(getattr(cfg.framework.action_model, "action_horizon", 1) or 1)
+        configured_chunk_size = getattr(chunk_execution_cfg, "chunk_size", None)
+        self.action_chunk_execution_size = action_horizon if configured_chunk_size is None else int(configured_chunk_size)
+        if self.action_chunk_execution_enabled and self.action_chunk_execution_size <= 0:
+            raise ValueError(
+                f"action_chunk_execution.chunk_size must be positive when enabled, "
+                f"got {self.action_chunk_execution_size}"
+            )
         self.deadly_multibinary_threshold = self._resolve_deadly_multibinary_threshold()
         self.fixed_episode_seeds = _as_bool(getattr(self.env_eval_cfg, "fixed_episode_seeds", True), default=True)
         self.eval_seed = _as_int(getattr(self.env_eval_cfg, "seed", getattr(cfg, "seed", 42)), 42)
@@ -529,6 +553,19 @@ class _TaskEvaluator:
             if terminated or truncated:
                 break
         return obs, step_reward, terminated, truncated
+
+    def _validate_action_chunk(self, actions: np.ndarray, batch_size: int) -> None:
+        if actions.ndim != 3:
+            raise RuntimeError(f"Expected normalized_actions shape [B,T,D], got {actions.shape}")
+        if actions.shape[0] != batch_size:
+            raise RuntimeError(
+                f"Expected {batch_size} batched actions, got normalized_actions shape {actions.shape}"
+            )
+        if self.action_chunk_execution_enabled and actions.shape[1] < self.action_chunk_execution_size:
+            raise RuntimeError(
+                f"action_chunk_execution.chunk_size={self.action_chunk_execution_size} requires at least "
+                f"{self.action_chunk_execution_size} predicted action slots, got normalized_actions shape {actions.shape}"
+            )
 
     def _empty_latency_metrics(self, latency: int) -> Dict[str, Any]:
         return {
@@ -753,6 +790,11 @@ class _TaskEvaluator:
             return self._empty_latency_metrics(latency)
 
         vectorized_batch_size = self._vectorized_batch_size()
+        if self.action_chunk_execution_enabled and vectorized_batch_size > 1:
+            raise ValueError(
+                "rl_games.env_eval.action_chunk_execution is not supported with vectorized eval. "
+                "Set rl_games.env_eval.vectorized.enabled=false."
+            )
         if vectorized_batch_size > 1 and video_dir is None:
             return self._run_latency_vectorized(
                 model=model,
@@ -809,28 +851,30 @@ class _TaskEvaluator:
                 example = self._make_model_example(model_input, prompt)
                 output = model.predict_action(examples=[example])
                 actions = output["normalized_actions"]
-                if actions.ndim != 3:
-                    raise RuntimeError(f"Expected normalized_actions shape [B,T,D], got {actions.shape}")
-                raw_action = actions[0, 0, :]
-                decoded = self._decode_action(raw_action, runtime_button_order=runtime_button_order)
-                effective_action = queue.schedule_and_get(decoded)
-                action_hist[str(effective_action)] += 1
+                self._validate_action_chunk(actions, batch_size=1)
+                chunk_size = self.action_chunk_execution_size if self.action_chunk_execution_enabled else 1
+                for raw_action in actions[0, :chunk_size, :]:
+                    decoded = self._decode_action(raw_action, runtime_button_order=runtime_button_order)
+                    effective_action = queue.schedule_and_get(decoded)
+                    action_hist[str(effective_action)] += 1
 
-                obs, step_reward, terminated, truncated = self._step_env_once(env, effective_action)
-                model_obs = self._model_observation(env, obs)
-                model_input = (
-                    self._advance_model_history(model_input, model_obs)
-                    if self.pack_image_sequence
-                    else model_obs
-                )
-                if video_dir is not None:
-                    frame = _render_frame(env, fallback_obs=model_obs)
-                    if frame is not None:
-                        frames.append(frame)
+                    obs, step_reward, terminated, truncated = self._step_env_once(env, effective_action)
+                    model_obs = self._model_observation(env, obs)
+                    model_input = (
+                        self._advance_model_history(model_input, model_obs)
+                        if self.pack_image_sequence
+                        else model_obs
+                    )
+                    if video_dir is not None:
+                        frame = _render_frame(env, fallback_obs=model_obs)
+                        if frame is not None:
+                            frames.append(frame)
 
-                total_reward += step_reward
-                steps += 1
-                done = terminated or truncated
+                    total_reward += step_reward
+                    steps += 1
+                    done = terminated or truncated or steps >= max_steps
+                    if done:
+                        break
 
             if video_dir is not None:
                 seed_part = "none" if episode_seed is None else str(int(episode_seed))

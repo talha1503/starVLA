@@ -615,10 +615,6 @@ def _write_metadata(
             }
         },
     }
-    if context_images_output_column is not None:
-        modality["video"]["context_images"] = {
-            "original_key": context_images_output_column,
-        }
     (meta_dir / "modality.json").write_text(json.dumps(modality, indent=2), encoding="utf-8")
 
     info = {
@@ -653,14 +649,10 @@ def _write_metadata(
     }
     if context_images_output_column is not None:
         info["features"][context_images_output_column] = {
-            "dtype": "sequence",
-            "shape": [int(image_sequence_length or 1) - 1],
-            "names": ["context_frame"],
-            "feature": {
-                "dtype": "image",
-                "shape": [84, 84, 3],
-                "names": ["height", "width", "channel"],
-            },
+            "dtype": "image_sequence",
+            "shape": [int(image_sequence_length or 1) - 1, 84, 84, 3],
+            "names": ["time", "height", "width", "channel"],
+            "video_info": {"video.fps": FPS},
         }
     (meta_dir / "info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
 

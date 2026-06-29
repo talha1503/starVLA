@@ -155,8 +155,15 @@ def _module_param_ids(module):
     return {id(param) for param in module.parameters()}
 
 
+def _has_vit_or_llm_freeze_request(cfg) -> bool:
+    return bool(cfg.trainer.freeze_vit or cfg.trainer.freeze_tied_embedding or cfg.trainer.freeze_llm_layers)
+
+
 def vit_llm_frozen_param_ids(model, cfg):
     """Parameter ids excluded from optimizer by trainer freeze controls."""
+    if not _has_vit_or_llm_freeze_request(cfg):
+        return set()
+
     frozen_params = set()
     freeze_vit = cfg.trainer.freeze_vit
     if freeze_vit:
@@ -356,6 +363,9 @@ class TrainerUtils:
         trainer.freeze_vit freezes Qwen-VL's visual module, including the
         vision-to-language connector/merger it contains.
         """
+        if not _has_vit_or_llm_freeze_request(cfg):
+            return model
+
         freeze_vit = cfg.trainer.freeze_vit
         if freeze_vit:
             for param in _vit_module(model).parameters():

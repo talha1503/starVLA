@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import io
+import json
 import sys
 from types import ModuleType
 from typing import Any
@@ -81,6 +82,34 @@ def test_flappy_converter_rejects_context_image_count_mismatch(flappy_converter:
             context_images_column="context_images",
             image_sequence_length=4,
         )
+
+
+def test_flappy_converter_writes_loader_compatible_context_image_metadata(
+    flappy_converter: ModuleType,
+    tmp_path: Any,
+) -> None:
+    flappy_converter._write_metadata(
+        tmp_path,
+        episode_lengths=[3],
+        task_prompts=["play"],
+        action_dim=7,
+        action_labels=["NOOP", "FLAP", "PAD2", "PAD3", "PAD4", "PAD5", "PAD6"],
+        state_dim=7,
+        state_labels=["s0", "s1", "s2", "s3", "s4", "s5", "s6"],
+        context_images_output_column="observation.context_images",
+        image_sequence_length=5,
+    )
+
+    modality = json.loads((tmp_path / "meta" / "modality.json").read_text())
+    info = json.loads((tmp_path / "meta" / "info.json").read_text())
+
+    assert "context_images" not in modality["video"]
+    assert info["features"]["observation.context_images"] == {
+        "dtype": "image_sequence",
+        "shape": [4, 84, 84, 3],
+        "names": ["time", "height", "width", "channel"],
+        "video_info": {"video.fps": flappy_converter.FPS},
+    }
 
 
 def test_temporal_clip_decodes_context_images_with_current_image_in_temporal_order() -> None:

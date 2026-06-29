@@ -96,11 +96,43 @@ def test_wan_oft_single_gpu_command_enables_held_out_eval_mix() -> None:
     assert "model=wan_oft" in command_text
     assert "env=flappy" in command_text
     assert "init=wan_oft_libero" in command_text
-    assert "trainer.distributed_backend=deepspeed" in command_text
-    assert "launch.use_accelerate=true" in command_text
+    assert "trainer.distributed_backend=none" in command_text
+    assert "launch.use_accelerate=false" in command_text
     assert "launch.num_processes=1" in command_text
+    assert "run_id=wan_oft_flappy_fix_latency_0_context5_standard_sft_2000_effbs128_224_currentce" in command_text
+    assert "paths.dataset_local_dir=data/flappy_fix_latency_0_200ep_context5" in command_text
+    assert "dataset.converted_name=flappy_train__bridge" in command_text
+    assert "trainer.max_train_steps=2000" in command_text
+    assert "trainer.gradient_accumulation_steps=32" in command_text
+    assert "datasets.vla_data.per_device_batch_size=4" in command_text
+    assert "datasets.vla_data.obs_image_size=[224,224]" in command_text
+    assert "datasets.vla_data.image_sequence_length=5" in command_text
+    assert "datasets.vla_data.observation_indices=[-4,-3,-2,-1,0]" in command_text
+    assert "framework.world_model.num_frames=5" in command_text
+    assert "framework.action_model.loss_type=current_discrete_ce" in command_text
+    assert "framework.action_model.class_weights" not in command_text
+    assert "+trainer.learning_rate.action_query_proj=1.0e-4" in command_text
+    assert "trainer.lr_scheduler_type=cosine_with_min_lr" in command_text
+    assert "trainer.scheduler_specific_kwargs.min_lr=1.0e-6" in command_text
+    assert "trainer.eval_action_classification=false" in command_text
+    assert "trainer.save_interval=0" in command_text
+    assert "datasets.vla_data.action_balance.enabled=false" in command_text
     assert "datasets.vla_data.data_mix=flappy_train__bridge" in command_text
     assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in command_text
+    assert "rl_games.env_eval.enabled=true" in command_text
+    assert "rl_games.env_eval.image_size=224" in command_text
+    assert "rl_games.env_eval.latency.prompt_map_path=data/flappy_fix_latency_0_200ep_context5/flappy_train__bridge/latency_prompt_map.json" in command_text
+    assert "rl_games.env_eval.mid_train.enabled=true" in command_text
+    assert "rl_games.env_eval.mid_train.interval_steps=500" in command_text
+    assert "rl_games.env_eval.mid_train.latencies=[0]" in command_text
+    assert "rl_games.env_eval.mid_train.num_episodes=5" in command_text
+    assert "rl_games.env_eval.post_train.enabled=true" in command_text
+    assert "rl_games.env_eval.post_train.latencies=[0]" in command_text
+    assert "rl_games.env_eval.post_train.num_episodes=20" in command_text
+    assert "checkpoint.save_pt_file=true" in command_text
+    assert "checkpoint.save_training_state=false" in command_text
+    assert "checkpoint.save_best_model=false" in command_text
+    assert "checkpoint.save_final_model=true" in command_text
 
 
 def test_wan_oft_chunk8_command_matches_released_checkpoint() -> None:

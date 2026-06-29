@@ -9,3 +9,6 @@ rl_games:
     latency_seed_stride: 0
     task_seed_stride: 0
     task_description: ""
+    action_chunk_execution:
+      enabled: false
+      chunk_size: null

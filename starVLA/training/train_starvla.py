@@ -42,7 +42,12 @@ from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, 
 from starVLA.training.rl_games.auth import login_training_services
 from starVLA.training.rl_games.eval_core import EvalResult
 from starVLA.training.rl_games import action_cc_f1
-from starVLA.training.train_step_events import calculate_epoch_progress, should_run_step_interval_event
+from starVLA.training.rl_games.action_cc_f1_budget import build_frame_records
+from starVLA.training.train_step_events import (
+    calculate_epoch_progress,
+    should_run_optional_step_interval_event,
+    should_run_step_interval_event,
+)
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
 
@@ -536,6 +541,10 @@ class VLATrainer(TrainerUtils):
             getattr(getattr(self.config, "checkpoint", {}), "save_pt_file", None),
             default=False,
         )
+        self._save_training_state_enabled = _as_bool(
+            getattr(getattr(self.config, "checkpoint", {}), "save_training_state", None),
+            default=True,
+        )
         self._best_score = float("-inf")
         self._best_step = 0
         self._best_state_path = None
@@ -782,18 +791,32 @@ class VLATrainer(TrainerUtils):
         self.accelerator.wait_for_everyone()
         return merged_result
 
+    def _run_rl_games_eval_with_model_mode(self, stage: str):
+        if self._rl_games_eval_runner is None:
+            return None
+
+        was_training = bool(getattr(self.model, "training", False))
+        self.model.eval()
+        try:
+            with torch.inference_mode():
+                if int(getattr(self.accelerator, "num_processes", 1)) > 1 and self._distributed_rl_games_eval_enabled():
+                    return self._run_distributed_rl_games_eval(stage=stage)
+                if self.accelerator.is_main_process:
+                    return self._rl_games_eval_runner.run(
+                        model=self.accelerator.unwrap_model(self.model),
+                        step=self.completed_steps,
+                        stage=stage,
+                    )
+                return None
+        finally:
+            if was_training:
+                self.model.train()
+
     def _run_mid_train_rl_games_eval(self, step_metrics: dict[str, float]) -> dict[str, float]:
         if self._rl_games_eval_runner is None or not self._rl_games_eval_runner.is_enabled(stage="mid_train"):
             return step_metrics
         t_profile_eval = self._profile_start()
-        if self._distributed_rl_games_eval_enabled():
-            eval_result = self._run_distributed_rl_games_eval(stage="mid_train")
-        else:
-            eval_result = self._rl_games_eval_runner.run(
-                model=self.accelerator.unwrap_model(self.model),
-                step=self.completed_steps,
-                stage="mid_train",
-            )
+        eval_result = self._run_rl_games_eval_with_model_mode(stage="mid_train")
         step_metrics = self._append_rl_games_eval_metrics(
             step_metrics=step_metrics,
             eval_result=eval_result,
@@ -877,13 +900,16 @@ class VLATrainer(TrainerUtils):
         checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
         state_checkpoint_path = checkpoint_path + "_state"
 
-        if self.accelerator.is_main_process and os.path.exists(state_checkpoint_path):
-            shutil.rmtree(state_checkpoint_path)
-        self.accelerator.wait_for_everyone()
-        self.accelerator.save_state(state_checkpoint_path, safe_serialization=True)
-        self.accelerator.wait_for_everyone()
-        if self.accelerator.is_main_process:
-            self.accelerator.print(f"✅ Full training state saved at {state_checkpoint_path}")
+        saved_state_path = None
+        if self._save_training_state_enabled:
+            if self.accelerator.is_main_process and os.path.exists(state_checkpoint_path):
+                shutil.rmtree(state_checkpoint_path)
+            self.accelerator.wait_for_everyone()
+            self.accelerator.save_state(state_checkpoint_path, safe_serialization=True)
+            self.accelerator.wait_for_everyone()
+            saved_state_path = state_checkpoint_path
+            if self.accelerator.is_main_process:
+                self.accelerator.print(f"✅ Full training state saved at {state_checkpoint_path}")
 
         if self.accelerator.is_main_process:
             model_checkpoint_path = None
@@ -895,12 +921,13 @@ class VLATrainer(TrainerUtils):
             summary_data = {"steps": self.completed_steps}
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
                 f.write(json.dumps(summary_data) + "\n")
-            self.accelerator.print(f"✅ Checkpoint state saved at {state_checkpoint_path}")
+            if saved_state_path is not None:
+                self.accelerator.print(f"✅ Checkpoint state saved at {saved_state_path}")
             if model_checkpoint_path is not None:
                 self.accelerator.print(f"✅ Model checkpoint saved at {model_checkpoint_path}")
             self._checkpoint_sync_manager.register_local_checkpoint(
                 step=self.completed_steps,
-                state_path=state_checkpoint_path,
+                state_path=saved_state_path,
                 model_path=model_checkpoint_path,
             )
 
@@ -1309,7 +1336,7 @@ class VLATrainer(TrainerUtils):
                         step=self.completed_steps,
                     )
 
-            if self._save_periodic_checkpoints_enabled() and should_run_step_interval_event(
+            if self._save_periodic_checkpoints_enabled() and should_run_optional_step_interval_event(
                 completed_steps=self.completed_steps,
                 interval=self.config.trainer.save_interval,
                 gradients_synced=gradients_synced,
@@ -1634,53 +1661,14 @@ class VLATrainer(TrainerUtils):
         per_latency_batches = _optional_positive_int(getattr(self.config.trainer, "per_latency_eval_num_batches", None))
         shared_frame_budget = max(1, int(getattr(self.config.trainer, "eval_num_batches", 20)) * bs)
         per_latency_frame_budget = per_latency_batches * bs if per_latency_batches is not None else None
-        assigned = []
-        frame_count = 0
-        latency_frame_counts: dict[int, int] = {}
-        task_latency_frame_counts: dict[tuple[str, int], int] = {}
-        expected_latencies = sorted({int(ep[3]) for ep in episodes if ep[3] is not None})
-        expected_task_latencies = (
-            sorted({(str(ep[0]), int(ep[3])) for ep in episodes if ep[3] is not None})
-            if cross_task_mode
-            else []
+        frame_records = build_frame_records(
+            episodes=episodes,
+            num_procs=num_procs,
+            rank=rank,
+            shared_frame_budget=shared_frame_budget,
+            per_latency_frame_budget=per_latency_frame_budget,
+            cross_task_mode=cross_task_mode,
         )
-        use_per_latency_budget = per_latency_frame_budget is not None and bool(expected_latencies)
-        for ep_idx, ep in enumerate(episodes):
-            if ep_idx % num_procs != rank:
-                continue
-            ep_task = str(ep[0])
-            latency = ep[3]
-            if latency is not None and use_per_latency_budget:
-                latency = int(latency)
-                if cross_task_mode:
-                    task_latency_key = (ep_task, latency)
-                    if task_latency_frame_counts.get(task_latency_key, 0) >= per_latency_frame_budget:
-                        continue
-                else:
-                    if latency_frame_counts.get(latency, 0) >= per_latency_frame_budget:
-                        continue
-            assigned.append(ep)
-            frame_count += len(ep[4])
-            if latency is not None and use_per_latency_budget:
-                if cross_task_mode:
-                    task_latency_key = (ep_task, int(latency))
-                    task_latency_frame_counts[task_latency_key] = (
-                        task_latency_frame_counts.get(task_latency_key, 0) + len(ep[4])
-                    )
-                    if all(
-                        task_latency_frame_counts.get(value, 0) >= per_latency_frame_budget
-                        for value in expected_task_latencies
-                    ):
-                        break
-                else:
-                    latency_frame_counts[int(latency)] = latency_frame_counts.get(int(latency), 0) + len(ep[4])
-                    if all(
-                        latency_frame_counts.get(value, 0) >= per_latency_frame_budget
-                        for value in expected_latencies
-                    ):
-                        break
-            elif not use_per_latency_budget and frame_count >= shared_frame_budget:
-                break
 
         was_training = self.model.training
         self.model.eval()
@@ -1698,18 +1686,6 @@ class VLATrainer(TrainerUtils):
                 model_vec = normalized[i, 0, :]
                 entry = per_ep.setdefault(episode_key, {"task": sample_task, "latency": latency, "items": []})
                 entry["items"].append((base_idx, sample_spec.comp_fn(teacher_vec), sample_spec.comp_fn(model_vec)))
-
-        frame_records = []
-        for ep_task, dataset_index, episode_key, episode_latency_value, frames in assigned:
-            for flat_idx, base_idx in frames:
-                frame_records.append((
-                    int(dataset_index),
-                    int(flat_idx),
-                    str(episode_key),
-                    int(base_idx),
-                    str(ep_task),
-                    episode_latency_value,
-                ))
 
         eval_num_workers = getattr(self.config.datasets.vla_data, "eval_num_workers", None)
         if eval_num_workers is None:
@@ -2010,16 +1986,7 @@ class VLATrainer(TrainerUtils):
         self.accelerator.wait_for_everyone()
 
         if self._rl_games_eval_runner is not None and self._rl_games_eval_runner.is_enabled(stage="post_train"):
-            if self._distributed_rl_games_eval_enabled():
-                eval_result = self._run_distributed_rl_games_eval(stage="post_train")
-            elif self.accelerator.is_main_process:
-                eval_result = self._rl_games_eval_runner.run(
-                    model=self.accelerator.unwrap_model(self.model),
-                    step=self.completed_steps,
-                    stage="post_train",
-                )
-            else:
-                eval_result = None
+            eval_result = self._run_rl_games_eval_with_model_mode(stage="post_train")
 
             if self.accelerator.is_main_process and eval_result is not None:
                 final_metrics = self._append_rl_games_eval_metrics(

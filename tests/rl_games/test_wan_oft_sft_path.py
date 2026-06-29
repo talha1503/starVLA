@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from examples.rl_games.scripts import launch_train
 from starVLA.training.rl_games.alias import MODEL_ALIAS_TO_FRAMEWORK, apply_model_alias
@@ -63,6 +64,7 @@ def test_wan_oft_flappy_config_preserves_released_checkpoint_shapes() -> None:
     assert cfg.base_model.repo_id == "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
     assert cfg.initialization.checkpoint_hf_repo_id == "StarVLA/WM4A-Wan2d2-OFT-LIBERO-4in1"
     assert cfg.initialization.checkpoint_filename == "checkpoints/steps_60000_pytorch_model.pt"
+    assert cfg.framework.world_model.num_frames is None
 
 
 def test_launch_train_forwards_world_model_path_only_for_wan_oft(tmp_path: Path) -> None:
@@ -122,6 +124,35 @@ def test_launch_train_forwards_explicit_wan_oft_bridge_data_mix(tmp_path: Path) 
     assert "++datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in cmd
 
 
+def test_launch_train_forwards_wan_world_model_num_frames(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="wan_oft",
+        env="flappy",
+        init="wan_oft_libero",
+        mode="single",
+        overrides=["framework.world_model.num_frames=5"],
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "wan_base"),
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert cfg.framework.world_model.num_frames == 5
+    assert "++framework.world_model.num_frames=5" in cmd
+
+
+def test_wan_temporal_latent_frame_count_exposes_four_frame_boundary() -> None:
+    pytest.importorskip("torch")
+    wan_module = importlib.import_module("starVLA.model.modules.world_model.Wan2")
+
+    assert wan_module.wan_temporal_latent_frame_count(4) == 1
+    assert wan_module.wan_temporal_latent_frame_count(5) == 2
+
+
 def test_train_starvla_uses_device_aware_distributed_barrier() -> None:
     trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
 
@@ -177,3 +208,105 @@ def test_wan_oft_implements_discrete_ce_action_loss() -> None:
 
     assert "discrete_ce" in wan_oft_source
     assert "F.cross_entropy" in wan_oft_source
+
+
+def test_wan_oft_supports_current_action_discrete_ce_loss() -> None:
+    wan_oft_source = (REPO_ROOT / "starVLA" / "model" / "framework" / "WM4A" / "WanOFT.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "current_discrete_ce" in wan_oft_source
+    assert "pred_actions[:, 0, :effective_dim]" in wan_oft_source
+    assert "actions_target[:, 0, :effective_dim]" in wan_oft_source
+
+
+def test_wan_oft_current_plus_future_ce_adds_weighted_future_supervision() -> None:
+    torch = pytest.importorskip("torch")
+    wan_oft_module = importlib.import_module("starVLA.model.framework.WM4A.WanOFT")
+    model = object.__new__(wan_oft_module.Wan_OFT)
+    model.action_horizon = 3
+    model.action_env_dim = 2
+    model.action_loss_type = "current_plus_future_discrete_ce"
+    model.config = _namespace({
+        "framework": {
+            "action_model": {
+                "class_weights": None,
+                "future_loss_weight": 0.25,
+            }
+        }
+    })
+
+    pred_actions = torch.tensor([[[2.0, -1.0], [-1.0, 2.0], [3.0, -2.0]]])
+    actions_target = torch.tensor([[[1.0, 0.0], [0.0, 1.0], [0.0, 1.0]]])
+
+    loss = model._compute_action_loss(pred_actions, actions_target)
+
+    current_loss = torch.nn.functional.cross_entropy(pred_actions[:, 0, :], torch.tensor([0]))
+    future_loss = torch.nn.functional.cross_entropy(
+        pred_actions[:, 1:, :].reshape(-1, 2),
+        torch.tensor([1, 1]),
+    )
+    expected = current_loss + 0.25 * future_loss
+    assert torch.allclose(loss, expected)
+
+
+def test_wan_oft_source_exposes_current_plus_future_ce_loss() -> None:
+    wan_oft_source = (REPO_ROOT / "starVLA" / "model" / "framework" / "WM4A" / "WanOFT.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "current_plus_future_discrete_ce" in wan_oft_source
+    assert "future_loss_weight" in wan_oft_source
+    assert "future_logits = pred_actions[:, 1:, :effective_dim]" in wan_oft_source
+
+
+def test_wan_oft_training_forward_resizes_images_with_configured_obs_size() -> None:
+    wan_oft_source = (REPO_ROOT / "starVLA" / "model" / "framework" / "WM4A" / "WanOFT.py").read_text(
+        encoding="utf-8"
+    )
+    forward_source = wan_oft_source.split("    def forward(", 1)[1].split("    @torch.inference_mode()", 1)[0]
+
+    assert "train_obs_image_size = getattr(self.config.datasets.vla_data, \"obs_image_size\", None)" in forward_source
+    assert "batch_images = resize_images(batch_images, target_size=train_obs_image_size)" in forward_source
+    assert forward_source.index("batch_images = resize_images") < forward_source.index("self.backbone.build_inputs")
+
+
+def test_wan_oft_discrete_ce_supports_configured_class_weights() -> None:
+    wan_oft_source = (REPO_ROOT / "starVLA" / "model" / "framework" / "WM4A" / "WanOFT.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "class_weights" in wan_oft_source
+    assert "_action_class_weight_tensor" in wan_oft_source
+    assert "weight=class_weights" in wan_oft_source
+
+
+def test_wan_oft_default_action_query_source_is_mean_pooling() -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="wan_oft",
+        env="flappy",
+        init="wan_oft_libero",
+        mode="single",
+        overrides=[],
+    )
+
+    assert cfg.framework.action_model.action_query_source == "mean"
+
+
+def test_token_attention_action_query_projector_uses_full_token_sequence() -> None:
+    torch = pytest.importorskip("torch")
+    wan_oft_module = importlib.import_module("starVLA.model.framework.WM4A.WanOFT")
+    projector = wan_oft_module.TokenAttentionActionQueryProjector(
+        hidden_dim=16,
+        chunk_len=3,
+        num_heads=4,
+    )
+    hidden_states = torch.randn(2, 5, 16, requires_grad=True)
+
+    action_queries = projector(hidden_states)
+    action_queries.square().sum().backward()
+
+    assert action_queries.shape == (2, 3, 16)
+    assert hidden_states.grad is not None
+    assert torch.count_nonzero(hidden_states.grad).item() > 0
