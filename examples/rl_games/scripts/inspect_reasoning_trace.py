@@ -31,6 +31,7 @@ import argparse
 import csv
 import io
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -182,6 +183,12 @@ def reconstruct_run_config(run_dir: Path, base_vlm: str, args) -> None:
     from hydra import compose, initialize_config_dir
     from starVLA.training.rl_games import apply_action_spec, apply_model_alias, validate_rl_games_config
 
+    # The training config interpolates a few ${oc.env:...} vars (e.g. WANDB_ENTITY)
+    # that aren't needed for inference; set harmless defaults so the config resolves
+    # to a fully-concrete file (read_mode_config also resolves at load time).
+    for _env_key in ("WANDB_ENTITY", "WANDB_PROJECT", "WANDB_API_KEY", "WANDB_MODE"):
+        os.environ.setdefault(_env_key, "reconstructed")
+
     config_dir = repo_root / "examples" / "rl_games" / "config"
     overrides = [
         f"model={args.recon_model}",
@@ -238,55 +245,64 @@ def resolve_ckpt_path(args, default_root: Path) -> str:
     repo_name = args.hf_repo_id.split("/")[-1]
     download_dir = Path(args.download_dir).expanduser().resolve() if args.download_dir else default_root / "_ckpt" / repo_name
     download_dir.mkdir(parents=True, exist_ok=True)
-    allow_patterns = [args.hf_include] if args.hf_include else None
-    print(f"Downloading {args.hf_repo_id} (include={allow_patterns or 'ALL'}) -> {download_dir} ...")
-    local_root = snapshot_download(
-        repo_id=args.hf_repo_id,
-        repo_type="model",
-        local_dir=str(download_dir),
-        allow_patterns=allow_patterns,
-        revision=args.hf_revision,
-        token=args.hf_token,
-    )
-    state_dir = Path(local_root) / args.ckpt_subpath if args.ckpt_subpath else Path(local_root)
-    state_dir = state_dir.resolve()
-    if not state_dir.exists():
-        raise SystemExit(f"Downloaded checkpoint path does not exist: {state_dir} (check --ckpt-subpath).")
-    if not any((state_dir / n).exists() for n in ("model.safetensors", "pytorch_model.bin")):
-        raise SystemExit(
-            f"{state_dir} has no model.safetensors/pytorch_model.bin. "
-            "Point --ckpt-subpath at the state dir (e.g. 'steps_5000_state')."
-        )
 
-    # The synced repo lacks config.yaml / dataset_statistics.json and is flat, so
-    # build the layout read_mode_config expects:
+    # Target layout read_mode_config expects (run_dir == ckpt_dst.parents[1]):
     #   <loadable>/config.yaml, <loadable>/dataset_statistics.json,
-    #   <loadable>/checkpoints/<state_dir>/model.safetensors   (parents[1] == <loadable>)
-    loadable = (Path(local_root) / "_loadable").resolve()
-    (loadable / "checkpoints").mkdir(parents=True, exist_ok=True)
+    #   <loadable>/checkpoints/<state_name>/model.safetensors
+    # NOTE: we *move* (not symlink) the state dir, because from_pretrained calls
+    # Path(...).resolve(); a symlink would resolve back to the flat download path
+    # and make run_dir wrong.
+    loadable = (download_dir / "_loadable").resolve()
+    state_name = Path(args.ckpt_subpath).name if args.ckpt_subpath else "checkpoint"
+    ckpt_dst = loadable / "checkpoints" / state_name
 
+    # A real (non-symlink) dir with weights means it's already arranged. A stale
+    # symlink from an earlier (buggy) run must be re-done, not reused.
+    have_weights = (not ckpt_dst.is_symlink()) and any(
+        (ckpt_dst / n).exists() for n in ("model.safetensors", "pytorch_model.bin")
+    )
+    if have_weights:
+        print(f"Reusing already-arranged checkpoint at {ckpt_dst}")
+    else:
+        allow_patterns = [args.hf_include] if args.hf_include else None
+        print(f"Downloading {args.hf_repo_id} (include={allow_patterns or 'ALL'}) -> {download_dir} ...")
+        local_root = snapshot_download(
+            repo_id=args.hf_repo_id,
+            repo_type="model",
+            local_dir=str(download_dir),
+            allow_patterns=allow_patterns,
+            revision=args.hf_revision,
+            token=args.hf_token,
+        )
+        state_src = (Path(local_root) / args.ckpt_subpath).resolve() if args.ckpt_subpath else Path(local_root).resolve()
+        if not state_src.exists():
+            raise SystemExit(f"Downloaded checkpoint path does not exist: {state_src} (check --ckpt-subpath).")
+        if not any((state_src / n).exists() for n in ("model.safetensors", "pytorch_model.bin")):
+            raise SystemExit(
+                f"{state_src} has no model.safetensors/pytorch_model.bin. "
+                "Point --ckpt-subpath at the state dir (e.g. 'steps_5000_state')."
+            )
+        ckpt_dst.parent.mkdir(parents=True, exist_ok=True)
+        if ckpt_dst.is_symlink():
+            ckpt_dst.unlink()
+        elif ckpt_dst.exists():
+            shutil.rmtree(ckpt_dst)
+        shutil.move(str(state_src), str(ckpt_dst))
+        print(f"Arranged checkpoint at {ckpt_dst}")
+
+    # config.yaml + dataset_statistics.json at the run dir (== loadable).
     if args.config_yaml:
-        # User supplied the real run files -> use them as-is.
         shutil.copyfile(Path(args.config_yaml).expanduser(), loadable / "config.yaml")
         if args.dataset_statistics_json:
             shutil.copyfile(Path(args.dataset_statistics_json).expanduser(), loadable / "dataset_statistics.json")
         else:
             (loadable / "dataset_statistics.json").write_text(json.dumps({}), encoding="utf-8")
     else:
-        # No config provided -> auto-reconstruct (download base VLM if needed, recompose config, stub stats).
         print("config.yaml not provided; auto-reconstructing from the launch config ...")
         base_vlm = ensure_base_vlm(args, default_root)
         reconstruct_run_config(loadable, base_vlm, args)
 
-    link = loadable / "checkpoints" / state_dir.name
-    if link.exists() or link.is_symlink():
-        link.unlink()
-    try:
-        link.symlink_to(state_dir, target_is_directory=True)
-    except OSError:
-        shutil.copytree(state_dir, link)
-    print(f"Arranged loadable checkpoint at: {link}")
-    return str(link)
+    return str(ckpt_dst)
 
 
 def load_framework(ckpt_path: str, device: str):
