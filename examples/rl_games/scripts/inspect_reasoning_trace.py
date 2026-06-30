@@ -30,6 +30,9 @@ from __future__ import annotations
 import argparse
 import csv
 import io
+import json
+import shutil
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -75,6 +78,43 @@ def parse_args() -> argparse.Namespace:
         "(e.g. 'steps_5000_state'). Default: repo root.",
     )
     p.add_argument("--hf-token", default=None, help="HF token (else uses HF_TOKEN/HUGGINGFACE_HUB_TOKEN env).")
+    # The synced HF checkpoint repo only contains the model state (steps_N_state/),
+    # NOT config.yaml / dataset_statistics.json. read_mode_config needs both at the
+    # run dir, so supply them (from the training run dir, e.g.
+    # results/Checkpoints/<run_id>/config.yaml). The script arranges the layout
+    # read_mode_config expects (run_dir/config.yaml + run_dir/checkpoints/steps_N_state).
+    p.add_argument(
+        "--config-yaml",
+        default="",
+        help="Path to the run's config.yaml. If omitted for an HF-downloaded ckpt, it is reconstructed.",
+    )
+    p.add_argument(
+        "--dataset-statistics-json",
+        default="",
+        help="Path to the run's dataset_statistics.json. If omitted, a stub is written (fine for discrete actions).",
+    )
+    # --- auto-reconstruction of config.yaml / dataset_statistics.json (when not provided) ---
+    # The synced HF repo lacks these; if the original run dir is gone we recompose
+    # config.yaml from the same Hydra config the run used and stub the stats.
+    p.add_argument("--base-vlm", default="", help="Local path to the base Qwen3-VL model (for from_pretrained).")
+    p.add_argument(
+        "--base-vlm-repo",
+        default="StarVLA/Qwen3-VL-4B-Instruct-Action",
+        help="HF repo to download the base VLM from when --base-vlm is not given.",
+    )
+    p.add_argument("--base-vlm-dir", default="", help="Where to download the base VLM. Default: <csv dir>/_base_vlm.")
+    p.add_argument("--recon-model", default="openvla", help="Hydra model group for config reconstruction.")
+    p.add_argument("--recon-init", default="bridge", help="Hydra init group for config reconstruction.")
+    p.add_argument("--recon-mode", default="mixed_latency", help="Hydra mode group for config reconstruction.")
+    p.add_argument("--recon-config-name", default="train", help="Hydra config name for reconstruction.")
+    p.add_argument("--recon-run-id", default="reconstructed_run", help="Dummy run_id for reconstruction.")
+    p.add_argument("--recon-workspace-dir", default="/workspace", help="workspace_dir for reconstruction.")
+    p.add_argument(
+        "--recon-override",
+        action="append",
+        default=[],
+        help="Extra Hydra override(s) for reconstruction (repeatable), e.g. architecture-affecting launch overrides.",
+    )
     p.add_argument("--dataset-name", default="latency-sensitive-bench/flappy_200ep")
     p.add_argument("--dataset-subdir", default="flappy_fix_latency_0_200ep")
     p.add_argument("--split", default="val")
@@ -115,6 +155,72 @@ def _softmax(x: np.ndarray) -> np.ndarray:
     return e / e.sum()
 
 
+def ensure_base_vlm(args, default_root: Path) -> str:
+    """Return a local base-VLM dir, downloading --base-vlm-repo if needed."""
+    if args.base_vlm:
+        p = Path(args.base_vlm).expanduser().resolve()
+        if not p.exists():
+            raise SystemExit(f"--base-vlm path does not exist: {p}")
+        return str(p)
+    from huggingface_hub import snapshot_download
+
+    name = args.base_vlm_repo.split("/")[-1]
+    target = Path(args.base_vlm_dir).expanduser().resolve() if args.base_vlm_dir else default_root / "_base_vlm" / name
+    target.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading base VLM {args.base_vlm_repo} -> {target} ...")
+    local = snapshot_download(repo_id=args.base_vlm_repo, repo_type="model", local_dir=str(target), token=args.hf_token)
+    return str(Path(local).resolve())
+
+
+def reconstruct_run_config(run_dir: Path, base_vlm: str, args) -> None:
+    """Recompose config.yaml (same Hydra config the run used) + write stats into run_dir."""
+    from omegaconf import OmegaConf
+
+    repo_root = Path(__file__).resolve().parents[3]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from hydra import compose, initialize_config_dir
+    from starVLA.training.rl_games import apply_action_spec, apply_model_alias, validate_rl_games_config
+
+    config_dir = repo_root / "examples" / "rl_games" / "config"
+    overrides = [
+        f"model={args.recon_model}",
+        f"env={args.env_name}",
+        f"init={args.recon_init}",
+        f"mode={args.recon_mode}",
+        f"run_id={args.recon_run_id}",
+        f"workspace_dir={args.recon_workspace_dir}",
+        f"paths.base_model_dir={base_vlm}",
+        f"framework.qwenvl.base_vlm={base_vlm}",
+        *args.recon_override,
+    ]
+    print(f"Reconstructing config.yaml via Hydra compose: model={args.recon_model} env={args.env_name} "
+          f"init={args.recon_init} mode={args.recon_mode}")
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        cfg = compose(config_name=args.recon_config_name, overrides=overrides)
+    try:
+        validate_rl_games_config(cfg)
+    except Exception as exc:  # noqa: BLE001 - validation may need run-only fields we don't use
+        print(f"[warn] validate_rl_games_config raised (continuing): {exc}")
+    apply_model_alias(cfg)
+    apply_action_spec(cfg)
+
+    config_path = run_dir / "config.yaml"
+    try:
+        container = OmegaConf.to_container(cfg, resolve=True)
+        OmegaConf.save(config=OmegaConf.create(container), f=str(config_path))
+    except Exception as exc:  # noqa: BLE001 - fall back to unresolved
+        print(f"[warn] could not fully resolve config ({exc}); saving unresolved.")
+        OmegaConf.save(config=cfg, f=str(config_path))
+
+    stats_path = run_dir / "dataset_statistics.json"
+    if args.dataset_statistics_json:
+        shutil.copyfile(Path(args.dataset_statistics_json).expanduser(), stats_path)
+    else:
+        stats_path.write_text(json.dumps({}), encoding="utf-8")
+    print(f"Wrote {config_path} and {stats_path}")
+
+
 def resolve_ckpt_path(args, default_root: Path) -> str:
     """Return a local checkpoint dir, downloading from HuggingFace if requested.
 
@@ -142,12 +248,45 @@ def resolve_ckpt_path(args, default_root: Path) -> str:
         revision=args.hf_revision,
         token=args.hf_token,
     )
-    ckpt_path = Path(local_root) / args.ckpt_subpath if args.ckpt_subpath else Path(local_root)
-    ckpt_path = ckpt_path.resolve()
-    if not ckpt_path.exists():
-        raise SystemExit(f"Resolved checkpoint path does not exist: {ckpt_path} (check --ckpt-subpath).")
-    print(f"Using checkpoint dir: {ckpt_path}")
-    return str(ckpt_path)
+    state_dir = Path(local_root) / args.ckpt_subpath if args.ckpt_subpath else Path(local_root)
+    state_dir = state_dir.resolve()
+    if not state_dir.exists():
+        raise SystemExit(f"Downloaded checkpoint path does not exist: {state_dir} (check --ckpt-subpath).")
+    if not any((state_dir / n).exists() for n in ("model.safetensors", "pytorch_model.bin")):
+        raise SystemExit(
+            f"{state_dir} has no model.safetensors/pytorch_model.bin. "
+            "Point --ckpt-subpath at the state dir (e.g. 'steps_5000_state')."
+        )
+
+    # The synced repo lacks config.yaml / dataset_statistics.json and is flat, so
+    # build the layout read_mode_config expects:
+    #   <loadable>/config.yaml, <loadable>/dataset_statistics.json,
+    #   <loadable>/checkpoints/<state_dir>/model.safetensors   (parents[1] == <loadable>)
+    loadable = (Path(local_root) / "_loadable").resolve()
+    (loadable / "checkpoints").mkdir(parents=True, exist_ok=True)
+
+    if args.config_yaml:
+        # User supplied the real run files -> use them as-is.
+        shutil.copyfile(Path(args.config_yaml).expanduser(), loadable / "config.yaml")
+        if args.dataset_statistics_json:
+            shutil.copyfile(Path(args.dataset_statistics_json).expanduser(), loadable / "dataset_statistics.json")
+        else:
+            (loadable / "dataset_statistics.json").write_text(json.dumps({}), encoding="utf-8")
+    else:
+        # No config provided -> auto-reconstruct (download base VLM if needed, recompose config, stub stats).
+        print("config.yaml not provided; auto-reconstructing from the launch config ...")
+        base_vlm = ensure_base_vlm(args, default_root)
+        reconstruct_run_config(loadable, base_vlm, args)
+
+    link = loadable / "checkpoints" / state_dir.name
+    if link.exists() or link.is_symlink():
+        link.unlink()
+    try:
+        link.symlink_to(state_dir, target_is_directory=True)
+    except OSError:
+        shutil.copytree(state_dir, link)
+    print(f"Arranged loadable checkpoint at: {link}")
+    return str(link)
 
 
 def load_framework(ckpt_path: str, device: str):
