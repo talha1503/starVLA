@@ -119,11 +119,31 @@ def parse_args() -> argparse.Namespace:
         help="Extra Hydra override(s) for reconstruction (repeatable), e.g. architecture-affecting launch overrides.",
     )
     p.add_argument("--dataset-name", default="latency-sensitive-bench/flappy_200ep")
-    p.add_argument("--dataset-subdir", default="flappy_fix_latency_0_200ep")
     p.add_argument("--split", default="val")
     p.add_argument("--env-name", default="flappy", choices=sorted(ENV_ACTION_LABELS))
-    p.add_argument("--num-samples", type=int, default=20, help="Number of frames to sample/run.")
     p.add_argument("--sample-seed", type=int, default=0)
+    # --- balanced per-latency test set ---
+    p.add_argument(
+        "--latencies",
+        default="0,1,2,3,4",
+        help="Comma-separated latencies to sweep; each maps to a dataset subdir via --subdir-template.",
+    )
+    p.add_argument(
+        "--subdir-template",
+        default="flappy_fix_latency_{latency}_200ep",
+        help="Dataset subdir per latency. {latency} is substituted.",
+    )
+    p.add_argument(
+        "--classes",
+        default="NOOP,FLAP",
+        help="Comma-separated true-label classes to balance (matched against action_text).",
+    )
+    p.add_argument(
+        "--per-class-samples",
+        type=int,
+        default=20,
+        help="Number of samples per class per latency (e.g. 20 -> 20 NOOP + 20 FLAP for each latency).",
+    )
     p.add_argument("--frames-dir", default="", help="Dir to dump sampled frame PNGs. Default: <csv dir>/frames")
     p.add_argument("--max-new-tokens", type=int, default=256)
     p.add_argument("--device", default="cuda")
@@ -355,65 +375,88 @@ def generate_reasoning(framework, torch, pil: Image.Image, reasoning_prompt: str
     return " ".join(text.split()).strip()
 
 
+def sample_balanced_rows(ds, classes, per_class: int, seed: int):
+    """Return a list of (true_class, row) balanced across `classes`.
+
+    For each class, shuffles the rows whose action_text matches and takes up to
+    `per_class`. Warns if a class has fewer than requested.
+    """
+    ds = ds.shuffle(seed=int(seed))
+    out = []
+    for cls in classes:
+        cls_ds = ds.filter(lambda r, c=cls: str(r.get("action_text", "")) == c)
+        take = min(int(per_class), len(cls_ds))
+        if take < int(per_class):
+            print(f"  [warn] only {len(cls_ds)} '{cls}' rows available (< {per_class}); taking {take}.")
+        for i in range(take):
+            out.append((cls, cls_ds[i]))
+    return out
+
+
 def main() -> None:
     args = parse_args()
     from datasets import load_dataset
 
     labels = ENV_ACTION_LABELS[args.env_name]
+    latencies = [int(x) for x in str(args.latencies).split(",") if str(x).strip() != ""]
+    classes = [c.strip() for c in str(args.classes).split(",") if c.strip()]
 
     out_csv = Path(args.output_csv).expanduser().resolve()
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     frames_dir = Path(args.frames_dir).expanduser().resolve() if args.frames_dir else out_csv.parent / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Loading dataset {args.dataset_name} [{args.dataset_subdir}] split={args.split} ...")
-    ds = load_dataset(
-        args.dataset_name,
-        data_dir=args.dataset_subdir,
-        split=args.split,
-        cache_dir=args.cache_dir,
-        verification_mode="no_checks",
-    )
-    n = min(int(args.num_samples), len(ds))
-    ds = ds.shuffle(seed=int(args.sample_seed)).select(range(n))
-    print(f"Sampled {n} frames.")
-
     ckpt_path = resolve_ckpt_path(args, default_root=out_csv.parent)
     print(f"Loading model from {ckpt_path} ...")
     framework, torch = load_framework(ckpt_path, args.device)
 
     rows_out = []
-    for i in range(n):
-        row = ds[i]
-        pil = pil_from_row(row)
-        instruction = str(row.get("prompt", ""))
-        true_label = str(row.get("action_text", row.get("action_id", "")))
-
-        frame_path = frames_dir / f"sample_{i:04d}.png"
-        pil.save(frame_path)
-
-        action_label, action_id, probs = decode_action_head(framework, torch, pil, instruction, labels)
-
-        if args.action_condition:
-            reasoning_prompt = args.action_condition_template.format(instruction=instruction, action=action_label)
-        else:
-            reasoning_prompt = args.reasoning_prompt_template.format(instruction=instruction)
-        reasoning = generate_reasoning(framework, torch, pil, reasoning_prompt, args.max_new_tokens)
-
-        rows_out.append(
-            {
-                "image_frame_path": str(frame_path),
-                "true_label": true_label,
-                "action_from_vlm": action_label,
-                "reasoning_trace": reasoning,
-                "action_id": action_id,
-                "action_probs": ",".join(f"{labels[j]}={probs[j]:.3f}" for j in range(len(labels))),
-                "latency_ms": row.get("latency_ms", ""),
-            }
+    for latency in latencies:
+        subdir = args.subdir_template.format(latency=latency)
+        print(f"\n=== latency {latency}  [{subdir}] split={args.split} ===")
+        ds = load_dataset(
+            args.dataset_name,
+            data_dir=subdir,
+            split=args.split,
+            cache_dir=args.cache_dir,
+            verification_mode="no_checks",
         )
-        print(f"[{i + 1}/{n}] true={true_label} pred={action_label}  reasoning[:80]={reasoning[:80]!r}")
+        samples = sample_balanced_rows(ds, classes, args.per_class_samples, args.sample_seed)
+        lat_frames_dir = frames_dir / f"latency_{latency}"
+        lat_frames_dir.mkdir(parents=True, exist_ok=True)
+
+        for j, (true_label, row) in enumerate(samples):
+            pil = pil_from_row(row)
+            instruction = str(row.get("prompt", ""))
+
+            frame_path = lat_frames_dir / f"{true_label}_{j:04d}.png"
+            pil.save(frame_path)
+
+            action_label, action_id, probs = decode_action_head(framework, torch, pil, instruction, labels)
+
+            if args.action_condition:
+                reasoning_prompt = args.action_condition_template.format(instruction=instruction, action=action_label)
+            else:
+                reasoning_prompt = args.reasoning_prompt_template.format(instruction=instruction)
+            reasoning = generate_reasoning(framework, torch, pil, reasoning_prompt, args.max_new_tokens)
+
+            rows_out.append(
+                {
+                    "latency": latency,
+                    "image_frame_path": str(frame_path),
+                    "true_label": true_label,
+                    "action_from_vlm": action_label,
+                    "reasoning_trace": reasoning,
+                    "action_id": action_id,
+                    "action_probs": ",".join(f"{labels[k]}={probs[k]:.3f}" for k in range(len(labels))),
+                    "latency_ms": row.get("latency_ms", ""),
+                }
+            )
+            print(f"  lat={latency} [{j + 1}/{len(samples)}] true={true_label} pred={action_label} "
+                  f"reasoning[:80]={reasoning[:80]!r}")
 
     fieldnames = [
+        "latency",
         "image_frame_path",
         "true_label",
         "action_from_vlm",
@@ -427,10 +470,18 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows_out)
 
-    acc = np.mean([r["true_label"] == r["action_from_vlm"] for r in rows_out]) if rows_out else 0.0
     print(f"\nWrote {len(rows_out)} rows -> {out_csv}")
     print(f"Frames -> {frames_dir}")
-    print(f"Action-head agreement with dataset label: {acc:.1%}")
+    # Per-latency action-head agreement with dataset labels.
+    print("Action-head agreement with dataset label:")
+    for latency in latencies:
+        lat_rows = [r for r in rows_out if r["latency"] == latency]
+        if lat_rows:
+            acc = np.mean([r["true_label"] == r["action_from_vlm"] for r in lat_rows])
+            print(f"  latency {latency}: {acc:.1%}  (n={len(lat_rows)})")
+    if rows_out:
+        overall = np.mean([r["true_label"] == r["action_from_vlm"] for r in rows_out])
+        print(f"  overall: {overall:.1%}  (n={len(rows_out)})")
 
 
 if __name__ == "__main__":
