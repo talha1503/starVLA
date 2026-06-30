@@ -100,8 +100,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--base-vlm", default="", help="Local path to the base Qwen3-VL model (for from_pretrained).")
     p.add_argument(
         "--base-vlm-repo",
-        default="StarVLA/Qwen3-VL-4B-Instruct-Action",
-        help="HF repo to download the base VLM from when --base-vlm is not given.",
+        default="Qwen/Qwen3-VL-4B-Instruct",
+        help="HF repo to download the base VLM from when --base-vlm is not given. "
+        "Must match the checkpoint's vocab (Qwen/Qwen3-VL-4B-Instruct = 151936; the "
+        "-Action variant is 153984 and will mismatch QwenOFT checkpoints).",
     )
     p.add_argument("--base-vlm-dir", default="", help="Where to download the base VLM. Default: <csv dir>/_base_vlm.")
     p.add_argument("--recon-model", default="openvla", help="Hydra model group for config reconstruction.")
