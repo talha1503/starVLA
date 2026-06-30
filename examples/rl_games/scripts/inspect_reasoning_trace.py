@@ -79,6 +79,14 @@ def parse_args() -> argparse.Namespace:
         "(e.g. 'steps_5000_state'). Default: repo root.",
     )
     p.add_argument("--hf-token", default=None, help="HF token (else uses HF_TOKEN/HUGGINGFACE_HUB_TOKEN env).")
+    p.add_argument(
+        "--checkpoint-kind",
+        default="trained",
+        choices=["trained", "bridge"],
+        help="'trained': state-dir checkpoint whose config must be reconstructed (your flappy run). "
+        "'bridge': a self-contained checkpoint repo that ships config.yaml + dataset_statistics.json + a .pt "
+        "(e.g. StarVLA/Qwen3VL-OFT-Bridge-RT-1); its stale base_vlm path is auto-rewritten to the local base VLM.",
+    )
     # The synced HF checkpoint repo only contains the model state (steps_N_state/),
     # NOT config.yaml / dataset_statistics.json. read_mode_config needs both at the
     # run dir, so supply them (from the training run dir, e.g.
@@ -121,7 +129,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dataset-name", default="latency-sensitive-bench/flappy_200ep")
     p.add_argument("--split", default="val")
     p.add_argument("--env-name", default="flappy", choices=sorted(ENV_ACTION_LABELS))
-    p.add_argument("--sample-seed", type=int, default=0)
+    p.add_argument(
+        "--shuffle",
+        action="store_true",
+        help="Randomly sample (seeded) instead of taking the first N per class in dataset order. "
+        "Default is deterministic first-N so trained vs base runs use identical frames.",
+    )
+    p.add_argument("--sample-seed", type=int, default=0, help="Seed used only when --shuffle is set.")
     # --- balanced per-latency test set ---
     p.add_argument(
         "--latencies",
@@ -143,6 +157,20 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=20,
         help="Number of samples per class per latency (e.g. 20 -> 20 NOOP + 20 FLAP for each latency).",
+    )
+    # --- upload results (CSV + frames + metadata) to HuggingFace ---
+    p.add_argument("--push-to-hub", action="store_true", help="Upload the CSV + frames + metadata to HF after the run.")
+    p.add_argument("--hf-output-repo", default="talha15032/reasoning_trace", help="HF dataset repo to upload results to.")
+    p.add_argument(
+        "--hf-output-subdir",
+        default="",
+        help="Subdir in the repo for this run (e.g. flappy_mixed / bridge). Default: output CSV's parent dir name.",
+    )
+    p.add_argument(
+        "--hf-output-private",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Create/keep the output dataset repo private (default). Use --no-hf-output-private for public.",
     )
     p.add_argument("--frames-dir", default="", help="Dir to dump sampled frame PNGs. Default: <csv dir>/frames")
     p.add_argument("--max-new-tokens", type=int, default=256)
@@ -250,17 +278,115 @@ def reconstruct_run_config(run_dir: Path, base_vlm: str, args) -> None:
     print(f"Wrote {config_path} and {stats_path}")
 
 
-def resolve_ckpt_path(args, default_root: Path) -> str:
-    """Return a local checkpoint dir, downloading from HuggingFace if requested.
+def _patch_base_vlm_in_config(config_yaml: Path, base_vlm: str) -> None:
+    """Rewrite framework.qwenvl.base_vlm (and paths.base_model_dir) in a config.yaml.
 
-    If --hf-repo-id is set, snapshot the repo (optionally filtered by --hf-include)
-    into --download-dir, then point at --ckpt-subpath inside it. Otherwise use the
-    local --ckpt-path as-is.
+    Self-contained checkpoints (e.g. the bridge) hard-code the backbone path from the
+    machine they were trained on; repoint it at the local base VLM so from_pretrained
+    can load the backbone here.
+    """
+    from omegaconf import OmegaConf
+
+    cfg = OmegaConf.load(str(config_yaml))
+    OmegaConf.update(cfg, "framework.qwenvl.base_vlm", str(base_vlm), force_add=True)
+    if OmegaConf.select(cfg, "paths.base_model_dir") is not None:
+        OmegaConf.update(cfg, "paths.base_model_dir", str(base_vlm), force_add=True)
+    OmegaConf.save(config=cfg, f=str(config_yaml))
+    print(f"Patched base_vlm -> {base_vlm} in {config_yaml}")
+
+
+def _find_run_config(ckpt_path: Path) -> Path | None:
+    """Find the config.yaml read_mode_config will use, near the checkpoint."""
+    for up in (ckpt_path.parents[1], ckpt_path.parents[0]):
+        candidate = up / "config.yaml"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _resolve_bridge(args, default_root: Path) -> str:
+    """Download a self-contained checkpoint repo and return its weights path.
+
+    Uses the repo's shipped config.yaml + dataset_statistics.json, finds the .pt /
+    safetensors weights, and rewrites the stale base_vlm path to the local base VLM.
+    """
+    from huggingface_hub import snapshot_download
+
+    repo_name = args.hf_repo_id.split("/")[-1]
+    download_dir = Path(args.download_dir).expanduser().resolve() if args.download_dir else default_root / "_ckpt" / repo_name
+    download_dir.mkdir(parents=True, exist_ok=True)
+    # Grab the config, stats and weights (skip the many *.log files in the repo).
+    allow_patterns = [args.hf_include] if args.hf_include else [
+        "config.yaml",
+        "dataset_statistics.json",
+        "checkpoints/*.pt",
+        "checkpoints/*.safetensors",
+        "*.safetensors",
+    ]
+    print(f"Downloading bridge checkpoint {args.hf_repo_id} -> {download_dir} ...")
+    local_root = Path(
+        snapshot_download(
+            repo_id=args.hf_repo_id,
+            repo_type="model",
+            local_dir=str(download_dir),
+            allow_patterns=allow_patterns,
+            revision=args.hf_revision,
+            token=args.hf_token,
+        )
+    ).resolve()
+
+    config_yaml = local_root / "config.yaml"
+    if not config_yaml.exists():
+        raise SystemExit(f"Bridge repo {args.hf_repo_id} has no config.yaml at root; not a self-contained checkpoint.")
+    if not (local_root / "dataset_statistics.json").exists():
+        raise SystemExit(f"Bridge repo {args.hf_repo_id} has no dataset_statistics.json at root.")
+
+    # Locate the weights: prefer a .pt/.safetensors under checkpoints/, else a *_state dir.
+    weights = None
+    ckpt_dir = local_root / "checkpoints"
+    if ckpt_dir.is_dir():
+        cands = sorted(ckpt_dir.glob("*.pt")) + sorted(ckpt_dir.glob("*.safetensors"))
+        if cands:
+            weights = cands[0]
+    if weights is None:
+        for state in sorted(local_root.glob("**/*_state")):
+            for n in ("model.safetensors", "pytorch_model.bin"):
+                if (state / n).exists():
+                    weights = state
+                    break
+            if weights is not None:
+                break
+    if weights is None:
+        raise SystemExit(f"Could not find weights (.pt/.safetensors/_state) in {local_root}.")
+
+    base_vlm = ensure_base_vlm(args, default_root)
+    _patch_base_vlm_in_config(config_yaml, base_vlm)
+    print(f"Bridge checkpoint weights: {weights}")
+    return str(weights.resolve())
+
+
+def resolve_ckpt_path(args, default_root: Path) -> str:
+    """Return a local checkpoint path/dir, downloading from HuggingFace if requested.
+
+    - --checkpoint-kind bridge: a self-contained repo (config + stats + weights).
+    - --checkpoint-kind trained (default): a state-dir checkpoint whose config must be
+      reconstructed (your flappy run).
+    - local --ckpt-path: used as-is (base_vlm patched if --base-vlm/--base-vlm-repo given).
     """
     if not args.hf_repo_id:
         if not args.ckpt_path:
             raise SystemExit("Provide either --ckpt-path (local) or --hf-repo-id (to download).")
-        return str(Path(args.ckpt_path).expanduser().resolve())
+        ckpt = Path(args.ckpt_path).expanduser().resolve()
+        # Only patch the local checkpoint's config when an explicit --base-vlm is given
+        # (don't touch an already-valid local config just because --base-vlm-repo has a default).
+        if args.base_vlm:
+            config_yaml = _find_run_config(ckpt)
+            if config_yaml is not None:
+                _patch_base_vlm_in_config(config_yaml, ensure_base_vlm(args, default_root))
+        return str(ckpt)
+
+    if args.checkpoint_kind == "bridge":
+        return _resolve_bridge(args, default_root)
 
     from huggingface_hub import snapshot_download
 
@@ -375,13 +501,52 @@ def generate_reasoning(framework, torch, pil: Image.Image, reasoning_prompt: str
     return " ".join(text.split()).strip()
 
 
-def sample_balanced_rows(ds, classes, per_class: int, seed: int):
+def upload_results_to_hub(*, out_csv: Path, frames_dir: Path, metadata_path: Path, repo_id: str, subdir: str, private: bool, token) -> None:
+    """Upload only the results (CSV + frames + metadata) to a HF dataset repo.
+
+    Explicit per-artifact uploads (not the whole output dir) so the large
+    downloaded checkpoints / base VLM under the same dir are never pushed.
+    """
+    from huggingface_hub import HfApi, upload_file, upload_folder
+
+    api = HfApi(token=token)
+    api.create_repo(repo_id=repo_id, repo_type="dataset", private=bool(private), exist_ok=True)
+    base = subdir.strip("/")
+    print(f"Uploading results to dataset repo {repo_id} under '{base}/' ...")
+    upload_file(
+        path_or_fileobj=str(out_csv),
+        path_in_repo=f"{base}/{out_csv.name}",
+        repo_id=repo_id,
+        repo_type="dataset",
+        token=token,
+    )
+    upload_file(
+        path_or_fileobj=str(metadata_path),
+        path_in_repo=f"{base}/metadata.json",
+        repo_id=repo_id,
+        repo_type="dataset",
+        token=token,
+    )
+    if frames_dir.exists():
+        upload_folder(
+            folder_path=str(frames_dir),
+            path_in_repo=f"{base}/frames",
+            repo_id=repo_id,
+            repo_type="dataset",
+            token=token,
+        )
+    print(f"Uploaded -> https://huggingface.co/datasets/{repo_id}/tree/main/{base}")
+
+
+def sample_balanced_rows(ds, classes, per_class: int, *, shuffle: bool = False, seed: int = 0):
     """Return a list of (true_class, row) balanced across `classes`.
 
-    For each class, shuffles the rows whose action_text matches and takes up to
-    `per_class`. Warns if a class has fewer than requested.
+    Deterministic by default: takes the first `per_class` rows of each class in
+    dataset order, so two runs (e.g. trained vs base model) hit the *same* frames
+    with no seed needed. Pass shuffle=True for a seeded random sample instead.
     """
-    ds = ds.shuffle(seed=int(seed))
+    if shuffle:
+        ds = ds.shuffle(seed=int(seed))
     out = []
     for cls in classes:
         cls_ds = ds.filter(lambda r, c=cls: str(r.get("action_text", "")) == c)
@@ -421,7 +586,9 @@ def main() -> None:
             cache_dir=args.cache_dir,
             verification_mode="no_checks",
         )
-        samples = sample_balanced_rows(ds, classes, args.per_class_samples, args.sample_seed)
+        samples = sample_balanced_rows(
+            ds, classes, args.per_class_samples, shuffle=args.shuffle, seed=args.sample_seed
+        )
         lat_frames_dir = frames_dir / f"latency_{latency}"
         lat_frames_dir.mkdir(parents=True, exist_ok=True)
 
@@ -470,8 +637,31 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows_out)
 
+    # Self-describing metadata for tracking.
+    metadata = {
+        "checkpoint_kind": args.checkpoint_kind,
+        "hf_repo_id": args.hf_repo_id,
+        "ckpt_path": args.ckpt_path,
+        "base_vlm_repo": args.base_vlm_repo,
+        "base_vlm": args.base_vlm,
+        "dataset_name": args.dataset_name,
+        "split": args.split,
+        "env_name": args.env_name,
+        "latencies": latencies,
+        "classes": classes,
+        "per_class_samples": int(args.per_class_samples),
+        "shuffle": bool(args.shuffle),
+        "sample_seed": int(args.sample_seed),
+        "action_condition": bool(args.action_condition),
+        "max_new_tokens": int(args.max_new_tokens),
+        "num_rows": len(rows_out),
+    }
+    metadata_path = out_csv.parent / "metadata.json"
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
     print(f"\nWrote {len(rows_out)} rows -> {out_csv}")
     print(f"Frames -> {frames_dir}")
+    print(f"Metadata -> {metadata_path}")
     # Per-latency action-head agreement with dataset labels.
     print("Action-head agreement with dataset label:")
     for latency in latencies:
@@ -482,6 +672,17 @@ def main() -> None:
     if rows_out:
         overall = np.mean([r["true_label"] == r["action_from_vlm"] for r in rows_out])
         print(f"  overall: {overall:.1%}  (n={len(rows_out)})")
+
+    if args.push_to_hub:
+        upload_results_to_hub(
+            out_csv=out_csv,
+            frames_dir=frames_dir,
+            metadata_path=metadata_path,
+            repo_id=args.hf_output_repo,
+            subdir=args.hf_output_subdir or out_csv.parent.name,
+            private=args.hf_output_private,
+            token=args.hf_token,
+        )
 
 
 if __name__ == "__main__":
