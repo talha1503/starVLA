@@ -19,6 +19,8 @@ MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-256}"
 OUTPUT_CSV="${OUTPUT_CSV:-/workspace/outputs/reasoning/bridge/reasoning_traces.csv}"
 HF_OUTPUT_REPO="${HF_OUTPUT_REPO:-talha15032/reasoning_trace}"
 HF_OUTPUT_SUBDIR="${HF_OUTPUT_SUBDIR:-bridge}"
+LIVE_EVAL_EPISODES="${LIVE_EVAL_EPISODES:-10}"
+LIVE_EVAL_LATENCIES="${LIVE_EVAL_LATENCIES:-0,1,2,3,4}"
 
 python examples/rl_games/scripts/inspect_reasoning_trace.py \
     --checkpoint-kind bridge \
@@ -30,8 +32,9 @@ python examples/rl_games/scripts/inspect_reasoning_trace.py \
     --per-class-samples "${PER_CLASS_SAMPLES}" \
     --split "${SPLIT}" \
     --max-new-tokens "${MAX_NEW_TOKENS}" \
-    --action-condition \
     --output-csv "${OUTPUT_CSV}" \
+    --live-eval-episodes "${LIVE_EVAL_EPISODES}" \
+    --live-eval-latencies "${LIVE_EVAL_LATENCIES}" \
     --push-to-hub \
     --hf-output-repo "${HF_OUTPUT_REPO}" \
     --hf-output-subdir "${HF_OUTPUT_SUBDIR}"

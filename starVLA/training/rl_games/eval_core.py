@@ -179,7 +179,7 @@ def _resize_rgb(raw_obs: Any, image_size: int, *, prefer_area: bool = False) -> 
             return cv2.resize(raw_obs, (image_size, image_size), interpolation=cv2.INTER_AREA)
         except ImportError:
             pass
-    return np.array(Image.fromarray(raw_obs).resize((image_size, image_size), Image.BILINEAR))
+    return np.array(Image.fromarray(raw_obs).resize((image_size, image_size), Image.BICUBIC))
 
 
 def _load_latency_prompt_map(path: Optional[str]) -> Dict[int, Dict[str, Any]]:
@@ -328,33 +328,47 @@ class _LiveImageTransform:
         self.config = dict(config)
         self.name = str(self.config.get("image_transform", "raw_rgb") or "raw_rgb").strip().lower()
         self.enabled = self.name not in {"", "none", "raw", "raw_rgb"}
-        if self.enabled and self.name != "flappy_ghost_trail":
+        if self.enabled and self.name not in {"flappy_ghost_trail", "demon_attack_ghost_trail"}:
             raise ValueError(f"Unsupported rl_games.env_eval.image_transform={self.name!r}")
-        if self.enabled and self.task != "flappy":
+        if self.enabled and self.name == "flappy_ghost_trail" and self.task != "flappy":
             raise ValueError("image_transform=flappy_ghost_trail is only supported for task=flappy")
+        if self.enabled and self.name == "demon_attack_ghost_trail" and self.task != "demon_attack":
+            raise ValueError("image_transform=demon_attack_ghost_trail is only supported for task=demon_attack")
         self.history_frames = max(0, int(self.config.get("history_frames", 5)))
         self._frames: List[np.ndarray] = []
         self._steps: List[int] = []
+        self._reset_frame: np.ndarray | None = None  # demon_attack_ghost_trail only
 
     def reset(self, frame: np.ndarray | None, *, step: int = 0) -> None:
         self._frames = []
         self._steps = []
-        self.append(frame, step=step)
+        if self.name == "demon_attack_ghost_trail":
+            # Don't seed _frames with the reset frame — the ghost trail is built only
+            # from real action-result frames (same as training deque which starts empty).
+            # Store it separately as a fallback for current() at step 0.
+            self._reset_frame = np.asarray(frame, dtype=np.uint8) if frame is not None else None
+        else:
+            self.append(frame, step=step)
 
     def append(self, frame: np.ndarray | None, *, step: int) -> None:
         if not self.enabled or frame is None:
             return
         self._frames.append(np.asarray(frame, dtype=np.uint8))
         self._steps.append(int(step))
-        max_frames = self.history_frames + 1
+        # demon_attack_ghost_trail accumulates one raw ALE frame per call (frameskip=1
+        # env stepped 4× per decision), so cap at exactly history_frames raw frames.
+        max_frames = self.history_frames if self.name == "demon_attack_ghost_trail" else self.history_frames + 1
         if len(self._frames) > max_frames:
             self._frames = self._frames[-max_frames:]
             self._steps = self._steps[-max_frames:]
 
     def current(self, fallback_obs: Any) -> Any:
-        if not self.enabled or not self._frames:
+        if not self.enabled:
             return fallback_obs
-        from latency_bench.data.ghost_trail import GhostTrailConfig, build_flappy_ghost_trail_window
+        if not self._frames:
+            # demon_attack_ghost_trail at step 0: no raw frames yet, return raw reset frame
+            return self._reset_frame if self._reset_frame is not None else fallback_obs
+        from latency_bench.data.ghost_trail import GhostTrailConfig
 
         config = GhostTrailConfig(
             image_transform=self.name,
@@ -364,6 +378,11 @@ class _LiveImageTransform:
             ground_fraction=float(self.config.get("ground_fraction", 0.22)),
             scroll_px_per_step=float(self.config.get("scroll_px_per_step", 4.0)),
         )
+        if self.name == "demon_attack_ghost_trail":
+            from latency_bench.data.ghost_trail_demon import build_demon_attack_ghost_trail_window
+            steps_arg = list(range(len(self._frames)))
+            return build_demon_attack_ghost_trail_window(self._frames, steps_arg, config=config)
+        from latency_bench.data.ghost_trail import build_flappy_ghost_trail_window
         return build_flappy_ghost_trail_window(self._frames, self._steps, config=config)
 
 
@@ -390,9 +409,9 @@ class _TaskEvaluator:
         if task_eval_cfg is not None:
             self.default_prompt = str(getattr(task_eval_cfg, "task_description", self.default_prompt) or self.default_prompt)
         self.image_size = int(
-            getattr(task_eval_cfg, "image_size", getattr(self.env_eval_cfg, "image_size", 84))
+            getattr(task_eval_cfg, "image_size", getattr(self.env_eval_cfg, "image_size", 224))
             if task_eval_cfg is not None
-            else getattr(self.env_eval_cfg, "image_size", 84)
+            else getattr(self.env_eval_cfg, "image_size", 224)
         )
         self.frameskip = max(1, int(
             getattr(task_eval_cfg, "frameskip", getattr(self.env_eval_cfg, "frameskip", 1))
@@ -424,9 +443,10 @@ class _TaskEvaluator:
             **_plain_mapping(_cfg_get(self.task_eval_cfg, "ghost_trail", None)),
             **_plain_mapping(_cfg_get(self.stage_eval_cfg, "ghost_trail", None)),
         }
+        default_history_frames = 30 if image_transform == "demon_attack_ghost_trail" else 5
         return {
             "image_transform": image_transform,
-            "history_frames": int(ghost_cfg.get("history_frames", 5)),
+            "history_frames": int(ghost_cfg.get("history_frames", default_history_frames)),
             "gamma": float(ghost_cfg.get("gamma", 1.3)),
             "min_alpha": int(ghost_cfg.get("min_alpha", 35)),
             "ground_fraction": float(ghost_cfg.get("ground_fraction", 0.22)),
@@ -480,8 +500,9 @@ class _TaskEvaluator:
                 try:
                     env = gym.make(
                         env_id,
-                        frameskip=self.frameskip,
+                        frameskip=1 if self._is_demon_ghost_trail() else self.frameskip,
                         repeat_action_probability=0.0,
+                        render_mode="rgb_array",
                     )
                     return DemonAttackNoopResetWrapper(env=env, noop_max=noop_max)
                 except Exception as exc:
@@ -513,7 +534,18 @@ class _TaskEvaluator:
 
         raise ValueError(f"Unsupported task: {self.task}")
 
+    def _is_demon_ghost_trail(self) -> bool:
+        return (
+            self.task == "demon_attack"
+            and str(self.image_transform_config.get("image_transform", "")).strip().lower()
+            == "demon_attack_ghost_trail"
+        )
+
     def _uses_native_frameskip(self) -> bool:
+        # demon_attack ghost trail runs the gym env at frameskip=1 and handles
+        # action repetition manually so all 4 raw frames are captured per decision.
+        if self._is_demon_ghost_trail():
+            return False
         return self.task in {"demon_attack", "deadly_corridor"}
 
     def _model_observation(self, env, obs):
@@ -607,6 +639,20 @@ class _TaskEvaluator:
         for _ in range(repeat_count):
             obs, reward, terminated, truncated, _ = env.step(action)
             step_reward += float(reward)
+            if terminated or truncated:
+                break
+        return obs, step_reward, terminated, truncated
+
+    def _step_demon_ghost_trail(self, env, action, image_transform: "_LiveImageTransform", decision_step: int):
+        """Step demon_attack env (frameskip=1) self.frameskip times, appending each raw frame."""
+        step_reward = 0.0
+        terminated = False
+        truncated = False
+        for _ in range(self.frameskip):
+            obs, reward, terminated, truncated, _ = env.step(action)
+            step_reward += float(reward)
+            raw_frame = _render_frame(env, fallback_obs=obs)
+            image_transform.append(raw_frame, step=decision_step)
             if terminated or truncated:
                 break
         return obs, step_reward, terminated, truncated
@@ -759,15 +805,20 @@ class _TaskEvaluator:
                         effective_action = slot["queue"].schedule_and_get(decoded)
                         action_hist[str(effective_action)] += 1
 
-                        obs, step_reward, terminated, truncated = self._step_env_once(slot["env"], effective_action)
                         next_step = int(slot["steps"]) + 1
+                        if self._is_demon_ghost_trail():
+                            obs, step_reward, terminated, truncated = self._step_demon_ghost_trail(
+                                slot["env"], effective_action, slot["image_transform"], next_step
+                            )
+                        else:
+                            obs, step_reward, terminated, truncated = self._step_env_once(slot["env"], effective_action)
+                            frame = (
+                                _render_frame(slot["env"], fallback_obs=slot["model_obs"])
+                                if slot["image_transform"].enabled
+                                else None
+                            )
+                            slot["image_transform"].append(frame, step=next_step)
                         slot["model_obs"] = self._model_observation(slot["env"], obs)
-                        frame = (
-                            _render_frame(slot["env"], fallback_obs=slot["model_obs"])
-                            if slot["image_transform"].enabled
-                            else None
-                        )
-                        slot["image_transform"].append(frame, step=next_step)
                         slot["reward"] += step_reward
                         slot["steps"] = next_step
                         done = terminated or truncated or slot["steps"] >= max_steps

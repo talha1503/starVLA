@@ -176,6 +176,26 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-new-tokens", type=int, default=256)
     p.add_argument("--device", default="cuda")
     p.add_argument("--cache-dir", default=None)
+    # --- live gameplay eval ---
+    p.add_argument(
+        "--live-eval-episodes",
+        type=int,
+        default=0,
+        help="Number of live flappy episodes to play per latency before the reasoning trace. "
+             "0 = skip live eval (default).",
+    )
+    p.add_argument(
+        "--live-eval-latencies",
+        default="",
+        help="Comma-separated latencies for live eval (e.g. '0,1,2,3,4'). "
+             "Defaults to --latencies when not set.",
+    )
+    p.add_argument(
+        "--live-eval-max-steps",
+        type=int,
+        default=3600,
+        help="Max env steps per live eval episode (default 3600).",
+    )
     p.add_argument(
         "--action-condition",
         action="store_true",
@@ -187,7 +207,16 @@ def parse_args() -> argparse.Namespace:
             "{instruction}\n\nLook carefully at the current game frame. Think step by step about "
             "what is happening, then state the single best next action and why."
         ),
-        help="Template for the free (non action-conditioned) reasoning prompt. {instruction} is filled in.",
+        help="Template for the free (non action-conditioned) reasoning prompt. {instruction} is filled in. "
+        "Used only in the two-call --action-condition path.",
+    )
+    p.add_argument(
+        "--reasoning-suffix",
+        default=(
+            "Now look at the current game frame and explain step by step what is happening "
+            "and what the best next action is and why."
+        ),
+        help="Free-reasoning request appended after the action token in the single-call (default) path.",
     )
     p.add_argument(
         "--action-condition-template",
@@ -558,6 +587,126 @@ def sample_balanced_rows(ds, classes, per_class: int, *, shuffle: bool = False, 
     return out
 
 
+def predict_action_and_reason_single_call(framework, torch, pil, instruction, reasoning_suffix, max_new_tokens, labels):
+    """One generate() call: action head (from the prefill) + free reasoning text.
+
+    Builds the exact training action prompt (so the `🔍` token's hidden state is
+    faithful), appends a free-reasoning request, and runs a single generate() with
+    output_hidden_states. The action head reads `🔍`'s prefill hidden state (the
+    real policy decision); the same call produces the reasoning text.
+    """
+    iface = framework.qwen_vl_interface
+    chunk_len = int(getattr(framework, "chunk_len", 1))
+    action_token = getattr(framework, "action_token", "\U0001f50d")
+    action_suffix = (
+        f" Please predict the next {chunk_len} robot actions: "
+        f"<action>{action_token * chunk_len}<action>."
+    )
+    full_instruction = f"{instruction}{action_suffix} {reasoning_suffix}"
+
+    inputs = iface.build_qwenvl_inputs(images=[[pil]], instructions=[full_instruction])
+    input_len = int(inputs["input_ids"].shape[1])
+    # Run in bf16 (same precision as the deployed predict_action) so the action-head
+    # decision matches the real model output, not the interface's fp16 generate().
+    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+        out = iface.model.generate(
+            **inputs,
+            max_new_tokens=int(max_new_tokens),
+            do_sample=False,
+            output_hidden_states=True,
+            return_dict_in_generate=True,
+        )
+
+    # Action head from the prefill step's last-layer hidden state at the 🔍 token.
+    prefill_last_hidden = out.hidden_states[0][-1]  # (B, prompt_len, H)
+    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float32):
+        action_queries = framework._gather_action_token_embeddings(
+            prefill_last_hidden, inputs["input_ids"], action_token_id=framework.action_token_id
+        )
+        pred_actions = framework.action_model.predict_action(action_queries)
+    head = np.asarray(pred_actions[0, 0].float().cpu().numpy(), dtype=np.float64)[: len(labels)]
+    action_id = int(np.argmax(head))
+    action_label = labels[action_id] if action_id < len(labels) else str(action_id)
+    probs = _softmax(head)
+
+    new_tokens = out.sequences[:, input_len:]
+    reasoning = iface.processor.batch_decode(new_tokens, skip_special_tokens=True)[0]
+    reasoning = " ".join(reasoning.split()).strip()
+    return action_label, action_id, probs, reasoning
+
+
+def run_live_eval(framework, torch, args, labels: list[str], latencies: list[int]) -> dict:
+    """Play args.live_eval_episodes flappy episodes per latency using seeds 0..N-1.
+
+    Seeds are fixed and identical across models so results are directly comparable.
+    Returns {latency: {mean_reward, std_reward, episode_rewards}}.
+    """
+    import collections
+
+    try:
+        import flappy_bird_gymnasium  # noqa: F401 — registers FlappyBird-v0
+        import gymnasium as gym
+    except ImportError:
+        print("[live eval] flappy_bird_gymnasium not installed; skipping live eval.")
+        return {}
+
+    from datasets import load_dataset
+
+    results: dict = {}
+    for latency in latencies:
+        subdir = args.subdir_template.format(latency=latency)
+        ds = load_dataset(
+            args.dataset_name,
+            data_dir=subdir,
+            split=args.split,
+            cache_dir=args.cache_dir,
+            verification_mode="no_checks",
+        )
+        prompt = str(ds[0]["prompt"]) if len(ds) > 0 else ""
+
+        episode_rewards: list[float] = []
+        for ep_idx in range(args.live_eval_episodes):
+            env = gym.make("FlappyBird-v0", render_mode="rgb_array", use_lidar=False)
+            env.reset(seed=ep_idx)
+
+            # Pre-fill queue with latency NOOPs so action from step 0 lands at step L.
+            action_buffer: collections.deque[int] = collections.deque([0] * latency)
+            total_reward = 0.0
+            done = False
+            step = 0
+
+            while not done and step < args.live_eval_max_steps:
+                frame = env.render()
+                pil = Image.fromarray(np.asarray(frame, dtype=np.uint8))
+                with torch.inference_mode():
+                    out = framework.predict_action(examples=[{"image": [pil], "lang": prompt}])
+                vec = np.asarray(out["normalized_actions"])[0, 0]
+                new_action = int(np.argmax(vec[: len(labels)]))
+
+                if latency == 0:
+                    effective_action = new_action
+                else:
+                    effective_action = action_buffer.popleft()
+                    action_buffer.append(new_action)
+
+                _, reward, terminated, truncated, _ = env.step(effective_action)
+                total_reward += float(reward)
+                done = terminated or truncated
+                step += 1
+
+            env.close()
+            episode_rewards.append(total_reward)
+            print(f"  live ep {ep_idx + 1}/{args.live_eval_episodes} "
+                  f"latency={latency} reward={total_reward:.1f} steps={step}")
+
+        mean_r = float(np.mean(episode_rewards))
+        std_r = float(np.std(episode_rewards))
+        results[latency] = {"mean_reward": mean_r, "std_reward": std_r, "episode_rewards": episode_rewards}
+        print(f"  >> latency={latency}: mean={mean_r:.2f} ± {std_r:.2f}  (n={args.live_eval_episodes})")
+
+    return results
+
+
 def main() -> None:
     args = parse_args()
     from datasets import load_dataset
@@ -575,6 +724,26 @@ def main() -> None:
     print(f"Loading model from {ckpt_path} ...")
     framework, torch = load_framework(ckpt_path, args.device)
 
+    # ── live gameplay eval ────────────────────────────────────────────────────
+    live_latencies = (
+        [int(x) for x in str(args.live_eval_latencies).split(",") if x.strip()]
+        if args.live_eval_latencies
+        else latencies
+    )
+    live_eval_results: dict = {}
+    if args.live_eval_episodes > 0:
+        print(f"\n=== Live gameplay eval ({args.live_eval_episodes} ep × {live_latencies} latencies) ===")
+        live_eval_results = run_live_eval(framework, torch, args, labels, live_latencies)
+        # Save standalone results file immediately so it's available even if reasoning crashes.
+        live_results_path = out_csv.parent / "live_eval_results.json"
+        import json as _json
+        live_results_path.write_text(
+            _json.dumps({str(lat): v for lat, v in live_eval_results.items()}, indent=2),
+            encoding="utf-8",
+        )
+        print(f"Live eval results -> {live_results_path}\n")
+
+    # ── reasoning trace ───────────────────────────────────────────────────────
     rows_out = []
     for latency in latencies:
         subdir = args.subdir_template.format(latency=latency)
@@ -599,13 +768,16 @@ def main() -> None:
             frame_path = lat_frames_dir / f"{true_label}_{j:04d}.png"
             pil.save(frame_path)
 
-            action_label, action_id, probs = decode_action_head(framework, torch, pil, instruction, labels)
-
             if args.action_condition:
+                # Two-step: decide first (action head), then explain that specific action.
+                action_label, action_id, probs = decode_action_head(framework, torch, pil, instruction, labels)
                 reasoning_prompt = args.action_condition_template.format(instruction=instruction, action=action_label)
+                reasoning = generate_reasoning(framework, torch, pil, reasoning_prompt, args.max_new_tokens)
             else:
-                reasoning_prompt = args.reasoning_prompt_template.format(instruction=instruction)
-            reasoning = generate_reasoning(framework, torch, pil, reasoning_prompt, args.max_new_tokens)
+                # Single call: action head (from the prefill) + free reasoning text together.
+                action_label, action_id, probs, reasoning = predict_action_and_reason_single_call(
+                    framework, torch, pil, instruction, args.reasoning_suffix, args.max_new_tokens, labels
+                )
 
             rows_out.append(
                 {
@@ -655,6 +827,12 @@ def main() -> None:
         "action_condition": bool(args.action_condition),
         "max_new_tokens": int(args.max_new_tokens),
         "num_rows": len(rows_out),
+        "live_eval_episodes": args.live_eval_episodes,
+        "live_eval_latencies": live_latencies,
+        "live_eval_results": {
+            str(lat): {k: v for k, v in res.items() if k != "episode_rewards"}
+            for lat, res in live_eval_results.items()
+        },
     }
     metadata_path = out_csv.parent / "metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
