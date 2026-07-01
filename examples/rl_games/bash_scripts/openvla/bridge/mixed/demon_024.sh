@@ -40,6 +40,6 @@ python examples/rl_games/scripts/launch_train.py \
     datasets.vla_data.per_device_batch_size=32 \
     rl_games.env_eval.mid_train.enabled=false \
     rl_games.env_eval.post_train.enabled=true \
-    rl_games.env_eval.post_train.latencies=[0,1,2,3,4] \
+    rl_games.env_eval.post_train.latencies=[0,2,4] \
     rl_games.env_eval.post_train.num_episodes=20 \
     rl_games.env_eval.post_train.max_steps_per_episode=3600

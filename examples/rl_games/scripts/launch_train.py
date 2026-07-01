@@ -215,6 +215,17 @@ def _optional_int_list(value: Any) -> list[int] | None:
     return [int(item) for item in value]
 
 
+def _setup_eval_latencies(cfg: Any) -> list[int] | None:
+    if not _as_bool_default(_cfg_get(cfg, "rl_games.env_eval.enabled"), True):
+        return None
+    latencies: set[int] = set()
+    for stage in ("mid_train", "post_train"):
+        if not _as_bool_default(_cfg_get(cfg, f"rl_games.env_eval.{stage}.enabled"), True):
+            continue
+        latencies.update(_optional_int_list(_cfg_get(cfg, f"rl_games.env_eval.{stage}.latencies")) or [])
+    return sorted(latencies) or None
+
+
 def _checkpoint_request(load_value: Any) -> tuple[str, str]:
     raw_value = str(load_value or "auto")
     if raw_value in {"auto", "none", "local", "hf"}:
@@ -268,11 +279,7 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         action_carrier=str(_cfg_get(cfg, "rl_games.action_carrier") or ""),
         deadly_action_layout=str(_cfg_get(cfg, "rl_games.env_eval.deadly.action_layout") or ""),
         latency_mode=str(_cfg_get(cfg, "rl_games.env_eval.latency.mode") or ""),
-        eval_latencies=sorted({
-            *(int(v) for v in (_optional_int_list(_cfg_get(cfg, "rl_games.env_eval.latency.values")) or [])),
-            *(int(v) for v in (_optional_int_list(_cfg_get(cfg, "rl_games.env_eval.post_train.latencies")) or [])),
-            *(int(v) for v in (_optional_int_list(_cfg_get(cfg, "rl_games.env_eval.mid_train.latencies")) or [])),
-        }) or None,
+        eval_latencies=_setup_eval_latencies(cfg),
         source_dataset_hf=str(_cfg_get(cfg, "dataset.source_hf") or ""),
         source_dataset_config_name=(
             None
