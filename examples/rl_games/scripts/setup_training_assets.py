@@ -94,28 +94,11 @@ def _load_source_latency_prompt_map(
     frameskip: int = 1,
     latencies: list[int] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    from datasets import load_dataset
     from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import (
+        _load_train_split,
         build_latency_prompt_map,
     )
 
-    def _load(columns: list[str] | None = None):
-        load_kwargs = {
-            "split": "train",
-            "cache_dir": cache_dir,
-            "columns": columns,
-            # Hosted RL-game datasets may disagree on `val` vs `validation`
-            # between dataset_info and generated splits. This prompt-map load
-            # only needs train rows, so ignore that metadata-only mismatch.
-            "verification_mode": "no_checks",
-        }
-        if dataset_config_name not in (None, ""):
-            return load_dataset(dataset_name, dataset_config_name, **load_kwargs)
-        return load_dataset(dataset_name, **load_kwargs)
-
-    # Load the full dataset once (no per-latency data_dir) to avoid a HF datasets
-    # cache-hash collision that occurs when the same dataset is loaded multiple times
-    # with different data_dir values in the same process.
     column_variants: tuple[list[str] | None, ...] = (
         ["prompt", "latency", "latency_ms", "split"],
         ["prompt", "latency_raw_frames", "latency_ms", "split"],
@@ -127,7 +110,14 @@ def _load_source_latency_prompt_map(
     ds = None
     for columns in column_variants:
         try:
-            ds = _load(columns=columns)
+            ds = _load_train_split(
+                dataset_name,
+                cache_dir,
+                columns=columns,
+                dataset_config_name=dataset_config_name,
+                dataset_source_subdir=dataset_source_subdir,
+                latencies=latencies,
+            )
             if columns is None and ("prompt" not in ds.column_names or not ({"latency", "latency_raw_frames"} & set(ds.column_names))):
                 raise ValueError(
                     f"prompt source dataset {dataset_name} is missing columns required for a latency prompt map; "
@@ -138,7 +128,11 @@ def _load_source_latency_prompt_map(
             last_exc = exc
             ds = None
     if ds is None:
-        raise last_exc
+        raise ValueError(
+            "could not load source dataset latency prompts "
+            f"(dataset={dataset_name!r}, config={dataset_config_name!r}, "
+            f"source_subdir={dataset_source_subdir!r}, latencies={latencies!r})"
+        ) from last_exc
     return build_latency_prompt_map(ds, frameskip=frameskip)
 
 
@@ -682,8 +676,8 @@ def _ensure_rl_games_lerobot_dataset(
                 source_dataset,
                 cache_dir=getattr(args, "dataset_cache_dir", None),
                 dataset_config_name=source_config_name,
-                dataset_source_subdir=source_subdir,  # use resolved subdir template
-                latencies=all_needed,                  # only fetch the subdirs we need
+                dataset_source_subdir=source_subdir,
+                latencies=all_needed,
                 frameskip=round(env_fps / obs_fps) if env_fps and obs_fps else 1,
             )
             merged = {**existing_map, **full_map}
