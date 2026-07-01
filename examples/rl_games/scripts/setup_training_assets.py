@@ -97,11 +97,9 @@ def _load_source_latency_prompt_map(
     from datasets import load_dataset
     from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import (
         build_latency_prompt_map,
-        concatenate_latency_parts,
-        resolve_latency_subdirs,
     )
 
-    def _load(subdir: str | None, columns: list[str] | None = None):
+    def _load(columns: list[str] | None = None):
         load_kwargs = {
             "split": "train",
             "cache_dir": cache_dir,
@@ -111,12 +109,13 @@ def _load_source_latency_prompt_map(
             # only needs train rows, so ignore that metadata-only mismatch.
             "verification_mode": "no_checks",
         }
-        if subdir not in (None, ""):
-            load_kwargs["data_dir"] = subdir
         if dataset_config_name not in (None, ""):
             return load_dataset(dataset_name, dataset_config_name, **load_kwargs)
         return load_dataset(dataset_name, **load_kwargs)
 
+    # Load the full dataset once (no per-latency data_dir) to avoid a HF datasets
+    # cache-hash collision that occurs when the same dataset is loaded multiple times
+    # with different data_dir values in the same process.
     column_variants: tuple[list[str] | None, ...] = (
         ["prompt", "latency", "latency_ms", "split"],
         ["prompt", "latency_raw_frames", "latency_ms", "split"],
@@ -124,31 +123,22 @@ def _load_source_latency_prompt_map(
         ["prompt", "latency_raw_frames", "latency_ms"],
         None,
     )
-
-    def _load_any_variant(subdir: str | None, *, preferred_columns: list[str] | None | object = "__unset__"):
-        variants = column_variants if preferred_columns == "__unset__" else (preferred_columns,)
-        last_exc: Exception | None = None
-        for columns in variants:
-            try:
-                ds = _load(subdir, columns=columns)
-                if columns is None and ("prompt" not in ds.column_names or not ({"latency", "latency_raw_frames"} & set(ds.column_names))):
-                    raise ValueError(
-                        f"prompt source dataset {dataset_name} is missing columns required for a latency prompt map; "
-                        f"available columns: {ds.column_names}"
-                    )
-                return ds, columns
-            except Exception as exc:
-                last_exc = exc
-                continue
+    last_exc: Exception | None = None
+    ds = None
+    for columns in column_variants:
+        try:
+            ds = _load(columns=columns)
+            if columns is None and ("prompt" not in ds.column_names or not ({"latency", "latency_raw_frames"} & set(ds.column_names))):
+                raise ValueError(
+                    f"prompt source dataset {dataset_name} is missing columns required for a latency prompt map; "
+                    f"available columns: {ds.column_names}"
+                )
+            break
+        except Exception as exc:
+            last_exc = exc
+            ds = None
+    if ds is None:
         raise last_exc
-
-    subdirs = resolve_latency_subdirs(dataset_source_subdir, latencies)
-    ds_first, working_columns = _load_any_variant(subdirs[0])
-    parts = [ds_first]
-    for subdir in subdirs[1:]:
-        ds_part, _ = _load_any_variant(subdir, preferred_columns=working_columns)
-        parts.append(ds_part)
-    ds = concatenate_latency_parts(parts)
     return build_latency_prompt_map(ds, frameskip=frameskip)
 
 
