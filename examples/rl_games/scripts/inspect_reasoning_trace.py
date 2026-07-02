@@ -199,7 +199,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--action-condition",
         action="store_true",
-        help="Condition the reasoning text on the action head's chosen action (cleaner, still post-hoc).",
+        help="Deprecated alias for --two-forward-pass.",
+    )
+    p.add_argument(
+        "--two-forward-pass",
+        "--two_forward_pass",
+        dest="two_forward_pass",
+        action="store_true",
+        help=(
+            "Use two forward passes: first run the action head with framework.predict_action(), "
+            "then generate a reasoning trace conditioned on that chosen action."
+        ),
     )
     p.add_argument(
         "--reasoning-prompt-template",
@@ -208,7 +218,7 @@ def parse_args() -> argparse.Namespace:
             "what is happening, then state the single best next action and why."
         ),
         help="Template for the free (non action-conditioned) reasoning prompt. {instruction} is filled in. "
-        "Used only in the two-call --action-condition path.",
+        "Used only in the single-call path.",
     )
     p.add_argument(
         "--reasoning-suffix",
@@ -224,7 +234,7 @@ def parse_args() -> argparse.Namespace:
             "{instruction}\n\nThe chosen next action is: {action}. Looking at the current game frame, "
             "explain step by step why this is a good action."
         ),
-        help="Template used when --action-condition is set. {instruction} and {action} are filled in.",
+        help="Template used in --two-forward-pass mode. {instruction} and {action} are filled in.",
     )
     return p.parse_args()
 
@@ -521,13 +531,24 @@ def decode_action_head(framework, torch, pil: Image.Image, instruction: str, lab
 def generate_reasoning(framework, torch, pil: Image.Image, reasoning_prompt: str, max_new_tokens: int) -> str:
     """Free-form text from the VLM backbone (post-hoc narration)."""
     iface = framework.qwen_vl_interface
-    inputs = iface.build_qwenvl_inputs(images=[[pil]], instructions=[reasoning_prompt])
+    pil_for_model = preprocess_image_for_action(framework, pil)
+    inputs = iface.build_qwenvl_inputs(images=[[pil_for_model]], instructions=[reasoning_prompt])
     input_len = int(inputs["input_ids"].shape[1])
     with torch.inference_mode():
         generated = iface.generate(**inputs, max_new_tokens=int(max_new_tokens), do_sample=False)
     new_tokens = generated[:, input_len:]
     text = iface.processor.batch_decode(new_tokens, skip_special_tokens=True)[0]
     return " ".join(text.split()).strip()
+
+
+def preprocess_image_for_action(framework, pil: Image.Image) -> Image.Image:
+    """Mirror framework.predict_action image resizing for inspector-only paths."""
+    train_obs_image_size = getattr(framework.config.datasets.vla_data, "obs_image_size", None)
+    if not train_obs_image_size:
+        return pil
+    from starVLA.training.trainer_utils.trainer_tools import resize_images
+
+    return resize_images(pil, target_size=train_obs_image_size)
 
 
 def upload_results_to_hub(*, out_csv: Path, frames_dir: Path, metadata_path: Path, repo_id: str, subdir: str, private: bool, token) -> None:
@@ -603,8 +624,9 @@ def predict_action_and_reason_single_call(framework, torch, pil, instruction, re
         f"<action>{action_token * chunk_len}<action>."
     )
     full_instruction = f"{instruction}{action_suffix} {reasoning_suffix}"
+    pil_for_model = preprocess_image_for_action(framework, pil)
 
-    inputs = iface.build_qwenvl_inputs(images=[[pil]], instructions=[full_instruction])
+    inputs = iface.build_qwenvl_inputs(images=[[pil_for_model]], instructions=[full_instruction])
     input_len = int(inputs["input_ids"].shape[1])
     # Run in bf16 (same precision as the deployed predict_action) so the action-head
     # decision matches the real model output, not the interface's fp16 generate().
@@ -712,6 +734,8 @@ def main() -> None:
     from datasets import load_dataset
 
     labels = ENV_ACTION_LABELS[args.env_name]
+    two_forward_pass = bool(args.two_forward_pass or args.action_condition)
+    reasoning_mode = "two_forward_pass" if two_forward_pass else "single_call"
     latencies = [int(x) for x in str(args.latencies).split(",") if str(x).strip() != ""]
     classes = [c.strip() for c in str(args.classes).split(",") if c.strip()]
 
@@ -768,7 +792,7 @@ def main() -> None:
             frame_path = lat_frames_dir / f"{true_label}_{j:04d}.png"
             pil.save(frame_path)
 
-            if args.action_condition:
+            if two_forward_pass:
                 # Two-step: decide first (action head), then explain that specific action.
                 action_label, action_id, probs = decode_action_head(framework, torch, pil, instruction, labels)
                 reasoning_prompt = args.action_condition_template.format(instruction=instruction, action=action_label)
@@ -824,6 +848,8 @@ def main() -> None:
         "per_class_samples": int(args.per_class_samples),
         "shuffle": bool(args.shuffle),
         "sample_seed": int(args.sample_seed),
+        "reasoning_mode": reasoning_mode,
+        "two_forward_pass": bool(two_forward_pass),
         "action_condition": bool(args.action_condition),
         "max_new_tokens": int(args.max_new_tokens),
         "num_rows": len(rows_out),
