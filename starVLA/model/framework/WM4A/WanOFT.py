@@ -86,6 +86,8 @@ class TokenAttentionActionQueryProjector(nn.Module):
             raise ValueError(
                 f"hidden_states hidden dim must be {self.hidden_dim}, got shape={tuple(hidden_states.shape)}."
             )
+        target_dtype = self.query_tokens.dtype
+        hidden_states = hidden_states.to(dtype=target_dtype)
         batch_size = int(hidden_states.shape[0])
         queries = self.query_tokens.unsqueeze(0).expand(batch_size, -1, -1)
         key_values = self.key_value_norm(hidden_states)
@@ -310,7 +312,8 @@ class Wan_OFT(baseframework):
             if self.token_action_query_proj is None:
                 raise RuntimeError("token_action_query_proj is required when action_query_source=token_attention.")
             return self.token_action_query_proj(hidden_states)
-        pooled = hidden_states.mean(dim=1)
+        target_dtype = self.action_query_proj.weight.dtype
+        pooled = hidden_states.mean(dim=1).to(dtype=target_dtype)
         queries = self.action_query_proj(pooled)
         action_queries = queries.view(B, self.chunk_len, H)
         return action_queries

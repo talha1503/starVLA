@@ -318,6 +318,16 @@ def test_wan_oft_default_action_query_source_is_mean_pooling() -> None:
     assert cfg.framework.action_model.action_query_source == "mean"
 
 
+def test_wan_oft_mean_action_query_projection_aligns_hidden_dtype_to_projector() -> None:
+    wan_oft_source = (REPO_ROOT / "starVLA" / "model" / "framework" / "WM4A" / "WanOFT.py").read_text(
+        encoding="utf-8"
+    )
+    pool_source = wan_oft_source.split("    def _pool_to_action_queries(", 1)[1].split("    def forward(", 1)[0]
+
+    assert "self.action_query_proj.weight.dtype" in pool_source
+    assert "hidden_states.mean(dim=1).to(dtype=target_dtype)" in pool_source
+
+
 def test_token_attention_action_query_projector_uses_full_token_sequence() -> None:
     torch = pytest.importorskip("torch")
     wan_oft_module = importlib.import_module("starVLA.model.framework.WM4A.WanOFT")
