@@ -28,6 +28,6 @@ pip_install -r "$FILTERED_REQUIREMENTS"
 rm -f "$FILTERED_REQUIREMENTS"
 
 pip_install -e "$REPO_ROOT"
-pip_install omegaconf hydra-core tqdm wandb huggingface_hub
+pip_install omegaconf hydra-core tqdm wandb "huggingface-hub>=0.34.0,<1.0"
 
 echo "[install/common] done"

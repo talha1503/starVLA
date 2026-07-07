@@ -13,7 +13,8 @@ datasets:
     include_state: true
 
 dataset:
-  single_converted_name: flappy_train__bridge
+  single_converted_name: ${rl_games.task}_train__bridge
+  mixed_converted_name: ${rl_games.task}_mixed_latency_train__bridge
 
 framework:
   action_model:

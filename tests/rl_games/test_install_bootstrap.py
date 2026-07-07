@@ -30,11 +30,14 @@ def test_wan_oft_install_assets_are_registered() -> None:
     repo_root: Path = _repo_root()
     install_dir: Path = repo_root / "examples" / "rl_games" / "install"
     model_installer: Path = install_dir / "model" / "wan_oft.sh"
+    model_installer_source: str = model_installer.read_text()
     flappy_validator: Path = install_dir / "validate" / "wan_oft_flappy.sh"
     flappy_validator_source: str = flappy_validator.read_text()
 
     assert model_installer.is_file()
     assert os.access(model_installer, os.X_OK)
+    assert "pyarrow" in model_installer_source
+    assert "huggingface-hub" in model_installer_source
     assert flappy_validator.is_file()
     assert os.access(flappy_validator, os.X_OK)
     assert "from diffusers import AutoencoderKLWan, WanTransformer3DModel" in flappy_validator_source

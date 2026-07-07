@@ -67,6 +67,30 @@ def test_wan_oft_flappy_config_preserves_released_checkpoint_shapes() -> None:
     assert cfg.framework.world_model.num_frames is None
 
 
+def test_wan_oft_demon_attack_config_uses_bridge_dataset_and_six_active_actions() -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="wan_oft",
+        env="demon_attack",
+        init="wan_oft_libero",
+        mode="single",
+        overrides=[],
+    )
+
+    assert cfg.framework.name == "WanOFT"
+    assert cfg.framework.action_model.action_dim == 7
+    assert cfg.framework.action_model.action_env_dim == 6
+    assert cfg.framework.action_model.state_dim == 7
+    assert cfg.framework.action_model.action_horizon == 8
+    assert cfg.framework.action_model.future_action_window_size == 7
+    assert cfg.framework.action_model.loss_type == "discrete_ce"
+    assert cfg.dataset.single_converted_name == "demon_attack_train__bridge"
+    assert cfg.dataset.converted_name == "demon_attack_train__bridge"
+    assert cfg.datasets.vla_data.data_mix == "demon_attack_train__bridge"
+    assert cfg.datasets.vla_data.pack_image_sequence is True
+    assert cfg.datasets.vla_data.context_images_column == "observation.context_images"
+
+
 def test_launch_train_forwards_world_model_path_only_for_wan_oft(tmp_path: Path) -> None:
     cfg = launch_train.compose_training_config(
         config_name="train",

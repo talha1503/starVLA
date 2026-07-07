@@ -60,6 +60,7 @@ def test_wan_oft_commands_are_valid_bash() -> None:
         REPO_ROOT / "commands" / "train_flappy_wan_oft.sh",
         REPO_ROOT / "commands" / "train_flappy_wan_oft_horizon1.sh",
         REPO_ROOT / "commands" / "train_flappy_wan_oft_multigpu.sh",
+        REPO_ROOT / "commands" / "train_demon_attack_wan_oft.sh",
     ]
 
     subprocess.run(["bash", "-n", *[str(path) for path in command_paths]], check=True, cwd=REPO_ROOT)
@@ -133,6 +134,42 @@ def test_wan_oft_single_gpu_command_enables_held_out_eval_mix() -> None:
     assert "checkpoint.save_training_state=false" in command_text
     assert "checkpoint.save_best_model=false" in command_text
     assert "checkpoint.save_final_model=true" in command_text
+
+
+def test_wan_oft_demon_attack_single_gpu_command_derives_baseline_from_latency_arg() -> None:
+    command_path = REPO_ROOT / "commands" / "train_demon_attack_wan_oft.sh"
+    command_text = command_path.read_text(encoding="utf-8")
+
+    assert 'LATENCY="${1:-${LATENCY:-0}}"' in command_text
+    assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}}"' in command_text
+    assert 'RUN_ID="${RUN_ID:-wan_oft_demon_attack_fix_latency_${LATENCY}_context${CONTEXT_WINDOW}_standard_sft_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_224_currentce}"' in command_text
+    assert 'MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-2000}"' in command_text
+    assert 'EVAL_INTERVAL="${EVAL_INTERVAL:-500}"' in command_text
+    assert 'MID_TRAIN_LATENCIES="${MID_TRAIN_LATENCIES:-[${LATENCY}]}"' in command_text
+    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[${LATENCY}]}"' in command_text
+    assert "model=wan_oft" in command_text
+    assert "env=demon_attack" in command_text
+    assert "init=wan_oft_libero" in command_text
+    assert "trainer.distributed_backend=none" in command_text
+    assert "launch.use_accelerate=false" in command_text
+    assert 'run_id="${RUN_ID}"' in command_text
+    assert 'paths.dataset_local_dir="${DATASET_LOCAL_DIR}"' in command_text
+    assert "dataset.converted_name=demon_attack_train__bridge" in command_text
+    assert "datasets.vla_data.data_mix=demon_attack_train__bridge" in command_text
+    assert "datasets.vla_data.eval_data_mix=demon_attack_train__bridge__val" in command_text
+    assert "datasets.vla_data.obs_image_size=[224,224]" in command_text
+    assert "datasets.vla_data.image_sequence_length=\"${CONTEXT_WINDOW}\"" in command_text
+    assert "datasets.vla_data.observation_indices=[-4,-3,-2,-1,0]" in command_text
+    assert "framework.world_model.num_frames=\"${CONTEXT_WINDOW}\"" in command_text
+    assert "framework.action_model.loss_type=current_discrete_ce" in command_text
+    assert "trainer.max_train_steps=\"${MAX_TRAIN_STEPS}\"" in command_text
+    assert "trainer.eval_interval=\"${EVAL_INTERVAL}\"" in command_text
+    assert "trainer.eval_action_classification=false" in command_text
+    assert 'PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/demon_attack_latency_prompt_map.json}"' in command_text
+    assert "rl_games.env_eval.latency.prompt_map_path=\"${PROMPT_MAP_PATH}\"" in command_text
+    assert "rl_games.env_eval.mid_train.interval_steps=\"${MID_TRAIN_INTERVAL}\"" in command_text
+    assert '"rl_games.env_eval.mid_train.latencies=${MID_TRAIN_LATENCIES}"' in command_text
+    assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
 
 
 def test_wan_oft_chunk8_command_matches_released_checkpoint() -> None:
