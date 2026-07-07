@@ -172,6 +172,26 @@ def test_wan_oft_demon_attack_single_gpu_command_derives_baseline_from_latency_a
     assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
 
 
+def test_demon_attack_wan_oft_pipeline_script_parameterizes_latency() -> None:
+    script_path = REPO_ROOT / "scripts" / "run_demon_attack_wan_oft_pipeline.sh"
+    script_text = script_path.read_text(encoding="utf-8")
+
+    subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
+
+    assert "--latency <N>" in script_text
+    assert 'LATENCY=""' in script_text
+    assert 'RAW_DATASET_REPO="${RAW_DATASET_REPO:-latency-sensitive-bench/demon_attack_200ep_context${CONTEXT_WINDOW}}"' in script_text
+    assert 'RAW_SUBDIR="demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}"' in script_text
+    assert 'CONVERTED_DATA_ROOT="data/demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}"' in script_text
+    assert 'RUN_ID="wan_oft_demon_attack_fix_latency_${LATENCY}_context${CONTEXT_WINDOW}_standard_sft_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_224_currentce"' in script_text
+    assert 'bash examples/rl_games/install/bootstrap.sh' in script_text
+    assert 'hf download "${BASE_MODEL_REPO}"' in script_text
+    assert '--include "${RAW_SUBDIR}/**"' in script_text
+    assert 'convert_demon_attack_to_starvla_lerobot.py' in script_text
+    assert 'bash commands/train_demon_attack_wan_oft.sh "${LATENCY}"' in script_text
+    assert 'hf upload "${UPLOAD_REPO}" "${RUN_DIR}" "${UPLOAD_PATH_IN_REPO}"' in script_text
+
+
 def test_wan_oft_chunk8_command_matches_released_checkpoint() -> None:
     command_path = REPO_ROOT / "commands" / "train_flappy_wan_oft_horizon1.sh"
     command_text = command_path.read_text(encoding="utf-8")
