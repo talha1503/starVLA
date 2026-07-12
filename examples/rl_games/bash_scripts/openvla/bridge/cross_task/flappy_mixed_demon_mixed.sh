@@ -28,10 +28,10 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_024_clean_data_exp3" \
     checkpoint.save_best_model=false \
-    trainer.max_train_steps=7000 \
+    trainer.max_train_steps=10500 \
     trainer.num_warmup_steps=0 \
     trainer.eval_interval=1400 \
-    trainer.save_interval=7000 \
+    trainer.save_interval=10500 \
     trainer.logging_frequency=1 \
     datasets.vla_data.sequential_step_sampling=true \
     datasets.vla_data.shuffle=true \
