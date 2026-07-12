@@ -22,7 +22,7 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.hf_repo_id="talha15032/openvla_bridge_demon_attack_latency_6_non_memory_exp1" \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="talha15032/openvla_bridge_demon_attack_latency_6_non_memory_exp1" \
-    dataset.source_hf="latency-sensitive-bench/demon_attack_200ep" \
+    dataset.source_hf="latency-sensitive-bench/demon_attack_ghost30_200ep" \
     dataset.latency_filter=[6] \
     datasets.vla_data.sequential_step_sampling=true \
     datasets.vla_data.shuffle=true \
@@ -30,8 +30,8 @@ python examples/rl_games/scripts/launch_train.py \
     trainer.per_latency_eval_num_batches=5 \
     dataset.episodes_per_latency=40 \
     checkpoint.save_best_model=false \
-    trainer.max_train_steps=5000 \
-    trainer.save_interval=5000 \
+    trainer.max_train_steps=7000 \
+    trainer.save_interval=7000 \
     trainer.num_warmup_steps=0 \
     trainer.eval_interval=1000 \
     trainer.logging_frequency=1 \

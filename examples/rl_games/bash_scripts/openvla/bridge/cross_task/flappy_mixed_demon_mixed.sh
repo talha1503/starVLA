@@ -1,12 +1,14 @@
-bash /workspace/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh
+WORKSPACE_DIR=""
 
-cd /workspace/starVLA
+bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh
+
+cd "${WORKSPACE_DIR}/starVLA"
 
 bash examples/rl_games/install/install_stack.sh openvla flappy
 
 conda activate starvla_rl_games_openvla
 
-bash /workspace/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh 
+bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
 
 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
@@ -14,19 +16,21 @@ python examples/rl_games/scripts/launch_train.py \
     init=bridge \
     mode=cross_task \
     cross_task_setup=flappy_mixed_demon_mixed \
-    run_id="openvla_bridge_cross_flappy_024_demon_024_clean_data_exp2" \
+    run_id="openvla_bridge_cross_flappy_024_demon_024_clean_data_exp3" \
     trainer.distributed_backend=none \
-    workspace_dir="/workspace" \
+    workspace_dir="$WORKSPACE_DIR" \
     wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_024_clean_data_exp2" \
+    checkpoint.hf_repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_024_clean_data_exp3" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_024_clean_data_exp2" \
+    checkpoint.sync.repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_024_clean_data_exp3" \
     checkpoint.save_best_model=false \
     trainer.max_train_steps=7000 \
     trainer.num_warmup_steps=0 \
     trainer.eval_interval=1400 \
     trainer.save_interval=7000 \
     trainer.logging_frequency=1 \
+    datasets.vla_data.sequential_step_sampling=true \
+    datasets.vla_data.shuffle=true \
     trainer.eval_action_classification=true \
     trainer.gradient_accumulation_steps=4 \
     datasets.vla_data.per_device_batch_size=32 \
