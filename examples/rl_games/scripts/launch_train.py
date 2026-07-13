@@ -5,9 +5,11 @@ import argparse
 import contextlib
 import os
 import re
+import signal
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Sequence
@@ -24,6 +26,7 @@ DEFAULT_ENV = "flappy"
 DEFAULT_INIT = "scratch"
 DEFAULT_MODE = "single"
 DEFAULT_RUN_ROOT_DIR = "results/Checkpoints"
+STOP_FILE_NAME = "STOP"
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -154,8 +157,12 @@ def _is_trainer_command_leaf(path: str) -> bool:
     return root not in CONFIG_GROUP_KEYS and root not in TRAINER_COMMAND_EXCLUDED_ROOTS
 
 
+def _override_prefix(path: str) -> str:
+    return "" if path.startswith("trainer.") else "++"
+
+
 def _append_leaf_override(cmd: list[str], path: str, value: Any) -> None:
-    cmd.append(f"++{path}={_hydra_value(value)}")
+    cmd.append(f"{_override_prefix(path)}{path}={_hydra_value(value)}")
 
 
 def _append_config_leaf_overrides(cmd: list[str], cfg: Any) -> None:
@@ -218,6 +225,17 @@ def _optional_int_list(value: Any) -> list[int] | None:
     return [int(item) for item in value]
 
 
+def _setup_eval_latencies(cfg: Any) -> list[int] | None:
+    if not _as_bool_default(_cfg_get(cfg, "rl_games.env_eval.enabled"), True):
+        return None
+    latencies: set[int] = set()
+    for stage in ("mid_train", "post_train"):
+        if not _as_bool_default(_cfg_get(cfg, f"rl_games.env_eval.{stage}.enabled"), True):
+            continue
+        latencies.update(_optional_int_list(_cfg_get(cfg, f"rl_games.env_eval.{stage}.latencies")) or [])
+    return sorted(latencies) or None
+
+
 def _checkpoint_request(load_value: Any) -> tuple[str, str]:
     raw_value = str(load_value or "auto")
     if raw_value in {"auto", "none", "local", "hf"}:
@@ -271,6 +289,7 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         action_carrier=str(_cfg_get(cfg, "rl_games.action_carrier") or ""),
         deadly_action_layout=str(_cfg_get(cfg, "rl_games.env_eval.deadly.action_layout") or ""),
         latency_mode=str(_cfg_get(cfg, "rl_games.env_eval.latency.mode") or ""),
+        eval_latencies=_setup_eval_latencies(cfg),
         source_dataset_hf=str(_cfg_get(cfg, "dataset.source_hf") or ""),
         source_dataset_config_name=(
             None
@@ -385,6 +404,63 @@ def build_launch_command(cfg: Any, trainer_cmd: list[str], workspace_dir: Path) 
     return [sys.executable, *trainer_cmd]
 
 
+def graceful_run_launch_command(launch_cmd: list[str], *, cwd: Path, stop_file: Path, env: dict[str, str] | None = None) -> int:
+    stop_file.parent.mkdir(parents=True, exist_ok=True)
+    if stop_file.exists():
+        stop_file.unlink()
+
+    child_env = dict(os.environ if env is None else env)
+    child_env["STARVLA_STOP_FILE"] = str(stop_file)
+    interrupt_count = 0
+    process = subprocess.Popen(
+        launch_cmd,
+        cwd=str(cwd),
+        env=child_env,
+        start_new_session=True,
+    )
+
+    def _request_stop(signum, frame):
+        nonlocal interrupt_count
+        interrupt_count += 1
+        if interrupt_count == 1:
+            stop_file.write_text(
+                f"signal={signal.Signals(signum).name}\ntime={time.time():.6f}\n",
+                encoding="utf-8",
+            )
+            print(
+                f"\nGraceful stop requested; wrote {stop_file}. "
+                "Waiting for the trainer to stop at a safe step boundary. "
+                "Press Ctrl-C again to send SIGTERM.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+        if interrupt_count == 2:
+            print("\nSecond interrupt received; sending SIGTERM to training process group.", file=sys.stderr, flush=True)
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            return
+        print("\nThird interrupt received; sending SIGKILL to training process group.", file=sys.stderr, flush=True)
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    previous_handlers = {
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+    }
+    signal.signal(signal.SIGINT, _request_stop)
+    signal.signal(signal.SIGTERM, _request_stop)
+    try:
+        return process.wait()
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
+
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-name", default=DEFAULT_CONFIG_NAME)
@@ -455,6 +531,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     trainer_cmd = build_trainer_command(cfg, setup, workspace_dir, run_root_dir)
     launch_cmd = build_launch_command(cfg, trainer_cmd, workspace_dir)
+    stop_file = Path(run_root_dir) / str(_cfg_get(cfg, "run_id")) / STOP_FILE_NAME
 
     print("Setup summary:")
     for key in sorted(setup):
@@ -465,8 +542,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if _as_bool(_cfg_get(cfg, "launch.dry_run")):
         return 0
 
-    subprocess.run(launch_cmd, check=True, cwd=str(REPO_ROOT))
-    return 0
+    returncode = graceful_run_launch_command(launch_cmd, cwd=REPO_ROOT, stop_file=stop_file)
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, launch_cmd)
+    return returncode
 
 
 if __name__ == "__main__":

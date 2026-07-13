@@ -4,6 +4,7 @@ import json
 import os
 import re
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
@@ -182,7 +183,7 @@ def _resize_rgb(raw_obs: Any, image_size: Optional[int], *, prefer_area: bool = 
             return cv2.resize(raw_obs, (image_size, image_size), interpolation=cv2.INTER_AREA)
         except ImportError:
             pass
-    return np.array(Image.fromarray(raw_obs).resize((image_size, image_size), Image.BILINEAR))
+    return np.array(Image.fromarray(raw_obs).resize((image_size, image_size), Image.BICUBIC))
 
 
 def _load_latency_prompt_map(path: Optional[str]) -> Dict[int, Dict[str, Any]]:
@@ -204,12 +205,26 @@ def _load_latency_prompt_map(path: Optional[str]) -> Dict[int, Dict[str, Any]]:
 def _cfg_get(container: Any, key: str, default_value: Any) -> Any:
     if container is None:
         return default_value
-    if isinstance(container, dict):
+    if isinstance(container, Mapping):
         return container.get(key, default_value)
     try:
         return container[key]
     except (AttributeError, KeyError, TypeError):
         return getattr(container, key, default_value)
+
+
+def _plain_mapping(value: Any) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    try:
+        from omegaconf import OmegaConf
+
+        if OmegaConf.is_config(value):
+            converted = OmegaConf.to_container(value, resolve=True)
+            return dict(converted or {}) if isinstance(converted, Mapping) else {}
+    except Exception:
+        pass
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 def _get_available_button_names(env) -> List[str]:
@@ -251,6 +266,17 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _apply_prompt_mode(prompt: str, prompt_mode: Any) -> str:
+    mode = str(prompt_mode or "").strip().lower()
+    if mode in {"", "default", "none", "raw"}:
+        return prompt
+    if mode == "latency_neutral":
+        marker = " Current action latency is "
+        head, found, _tail = str(prompt).partition(marker)
+        return head.rstrip() if found else str(prompt)
+    raise ValueError(f"Unsupported rl_games.env_eval.prompt_mode={prompt_mode!r}")
 
 
 def _as_int(value: Any, default: int) -> int:
@@ -306,6 +332,70 @@ def _render_frame(env, fallback_obs: Any = None) -> np.ndarray | None:
         return _rgb_frame(frame)
 
 
+class _LiveImageTransform:
+    def __init__(self, *, task: str, config: Dict[str, Any]):
+        self.task = task
+        self.config = dict(config)
+        self.name = str(self.config.get("image_transform", "raw_rgb") or "raw_rgb").strip().lower()
+        self.enabled = self.name not in {"", "none", "raw", "raw_rgb"}
+        if self.enabled and self.name not in {"flappy_ghost_trail", "demon_attack_ghost_trail"}:
+            raise ValueError(f"Unsupported rl_games.env_eval.image_transform={self.name!r}")
+        if self.enabled and self.name == "flappy_ghost_trail" and self.task != "flappy":
+            raise ValueError("image_transform=flappy_ghost_trail is only supported for task=flappy")
+        if self.enabled and self.name == "demon_attack_ghost_trail" and self.task != "demon_attack":
+            raise ValueError("image_transform=demon_attack_ghost_trail is only supported for task=demon_attack")
+        self.history_frames = max(0, int(self.config.get("history_frames", 5)))
+        self._frames: List[np.ndarray] = []
+        self._steps: List[int] = []
+        self._reset_frame: np.ndarray | None = None  # demon_attack_ghost_trail only
+
+    def reset(self, frame: np.ndarray | None, *, step: int = 0) -> None:
+        self._frames = []
+        self._steps = []
+        if self.name == "demon_attack_ghost_trail":
+            # Don't seed _frames with the reset frame — the ghost trail is built only
+            # from real action-result frames (same as training deque which starts empty).
+            # Store it separately as a fallback for current() at step 0.
+            self._reset_frame = np.asarray(frame, dtype=np.uint8) if frame is not None else None
+        else:
+            self.append(frame, step=step)
+
+    def append(self, frame: np.ndarray | None, *, step: int) -> None:
+        if not self.enabled or frame is None:
+            return
+        self._frames.append(np.asarray(frame, dtype=np.uint8))
+        self._steps.append(int(step))
+        # demon_attack_ghost_trail accumulates one raw ALE frame per call (frameskip=1
+        # env stepped 4× per decision), so cap at exactly history_frames raw frames.
+        max_frames = self.history_frames if self.name == "demon_attack_ghost_trail" else self.history_frames + 1
+        if len(self._frames) > max_frames:
+            self._frames = self._frames[-max_frames:]
+            self._steps = self._steps[-max_frames:]
+
+    def current(self, fallback_obs: Any) -> Any:
+        if not self.enabled:
+            return fallback_obs
+        if not self._frames:
+            # demon_attack_ghost_trail at step 0: no raw frames yet, return raw reset frame
+            return self._reset_frame if self._reset_frame is not None else fallback_obs
+        from latency_bench.data.ghost_trail import GhostTrailConfig
+
+        config = GhostTrailConfig(
+            image_transform=self.name,
+            history_frames=self.history_frames,
+            gamma=float(self.config.get("gamma", 1.3)),
+            min_alpha=int(self.config.get("min_alpha", 35)),
+            ground_fraction=float(self.config.get("ground_fraction", 0.22)),
+            scroll_px_per_step=float(self.config.get("scroll_px_per_step", 4.0)),
+        )
+        if self.name == "demon_attack_ghost_trail":
+            from latency_bench.data.ghost_trail_demon import build_demon_attack_ghost_trail_window
+            steps_arg = list(range(len(self._frames)))
+            return build_demon_attack_ghost_trail_window(self._frames, steps_arg, config=config)
+        from latency_bench.data.ghost_trail import build_flappy_ghost_trail_window
+        return build_flappy_ghost_trail_window(self._frames, self._steps, config=config)
+
+
 def _write_video(path: Path, frames: List[np.ndarray], fps: int) -> None:
     if not frames:
         return
@@ -319,18 +409,19 @@ def _write_video(path: Path, frames: List[np.ndarray], fps: int) -> None:
 
 
 class _TaskEvaluator:
-    def __init__(self, task: str, cfg, task_eval_cfg=None):
+    def __init__(self, task: str, cfg, task_eval_cfg=None, stage_eval_cfg=None):
         self.task = task
         self.cfg = cfg
         self.env_eval_cfg = cfg.rl_games.env_eval
         self.task_eval_cfg = task_eval_cfg
+        self.stage_eval_cfg = stage_eval_cfg
         self.default_prompt = str(getattr(self.env_eval_cfg, "task_description", "") or "")
         if task_eval_cfg is not None:
             self.default_prompt = str(getattr(task_eval_cfg, "task_description", self.default_prompt) or self.default_prompt)
         image_size_value = (
-            getattr(task_eval_cfg, "image_size", getattr(self.env_eval_cfg, "image_size", 84))
+            getattr(task_eval_cfg, "image_size", getattr(self.env_eval_cfg, "image_size", 224))
             if task_eval_cfg is not None
-            else getattr(self.env_eval_cfg, "image_size", 84)
+            else getattr(self.env_eval_cfg, "image_size", 224)
         )
         self.image_size = _as_optional_int(image_size_value)
         self.frameskip = max(1, int(
@@ -363,6 +454,42 @@ class _TaskEvaluator:
         self.eval_seed = _as_int(getattr(self.env_eval_cfg, "seed", getattr(cfg, "seed", 42)), 42)
         self.latency_seed_stride = _as_int(getattr(self.env_eval_cfg, "latency_seed_stride", None), 0)
         self.task_seed_stride = _as_int(getattr(self.env_eval_cfg, "task_seed_stride", None), 0)
+        self.image_transform_config = self._resolve_image_transform_config()
+        self.prompt_mode = self._resolve_prompt_mode()
+
+    def _resolve_image_transform_config(self) -> Dict[str, Any]:
+        image_transform = str(
+            _cfg_get(
+                self.stage_eval_cfg,
+                "image_transform",
+                _cfg_get(self.task_eval_cfg, "image_transform", _cfg_get(self.env_eval_cfg, "image_transform", "raw_rgb")),
+            )
+            or "raw_rgb"
+        ).strip().lower()
+        ghost_cfg = {
+            **_plain_mapping(_cfg_get(self.env_eval_cfg, "ghost_trail", None)),
+            **_plain_mapping(_cfg_get(self.task_eval_cfg, "ghost_trail", None)),
+            **_plain_mapping(_cfg_get(self.stage_eval_cfg, "ghost_trail", None)),
+        }
+        default_history_frames = 30 if image_transform == "demon_attack_ghost_trail" else 5
+        return {
+            "image_transform": image_transform,
+            "history_frames": int(ghost_cfg.get("history_frames", default_history_frames)),
+            "gamma": float(ghost_cfg.get("gamma", 1.3)),
+            "min_alpha": int(ghost_cfg.get("min_alpha", 35)),
+            "ground_fraction": float(ghost_cfg.get("ground_fraction", 0.22)),
+            "scroll_px_per_step": float(ghost_cfg.get("scroll_px_per_step", 4.0)),
+        }
+
+    def _resolve_prompt_mode(self) -> str:
+        stage_mode = _cfg_get(self.stage_eval_cfg, "prompt_mode", None)
+        task_mode = _cfg_get(self.task_eval_cfg, "prompt_mode", None)
+        env_mode = _cfg_get(self.env_eval_cfg, "prompt_mode", "default")
+        mode = stage_mode if stage_mode is not None else task_mode if task_mode is not None else env_mode
+        return str(mode or "default").strip().lower()
+
+    def _make_image_transform(self) -> _LiveImageTransform:
+        return _LiveImageTransform(task=self.task, config=self.image_transform_config)
 
     def _resolve_deadly_multibinary_threshold(self) -> float:
         deadly_cfg = getattr(self.env_eval_cfg, "deadly", None)
@@ -401,8 +528,9 @@ class _TaskEvaluator:
                 try:
                     env = gym.make(
                         env_id,
-                        frameskip=self.frameskip,
+                        frameskip=1 if self._is_demon_ghost_trail() else self.frameskip,
                         repeat_action_probability=0.0,
+                        render_mode="rgb_array",
                     )
                     return DemonAttackNoopResetWrapper(env=env, noop_max=noop_max)
                 except Exception as exc:
@@ -434,7 +562,18 @@ class _TaskEvaluator:
 
         raise ValueError(f"Unsupported task: {self.task}")
 
+    def _is_demon_ghost_trail(self) -> bool:
+        return (
+            self.task == "demon_attack"
+            and str(self.image_transform_config.get("image_transform", "")).strip().lower()
+            == "demon_attack_ghost_trail"
+        )
+
     def _uses_native_frameskip(self) -> bool:
+        # demon_attack ghost trail runs the gym env at frameskip=1 and handles
+        # action repetition manually so all 4 raw frames are captured per decision.
+        if self._is_demon_ghost_trail():
+            return False
         return self.task in {"demon_attack", "deadly_corridor"}
 
     def _model_observation(self, env, obs):
@@ -500,6 +639,11 @@ class _TaskEvaluator:
     def _queue_default_action(self):
         return [0] * 7 if self.task == "deadly_corridor" else 0
 
+    def _reset_model_memory(self, model, slot_id: int) -> None:
+        reset = getattr(model, "reset_memory", None)
+        if callable(reset):
+            reset(slot_id)
+
     def _initial_model_history(self, model_obs) -> List[Any]:
         return [model_obs for _ in range(self.image_sequence_length)]
 
@@ -510,7 +654,7 @@ class _TaskEvaluator:
             )
         return [*model_history[1:], model_obs]
 
-    def _make_model_example(self, model_obs, prompt: str) -> Dict[str, Any]:
+    def _make_model_example(self, model_obs, prompt: str, slot_id: int) -> Dict[str, Any]:
         if self.pack_image_sequence:
             model_frames = list(model_obs)
             if len(model_frames) != self.image_sequence_length:
@@ -537,6 +681,7 @@ class _TaskEvaluator:
         example = {
             "image": images,
             "lang": prompt,
+            "slot_id": int(slot_id),
         }
         if self.include_state:
             example["state"] = np.zeros((1, self.state_dim), dtype=np.float32)
@@ -550,6 +695,20 @@ class _TaskEvaluator:
         for _ in range(repeat_count):
             obs, reward, terminated, truncated, _ = env.step(action)
             step_reward += float(reward)
+            if terminated or truncated:
+                break
+        return obs, step_reward, terminated, truncated
+
+    def _step_demon_ghost_trail(self, env, action, image_transform: "_LiveImageTransform", decision_step: int):
+        """Step demon_attack env (frameskip=1) self.frameskip times, appending each raw frame."""
+        step_reward = 0.0
+        terminated = False
+        truncated = False
+        for _ in range(self.frameskip):
+            obs, reward, terminated, truncated, _ = env.step(action)
+            step_reward += float(reward)
+            raw_frame = _render_frame(env, fallback_obs=obs)
+            image_transform.append(raw_frame, step=decision_step)
             if terminated or truncated:
                 break
         return obs, step_reward, terminated, truncated
@@ -650,8 +809,12 @@ class _TaskEvaluator:
                 episode=episode,
                 seed_overrides=seed_overrides,
             )
+            self._reset_model_memory(model, slot["slot_id"])
             obs, _ = self._reset_env(slot["env"], episode_seed)
             model_obs = self._model_observation(slot["env"], obs)
+            image_transform = self._make_image_transform()
+            initial_frame = _render_frame(slot["env"], fallback_obs=model_obs) if image_transform.enabled else None
+            image_transform.reset(initial_frame, step=0)
             slot.update({
                 "active": True,
                 "episode": int(episode),
@@ -661,6 +824,7 @@ class _TaskEvaluator:
                     if self.pack_image_sequence
                     else model_obs
                 ),
+                "image_transform": image_transform,
                 "queue": ActionLatencyQueue(latency=latency, default_action=self._queue_default_action()),
                 "reward": 0.0,
                 "steps": 0,
@@ -668,10 +832,11 @@ class _TaskEvaluator:
             seeds_by_episode[int(episode)] = episode_seed
 
         try:
-            for _ in range(min(max(1, int(batch_size)), len(pending))):
+            for slot_id in range(min(max(1, int(batch_size)), len(pending))):
                 env = self._make_env()
                 slot = {
                     "env": env,
+                    "slot_id": int(slot_id),
                     "runtime_button_order": _get_available_button_names(env) if self.task == "deadly_corridor" else None,
                     "active": False,
                 }
@@ -688,7 +853,18 @@ class _TaskEvaluator:
             try:
                 while any(slot.get("active", False) for slot in slots):
                     active_slots = [slot for slot in slots if slot.get("active", False)]
-                    examples = [self._make_model_example(slot["model_obs"], prompt) for slot in active_slots]
+                    examples = [
+                        self._make_model_example(
+                            (
+                                slot["model_obs"]
+                                if self.pack_image_sequence
+                                else slot["image_transform"].current(slot["model_obs"])
+                            ),
+                            prompt,
+                            slot["slot_id"],
+                        )
+                        for slot in active_slots
+                    ]
                     output = model.predict_action(examples=examples)
                     actions = output["normalized_actions"]
                     if actions.ndim != 3:
@@ -706,7 +882,20 @@ class _TaskEvaluator:
                         effective_action = slot["queue"].schedule_and_get(decoded)
                         action_hist[str(effective_action)] += 1
 
-                        obs, step_reward, terminated, truncated = self._step_env_once(slot["env"], effective_action)
+                        next_step = int(slot["steps"]) + 1
+                        if self._is_demon_ghost_trail():
+                            obs, step_reward, terminated, truncated = self._step_demon_ghost_trail(
+                                slot["env"], effective_action, slot["image_transform"], next_step
+                            )
+                        else:
+                            obs, step_reward, terminated, truncated = self._step_env_once(slot["env"], effective_action)
+                            fallback_obs = slot["model_obs"][-1] if self.pack_image_sequence else slot["model_obs"]
+                            frame = (
+                                _render_frame(slot["env"], fallback_obs=fallback_obs)
+                                if slot["image_transform"].enabled
+                                else None
+                            )
+                            slot["image_transform"].append(frame, step=next_step)
                         next_model_obs = self._model_observation(slot["env"], obs)
                         slot["model_obs"] = (
                             self._advance_model_history(slot["model_obs"], next_model_obs)
@@ -714,7 +903,7 @@ class _TaskEvaluator:
                             else next_model_obs
                         )
                         slot["reward"] += step_reward
-                        slot["steps"] += 1
+                        slot["steps"] = next_step
                         done = terminated or truncated or slot["steps"] >= max_steps
 
                         if done:
@@ -827,6 +1016,7 @@ class _TaskEvaluator:
             position=progress_position,
             dynamic_ncols=True,
         )
+        slot_id = 0
         for episode in episode_iter:
             episode_seed = self._episode_seed_for_run(
                 latency=latency,
@@ -834,9 +1024,13 @@ class _TaskEvaluator:
                 seed_overrides=seed_overrides,
             )
             episode_seeds.append(episode_seed)
+            self._reset_model_memory(model, slot_id)
             obs, _ = self._reset_env(env, episode_seed)
             model_obs = self._model_observation(env, obs)
             model_input = self._initial_model_history(model_obs) if self.pack_image_sequence else model_obs
+            image_transform = self._make_image_transform()
+            initial_frame = _render_frame(env, fallback_obs=model_obs) if image_transform.enabled else None
+            image_transform.reset(initial_frame, step=0)
             queue.reset()
             done = False
             total_reward = 0.0
@@ -848,7 +1042,11 @@ class _TaskEvaluator:
                     frames.append(frame)
 
             while not done and steps < max_steps:
-                example = self._make_model_example(model_input, prompt)
+                example = self._make_model_example(
+                    model_input if self.pack_image_sequence else image_transform.current(model_obs),
+                    prompt,
+                    slot_id,
+                )
                 output = model.predict_action(examples=[example])
                 actions = output["normalized_actions"]
                 self._validate_action_chunk(actions, batch_size=1)
@@ -865,13 +1063,16 @@ class _TaskEvaluator:
                         if self.pack_image_sequence
                         else model_obs
                     )
+                    next_step = steps + 1
+                    frame = _render_frame(env, fallback_obs=model_obs) if image_transform.enabled else None
+                    image_transform.append(frame, step=next_step)
                     if video_dir is not None:
                         frame = _render_frame(env, fallback_obs=model_obs)
                         if frame is not None:
                             frames.append(frame)
 
                     total_reward += step_reward
-                    steps += 1
+                    steps = next_step
                     done = terminated or truncated or steps >= max_steps
                     if done:
                         break
@@ -927,6 +1128,9 @@ class RlGamesEvalRunner:
         self.output_dir = output_dir
         self.video_output_dir = video_output_dir
         self.video_fps = int(video_fps)
+        self.prompt_mode = str(
+            getattr(cfg.rl_games.env_eval, "prompt_mode", "raw") or "raw"
+        ).strip().lower()
 
     def _stage_cfg(self, stage: str):
         env_eval = self.cfg.rl_games.env_eval
@@ -1012,7 +1216,8 @@ class RlGamesEvalRunner:
 
     def _resolve_prompt(self, latency: int, mapping: Dict[int, Dict[str, Any]], task: str | None = None) -> str:
         if latency in mapping:
-            return str(mapping[latency]["prompt"])
+            prompt = str(mapping[latency]["prompt"])
+            return _apply_prompt_mode(prompt, self.prompt_mode)
         task_cfg = self._cross_task_cfg(task) if task is not None else None
         if task_cfg is not None and self._prompt_map_path(task):
             raise ValueError(f"No eval prompt found for task={task!r}, latency={latency} in {self._prompt_map_path(task)}")
@@ -1020,19 +1225,28 @@ class RlGamesEvalRunner:
         if not prompt:
             prompt = str(getattr(self.cfg.rl_games.env_eval, "task_description", "") or "")
         if prompt:
-            return prompt
+            return _apply_prompt_mode(prompt, self.prompt_mode)
         task = task or str(getattr(self.cfg.rl_games, "task", "flappy"))
         if task == "flappy":
-            return "You are playing Flappy Bird. Pass through the pipe gaps and stay alive. Choose the action: NOOP, FLAP."
-        if task == "demon_attack":
-            return "You are playing Demon Attack from a single game image. Choose exactly one action from: NOOP, FIRE, RIGHT, LEFT, RIGHTFIRE, LEFTFIRE."
-        if task == "deadly_corridor":
-            return (
-                "You are playing Deadly Corridor in VizDoom. Your goal is to survive the corridor, "
-                "fight enemies, and reach the green armor vest at the far end. The available actions are: "
-                "MOVE_FORWARD, MOVE_BACKWARD, MOVE_LEFT, MOVE_RIGHT, TURN_LEFT, TURN_RIGHT, and ATTACK."
+            return _apply_prompt_mode(
+                "You are playing Flappy Bird. Pass through the pipe gaps and stay alive. Choose the action: NOOP, FLAP.",
+                self.prompt_mode,
             )
-        return "Act optimally in the current environment."
+        if task == "demon_attack":
+            return _apply_prompt_mode(
+                "You are playing Demon Attack from a single game image. Choose exactly one action from: NOOP, FIRE, RIGHT, LEFT, RIGHTFIRE, LEFTFIRE.",
+                self.prompt_mode,
+            )
+        if task == "deadly_corridor":
+            return _apply_prompt_mode(
+                (
+                    "You are playing Deadly Corridor in VizDoom. Your goal is to survive the corridor, "
+                    "fight enemies, and reach the green armor vest at the far end. The available actions are: "
+                    "MOVE_FORWARD, MOVE_BACKWARD, MOVE_LEFT, MOVE_RIGHT, TURN_LEFT, TURN_RIGHT, and ATTACK."
+                ),
+                self.prompt_mode,
+            )
+        return _apply_prompt_mode("Act optimally in the current environment.", self.prompt_mode)
 
     def _get_tasks(self) -> List[str]:
         task = str(getattr(self.cfg.rl_games, "task", "flappy"))
@@ -1209,7 +1423,13 @@ class RlGamesEvalRunner:
         for task_name, latency in rollout_iter:
             rollout_iter.set_postfix({"task": task_name, "latency": latency})
             task_eval_cfg = self._cross_task_cfg(task_name)
-            task_eval = _TaskEvaluator(task=task_name, cfg=self.cfg, task_eval_cfg=task_eval_cfg)
+            stage_eval_cfg = self._task_stage_cfg(task_name, stage)
+            task_eval = _TaskEvaluator(
+                task=task_name,
+                cfg=self.cfg,
+                task_eval_cfg=task_eval_cfg,
+                stage_eval_cfg=stage_eval_cfg,
+            )
             prompt = self._resolve_prompt(latency=latency, mapping=prompt_maps.get(task_name, {}), task=task_name)
             num_episodes = self._num_episodes(stage=stage, task=task_name)
             key = f"{task_name}/latency_{latency}"

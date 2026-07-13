@@ -6,6 +6,7 @@ import contextlib
 import inspect
 import json
 import os
+import pickle
 import re
 import sys
 from pathlib import Path
@@ -93,28 +94,10 @@ def _load_source_latency_prompt_map(
     frameskip: int = 1,
     latencies: list[int] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    from datasets import load_dataset
     from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import (
+        _load_train_split,
         build_latency_prompt_map,
-        concatenate_latency_parts,
-        resolve_latency_subdirs,
     )
-
-    def _load(subdir: str | None, columns: list[str] | None = None):
-        load_kwargs = {
-            "split": "train",
-            "cache_dir": cache_dir,
-            "columns": columns,
-            # Hosted RL-game datasets may disagree on `val` vs `validation`
-            # between dataset_info and generated splits. This prompt-map load
-            # only needs train rows, so ignore that metadata-only mismatch.
-            "verification_mode": "no_checks",
-        }
-        if subdir not in (None, ""):
-            load_kwargs["data_dir"] = subdir
-        if dataset_config_name not in (None, ""):
-            return load_dataset(dataset_name, dataset_config_name, **load_kwargs)
-        return load_dataset(dataset_name, **load_kwargs)
 
     column_variants: tuple[list[str] | None, ...] = (
         ["prompt", "latency", "latency_ms", "split"],
@@ -123,31 +106,33 @@ def _load_source_latency_prompt_map(
         ["prompt", "latency_raw_frames", "latency_ms"],
         None,
     )
-
-    def _load_any_variant(subdir: str | None, *, preferred_columns: list[str] | None | object = "__unset__"):
-        variants = column_variants if preferred_columns == "__unset__" else (preferred_columns,)
-        last_exc: Exception | None = None
-        for columns in variants:
-            try:
-                ds = _load(subdir, columns=columns)
-                if columns is None and ("prompt" not in ds.column_names or not ({"latency", "latency_raw_frames"} & set(ds.column_names))):
-                    raise ValueError(
-                        f"prompt source dataset {dataset_name} is missing columns required for a latency prompt map; "
-                        f"available columns: {ds.column_names}"
-                    )
-                return ds, columns
-            except Exception as exc:
-                last_exc = exc
-                continue
-        raise last_exc
-
-    subdirs = resolve_latency_subdirs(dataset_source_subdir, latencies)
-    ds_first, working_columns = _load_any_variant(subdirs[0])
-    parts = [ds_first]
-    for subdir in subdirs[1:]:
-        ds_part, _ = _load_any_variant(subdir, preferred_columns=working_columns)
-        parts.append(ds_part)
-    ds = concatenate_latency_parts(parts)
+    last_exc: Exception | None = None
+    ds = None
+    for columns in column_variants:
+        try:
+            ds = _load_train_split(
+                dataset_name,
+                cache_dir,
+                columns=columns,
+                dataset_config_name=dataset_config_name,
+                dataset_source_subdir=dataset_source_subdir,
+                latencies=latencies,
+            )
+            if columns is None and ("prompt" not in ds.column_names or not ({"latency", "latency_raw_frames"} & set(ds.column_names))):
+                raise ValueError(
+                    f"prompt source dataset {dataset_name} is missing columns required for a latency prompt map; "
+                    f"available columns: {ds.column_names}"
+                )
+            break
+        except Exception as exc:
+            last_exc = exc
+            ds = None
+    if ds is None:
+        raise ValueError(
+            "could not load source dataset latency prompts "
+            f"(dataset={dataset_name!r}, config={dataset_config_name!r}, "
+            f"source_subdir={dataset_source_subdir!r}, latencies={latencies!r})"
+        ) from last_exc
     return build_latency_prompt_map(ds, frameskip=frameskip)
 
 
@@ -421,10 +406,51 @@ def _ensure_base_model(model: str, base_model_dir: Path, base_model_repo_id: str
     return info
 
 
-def _validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, Any]:
+def _starvla_runtime_cache_paths(dataset_dir: Path) -> dict[str, Path]:
+    return {
+        "dataset_statistics": dataset_dir / "dataset_statistics.json",
+        "stats": dataset_dir / "meta" / "stats_gr00t.json",
+        "steps": dataset_dir / "meta" / "steps_data_index.pkl",
+    }
+
+
+def _starvla_runtime_cache_ready(dataset_dir: Path) -> bool:
+    paths = _starvla_runtime_cache_paths(dataset_dir)
+    return all(path.exists() for path in paths.values())
+
+
+def _read_starvla_runtime_cache_summary(data_root_dir: Path, data_mix: str) -> dict[str, Any]:
+    from starVLA.dataloader.gr00t_lerobot.registry import (
+        ROBOT_TYPE_TO_EMBODIMENT_TAG,
+        get_dataset_named_mixture,
+    )
+
+    total_steps = 0
+    total_trajectories = 0
+    first_stats: dict[str, Any] | None = None
+    for dataset_name, _, robot_type in get_dataset_named_mixture(data_mix):
+        paths = _starvla_runtime_cache_paths(data_root_dir / dataset_name)
+        with paths["steps"].open("rb") as stream:
+            steps_cache = pickle.load(stream)
+        total_steps += steps_cache["total_steps"]
+        total_trajectories += steps_cache["num_trajectories"]
+        if first_stats is None:
+            first_stats = {
+                "dataset_stats_path": str(paths["dataset_statistics"]),
+                "dataset_robot_type": robot_type,
+                "dataset_embodiment_tag": str(ROBOT_TYPE_TO_EMBODIMENT_TAG[robot_type]),
+            }
+    assert first_stats is not None
+    return {
+        **first_stats,
+        "dataset_num_steps": total_steps,
+        "dataset_num_trajectories": total_trajectories,
+    }
+
+
+def _materialize_starvla_runtime_cache(data_root_dir: Path, data_mix: str) -> dict[str, Any]:
     from starVLA.dataloader.lerobot_datasets import make_LeRobotSingleDataset
     from starVLA.dataloader.gr00t_lerobot.registry import (
-        ROBOT_TYPE_CONFIG_MAP,
         ROBOT_TYPE_TO_EMBODIMENT_TAG,
         get_dataset_named_mixture,
     )
@@ -452,7 +478,7 @@ def _validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, A
             first_stats = {
                 "dataset_stats_path": str(stats_path),
                 "dataset_robot_type": robot_type,
-                "dataset_embodiment_tag": str(ROBOT_TYPE_TO_EMBODIMENT_TAG.get(robot_type)),
+                "dataset_embodiment_tag": str(ROBOT_TYPE_TO_EMBODIMENT_TAG[robot_type]),
             }
     assert first_stats is not None
     return {
@@ -460,6 +486,15 @@ def _validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, A
         "dataset_num_steps": total_steps,
         "dataset_num_trajectories": total_trajectories,
     }
+
+
+def _validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, Any]:
+    from starVLA.dataloader.gr00t_lerobot.registry import get_dataset_named_mixture
+
+    mixture = get_dataset_named_mixture(data_mix)
+    if all(_starvla_runtime_cache_ready(data_root_dir / dataset_name) for dataset_name, _, _ in mixture):
+        return _read_starvla_runtime_cache_summary(data_root_dir=data_root_dir, data_mix=data_mix)
+    return _materialize_starvla_runtime_cache(data_root_dir=data_root_dir, data_mix=data_mix)
 
 
 def _initialization_mode(args) -> str:
@@ -484,7 +519,15 @@ def _carrier_dataset_name(data_mix: str, action_carrier: str) -> str:
     return f"{data_mix}__bridge"
 
 
-def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -> dict[str, Any]:
+def _ensure_rl_games_lerobot_dataset(
+    args,
+    *,
+    convert_dataset,
+    verify_dataset,
+    env_name: str = "",
+    env_fps: float = 0.0,
+    obs_fps: float = 0.0,
+) -> dict[str, Any]:
     data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
     action_carrier = _action_carrier(args)
     action_layout = str(getattr(args, "deadly_action_layout", "") or "")
@@ -604,9 +647,45 @@ def _ensure_rl_games_lerobot_dataset(args, *, convert_dataset, verify_dataset) -
                 f"mixed-latency dataset conversion did not create a usable prompt map: {prompt_map}. "
                 "Check that the selected training episodes contain latency/prompt columns for more than one latency."
             )
+        validation = _materialize_starvla_runtime_cache(data_root_dir=data_root_dir, data_mix=data_mix)
+        eval_validation = _materialize_starvla_runtime_cache(data_root_dir=data_root_dir, data_mix=eval_data_mix)
+    else:
+        validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=data_mix)
+        eval_validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=eval_data_mix)
 
-    validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=data_mix)
-    eval_validation = _validate_starvla_dataset(data_root_dir=data_root_dir, data_mix=eval_data_mix)
+    # If training used a latency_filter the embedded prompt map only has the filtered
+    # latencies. Load the missing latency subdirs from HF (already cached for training
+    # latencies; downloads only the needed eval-only ones) and fill in the map so that
+    # post-train eval at non-training latencies gets the correct dataset prompt.
+    latency_filter = getattr(args, "latency_filter", None)
+    eval_latencies = getattr(args, "eval_latencies", None)
+    all_needed = sorted({
+        *(int(v) for v in (latency_filter or [])),
+        *(int(v) for v in (eval_latencies or [])),
+    })
+    if all_needed and source_dataset:
+        existing_map: dict = {}
+        if prompt_map.exists():
+            try:
+                existing_map = json.loads(prompt_map.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        missing = [lat for lat in all_needed if str(lat) not in existing_map]
+        if missing:
+            full_map = _load_source_latency_prompt_map(
+                source_dataset,
+                cache_dir=getattr(args, "dataset_cache_dir", None),
+                dataset_config_name=source_config_name,
+                dataset_source_subdir=source_subdir,
+                latencies=all_needed,
+                frameskip=round(env_fps / obs_fps) if env_fps and obs_fps else 1,
+            )
+            merged = {**existing_map, **full_map}
+            prompt_map.write_text(
+                json.dumps({str(k): merged[str(k)] for k in sorted(int(k) for k in merged)}, indent=2),
+                encoding="utf-8",
+            )
+
     return {
         "dataset_ready": True,
         "dataset_converted": converted,
@@ -632,6 +711,9 @@ def _ensure_flappy_dataset(args) -> dict[str, Any]:
         args,
         convert_dataset=convert_dataset,
         verify_dataset=verify_dataset,
+        env_name="flappy",
+        env_fps=30.0,
+        obs_fps=30.0,
     )
 
 
@@ -643,6 +725,9 @@ def _ensure_demon_attack_dataset(args) -> dict[str, Any]:
         args,
         convert_dataset=convert_dataset,
         verify_dataset=verify_dataset,
+        env_name="demon_attack",
+        env_fps=60.0,
+        obs_fps=15.0,
     )
 
 
@@ -862,6 +947,17 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 manifest["train_episodes_per_latency"] = episodes_per_latency
                 manifest["eval_episodes_per_latency"] = eval_episodes_per_latency
                 manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            # The per-task derived names (e.g. ..._lat0_2_4__40ep_per_lat__bridge)
+            # are not in any static data_config, and the combined cross__ mixture
+            # is only registered after this loop. Register each as a trivial
+            # single-dataset mixture so the per-task materialize below can resolve
+            # it via get_dataset_named_mixture.
+            from starVLA.dataloader.gr00t_lerobot.registry import DATASET_NAMED_MIXTURES
+
+            DATASET_NAMED_MIXTURES[data_mix] = [[data_mix, weight, robot_type]]
+            DATASET_NAMED_MIXTURES[eval_data_mix] = [[eval_data_mix, weight, robot_type]]
+            _materialize_starvla_runtime_cache(data_root_dir=data_root_dir, data_mix=data_mix)
+            _materialize_starvla_runtime_cache(data_root_dir=data_root_dir, data_mix=eval_data_mix)
             converted = True
 
         mixture_entries.append([data_mix, weight, robot_type])
@@ -907,6 +1003,9 @@ def _ensure_deadly_corridor_dataset(args) -> dict[str, Any]:
         args,
         convert_dataset=convert_dataset,
         verify_dataset=verify_dataset,
+        env_name="deadly_corridor",
+        env_fps=35.0,
+        obs_fps=8.75,
     )
 
 

@@ -148,6 +148,20 @@ class Qwenvl_OFT(baseframework):
         self.kv_memory_enabled = bool(getattr(kv_cfg, "enabled", False)) if kv_cfg is not None else False
         self.kv_window = int(getattr(kv_cfg, "window", 4)) if kv_cfg is not None else 4
         self.kv_rollout_len = int(getattr(kv_cfg, "rollout_len", max(self.kv_window + 1, 2))) if kv_cfg is not None else self.kv_window + 1
+        # Packed single-forward training path (StreamingLLM-style sliding-window+sink
+        # mask via FlexAttention) — replaces the per-frame Python loop. Eval/live still
+        # uses the streaming KV memory (`_predict_action_memory`). OFF by default so the
+        # legacy loop stays the reference; enable per experiment via
+        # `framework.kv_memory.packed_train: true`.
+        self.kv_train_packed = bool(getattr(kv_cfg, "packed_train", False)) if kv_cfg is not None else False
+        # Per-step re-based sink for the packed path: replicate the (short) text
+        # prefix once per step and re-base its M-RoPE positions so the sink→frame
+        # distance matches the eval rolling-KV layout exactly (StreamingLLM
+        # "positions within the cache"), instead of one global sink whose distance
+        # grows with the step index. ON by default — the growing-distance sink was
+        # the train/eval forward mismatch behind the packed run's eval collapse.
+        # Set false to fall back to the single global sink for A/B.
+        self.kv_rebased_sink = bool(getattr(kv_cfg, "rebased_sink", True)) if kv_cfg is not None else True
         # Per-stream (eval slot) memories; rebuilt per sample during training.
         self._kv_memories: dict = {}
 
@@ -344,6 +358,8 @@ class Qwenvl_OFT(baseframework):
                 action_loss (torch.Tensor): Scalar diffusion noise prediction loss.
         """
         if self.kv_memory_enabled:
+            if self.kv_train_packed:
+                return self._forward_memory_packed(examples)
             return self._forward_memory(examples)
 
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
@@ -423,7 +439,7 @@ class Qwenvl_OFT(baseframework):
         if profile_timing:
             timing_metrics["timing/action_head_loss"] = self._profile_elapsed(t_action)
 
-        return {"action_loss": action_loss, "timing": timing_metrics, "batch_stats": batch_stats}
+        return {"action_loss": action_loss, "loss_weight": float(len(examples)), "timing": timing_metrics, "batch_stats": batch_stats}
 
     @torch.inference_mode()
     def predict_action(
@@ -626,79 +642,377 @@ class Qwenvl_OFT(baseframework):
                 memory.text, memory.frames = sliced.text, sliced.frames
         return last_hidden, new_ids
 
+    # ------------------------------------------------------------------ #
+    # Packed single-forward training path (StreamingLLM-style mask).
+    #
+    # Instead of the per-frame Python loop (`_forward_memory`), pack the whole
+    # rollout into ONE sequence
+    #     [text/sink] [frame_1][action_1] ... [frame_R][action_R]
+    # and run a SINGLE Qwen3-VL forward under a FlexAttention BlockMask that
+    # reproduces the streaming visibility:
+    #   * the text prefix is an always-visible attention sink (StreamingLLM);
+    #   * each frame attends only the last `kv_window` frames (sliding window);
+    #   * each action read-out block is isolated (seen only by its own step), so
+    #     the frame KV stream is bit-identical to the streaming loop / eval.
+    # Custom M-RoPE `position_ids` keep frame->frame and action->frame relative
+    # distances exactly matching eval; only the text-sink->frame absolute distance
+    # grows with step (accepted approximation — the sink is distance-robust).
+    # Eval/live (`_predict_action_memory`) is untouched and keeps the rolling KV.
+    # ------------------------------------------------------------------ #
+    def _packed_window_layout(self, frames, instruction):
+        """Build the packed [text][f1][a1]...[fR][aR] window for ONE stream.
+
+        Token structure is content-independent (image placeholders are identical
+        per frame), so the prefix / frame / action blocks are reconstructed by
+        token-replication (matching `_kv_forward_step_batched`'s `window_ids`),
+        which guarantees each action block equals the per-step layout exactly.
+
+        Returns dict with: input_ids [1,L], pixel_values, image_grid_thw [R,3],
+        position_ids [3,1,L] (custom M-RoPE), kind [L] (0=text,1=frame,2=action),
+        step [L] (frame/step index for frame&action tokens, -1 for text),
+        action_idx [R, chunk_len] (packed indices of each step's action tokens).
+        """
+        R = len(frames)
+        backbone = self.qwen_vl_interface.model.model  # Qwen3VLModel
+        device = self.qwen_vl_interface.model.device
+
+        # One processor call per frame: identical token block, distinct pixels.
+        per_frame = [self._build_text_first_inputs([f], instruction) for f in frames]
+        ids1 = per_frame[0]["input_ids"][0]
+        grid1 = per_frame[0]["image_grid_thw"][:1]  # [1,3]
+        prefix_len, frame_lens, action_len = self._kv_segments(ids1)
+        frame_len = frame_lens[0]
+        for pf in per_frame:
+            pl, fl, al = self._kv_segments(pf["input_ids"][0])
+            if (pl, fl[0], al) != (prefix_len, frame_len, action_len):
+                raise RuntimeError(
+                    "Packed KV memory: frames have inconsistent token layout "
+                    f"({(pl, fl[0], al)} vs {(prefix_len, frame_len, action_len)}); "
+                    "all frames in a rollout must share resolution/grid."
+                )
+
+        prefix = ids1[:prefix_len]
+        frame_block = ids1[prefix_len : prefix_len + frame_len]
+        action_block = ids1[prefix_len + frame_len :]  # incl. assistant header
+        block_len = frame_len + action_len
+
+        pixel_values = torch.cat([pf["pixel_values"] for pf in per_frame], dim=0)
+        grid = grid1.repeat(R, 1)  # [R, 3]
+
+        # Frames-only M-RoPE positions: frames laid out consecutively (no action
+        # in between), so frame→frame / action→frame relative distances match eval
+        # ("positions within the cache"). These are the canonical frame positions
+        # reused regardless of where the frame sits in the packed token sequence.
+        frames_only_ids = torch.cat([prefix] + [frame_block] * R).unsqueeze(0)
+        full_pos_f, _ = backbone.get_rope_index(frames_only_ids, image_grid_thw=grid)  # [3,1,Lf]
+        text_pos = full_pos_f[:, :, :prefix_len]
+
+        action_offsets = (action_block == self.action_token_id).nonzero(as_tuple=False).flatten()
+        if action_offsets.numel() < self.chunk_len:
+            raise RuntimeError(
+                f"Packed KV memory: action block has {action_offsets.numel()} action "
+                f"tokens (< chunk_len={self.chunk_len})."
+            )
+        action_offsets = action_offsets[-self.chunk_len :]  # last chunk_len, matches gather
+
+        def _frame_pos(k):
+            s = prefix_len + k * frame_len
+            return full_pos_f[:, :, s : s + frame_len]
+
+        def _action_pos(frame_pos_k):
+            fk_max = int(frame_pos_k.max().item())
+            ap = torch.arange(1, action_len + 1, device=device) + fk_max
+            return ap.view(1, 1, -1).expand(3, 1, -1)
+
+        W = self.kv_window
+        parts, pos_parts, kind_parts, step_parts, action_idx_rows = [], [], [], [], []
+
+        if self.kv_rebased_sink:
+            # Per-step re-based sink, with the redundant pre-eviction sinks deduped.
+            # Steps k < W all have j0=0 → o_k=0 → an identical sink at [0,P), so they
+            # share ONE front sink (step=-2, visible to queries with step < W). This
+            # is exactly eval before any eviction (sink pinned at the front, frames
+            # growing from P). Steps k >= W each carry their own re-based sink
+            # ([sink_k][frame_k][action_k]) at o_k so the sink→frame distance equals
+            # eval's rolling-KV layout (bit-exact). Net: 1 + max(0,R-W) sinks instead
+            # of R, saving (W-1) prefix copies while staying numerically identical.
+            base0 = int(full_pos_f[0, 0, prefix_len].item())  # frame 0's temporal start
+
+            # Shared front sink for the pre-eviction steps (step=-2).
+            parts.append(prefix)
+            pos_parts.append(text_pos)
+            kind_parts.append(torch.zeros(prefix_len, dtype=torch.long, device=device))
+            step_parts.append(torch.full((prefix_len,), -2, dtype=torch.long, device=device))
+            cursor = prefix_len
+
+            for k in range(R):
+                if k >= W:
+                    # Re-based sink_k sits right before step k's oldest visible frame.
+                    j0 = k - W + 1
+                    o_k = int(full_pos_f[0, 0, prefix_len + j0 * frame_len].item()) - base0
+                    parts.append(prefix)
+                    pos_parts.append(text_pos + o_k)  # shift all 3 M-RoPE dims by o_k
+                    kind_parts.append(torch.zeros(prefix_len, dtype=torch.long, device=device))
+                    step_parts.append(torch.full((prefix_len,), k, dtype=torch.long, device=device))
+                    cursor += prefix_len
+                frame_pos_k = _frame_pos(k)
+                parts += [frame_block, action_block]
+                pos_parts += [frame_pos_k, _action_pos(frame_pos_k)]
+                kind_parts.append(
+                    torch.cat([
+                        torch.ones(frame_len, dtype=torch.long, device=device),
+                        torch.full((action_len,), 2, dtype=torch.long, device=device),
+                    ])
+                )
+                step_parts.append(torch.full((block_len,), k, dtype=torch.long, device=device))
+                action_idx_rows.append(cursor + frame_len + action_offsets)
+                cursor += block_len
+        else:
+            # Legacy single global sink: [sink][f0 a0]...[f_{R-1} a_{R-1}]. Sink at
+            # the front (step=-1, always visible); sink→frame distance grows with k.
+            parts.append(prefix)
+            pos_parts.append(text_pos)
+            kind_parts.append(torch.zeros(prefix_len, dtype=torch.long, device=device))
+            step_parts.append(torch.full((prefix_len,), -1, dtype=torch.long, device=device))
+            cursor = prefix_len
+            for k in range(R):
+                frame_pos_k = _frame_pos(k)
+                parts += [frame_block, action_block]
+                pos_parts += [frame_pos_k, _action_pos(frame_pos_k)]
+                kind_parts.append(
+                    torch.cat([
+                        torch.ones(frame_len, dtype=torch.long, device=device),
+                        torch.full((action_len,), 2, dtype=torch.long, device=device),
+                    ])
+                )
+                step_parts.append(torch.full((block_len,), k, dtype=torch.long, device=device))
+                action_idx_rows.append(cursor + frame_len + action_offsets)
+                cursor += block_len
+
+        input_ids = torch.cat(parts).unsqueeze(0)  # [1, L]
+        position_ids = torch.cat(pos_parts, dim=2)  # [3,1,L]
+        kind = torch.cat(kind_parts)
+        step = torch.cat(step_parts)
+        action_idx = torch.stack(action_idx_rows, dim=0)  # [R, chunk_len]
+
+        return {
+            "input_ids": input_ids,
+            "pixel_values": pixel_values,
+            "image_grid_thw": grid,
+            "position_ids": position_ids,
+            "kind": kind,
+            "step": step,
+            "action_idx": action_idx,
+        }
+
+    def _packed_block_mask(self, kind, step, L, batch):
+        """Build a FlexAttention BlockMask for the packed sliding-window+sink layout."""
+        from torch.nn.attention.flex_attention import create_block_mask
+        from starVLA.model.modules.vlm.kv_memory import make_packed_sliding_mask_mod
+
+        mask_mod = make_packed_sliding_mask_mod(kind, step, self.kv_window)
+        # B=H=None → the mask is shared across batch and heads (it depends only on
+        # token kind/step, not content), so one BlockMask covers the whole batch.
+        return create_block_mask(mask_mod, B=None, H=None, Q_LEN=L, KV_LEN=L, device=str(kind.device))
+
+    def _assert_flex_attention(self):
+        """Packed training needs the decoder dispatched through FlexAttention.
+
+        We pass a FlexAttention BlockMask straight to the model, so the decoder
+        (forward AND gradient-checkpointing recompute during backward) must use
+        the flex backend the whole time — a transient toggle around the forward
+        would leave the recompute on sdpa and choke on the BlockMask. The eval
+        streaming path also runs fine under flex, so the whole model is simply
+        loaded with `attn_implementation: flex_attention`.
+        """
+        _, _, _, text_config = self._kv_components()
+        impl = getattr(text_config, "_attn_implementation", None)
+        if impl != "flex_attention":
+            raise RuntimeError(
+                "Packed KV-memory training requires the VLM loaded with "
+                f"attn_implementation='flex_attention' (got {impl!r}). Set "
+                "framework.qwenvl.attn_implementation: flex_attention."
+            )
+
+    def _forward_memory_packed(self, examples: List[dict]) -> dict:
+        """Training forward via a single packed sliding-window+sink masked pass.
+
+        Per-frame supervision identical to `_forward_memory` (every real frame is
+        supervised at the window it naturally has), but the expensive VLM forward
+        runs ONCE per rollout instead of R times. Full BPTT across the rollout
+        (no per-step detach) — pair with gradient checkpointing for memory.
+        """
+        self._assert_flex_attention()
+        profile = self._profile_timing_enabled()
+        timing = {"timing/mem_nograd_fwd": 0.0, "timing/mem_grad_fwd": 0.0, "timing/mem_action_head": 0.0}
+
+        instructions = [
+            self._instruction_with_state(ex["lang"], ex.get("state") if "state" in ex else None)
+            for ex in examples
+        ]
+        groups: dict = {}
+        for idx, instruction in enumerate(instructions):
+            valid = np.asarray(examples[idx]["valid"], dtype=bool)
+            groups.setdefault((instruction, tuple(valid.tolist())), []).append(idx)
+
+        total_weighted_loss = None
+        total_weight = 0.0
+        for (instruction, valid_key), indices in groups.items():
+            valid = np.asarray(valid_key, dtype=bool)
+            real_positions = [k for k in range(len(valid)) if valid[k]]
+            R = len(real_positions)
+            if R == 0:
+                continue
+            action_env_dims = [int(examples[i].get("action_env_dim", self.action_env_dim)) for i in indices]
+            rl_games_tasks = [str(examples[i].get("rl_games_task", "")) for i in indices]
+            if not any(rl_games_tasks):
+                rl_games_tasks = None
+
+            # Build per-sample packed layouts (identical token structure, distinct pixels).
+            layouts = [
+                self._packed_window_layout([examples[i]["image"][k] for k in real_positions], instruction)
+                for i in indices
+            ]
+            base = layouts[0]
+            L = base["input_ids"].shape[1]
+            B = len(indices)
+            input_ids = base["input_ids"].expand(B, -1).contiguous()
+            position_ids = base["position_ids"].expand(3, B, -1).contiguous()
+            pixel_values = torch.cat([lay["pixel_values"] for lay in layouts], dim=0)
+            grid = torch.cat([lay["image_grid_thw"] for lay in layouts], dim=0)  # [B*R, 3]
+            action_idx = base["action_idx"]  # [R, chunk_len]
+            block_mask = self._packed_block_mask(base["kind"], base["step"], L, B)
+
+            t_fwd = self._profile_start() if profile else None
+            last_hidden = self._forward_qwen_last_hidden(
+                {
+                    "input_ids": input_ids,
+                    "position_ids": position_ids,
+                    "attention_mask": block_mask,
+                    "pixel_values": pixel_values,
+                    "image_grid_thw": grid,
+                    "use_cache": False,
+                }
+            )  # [B, L, H]
+            if profile:
+                timing["timing/mem_grad_fwd"] += self._profile_elapsed(t_fwd)
+
+            t_head = self._profile_start() if profile else None
+            with torch.autocast("cuda", dtype=torch.float32):
+                for j, k in enumerate(real_positions):
+                    action_queries = last_hidden[:, action_idx[j], :]  # [B, chunk_len, H]
+                    group_preds = self.action_model.predict_action(action_queries)  # [B, chunk, dim]
+                    targets = [self._prepare_action_array(examples[i]["actions_per_frame"][k]) for i in indices]
+                    targets = torch.tensor(np.array(targets), device=group_preds.device, dtype=group_preds.dtype)
+                    targets = targets[:, -self.action_horizon :, :]
+                    step_loss = self._compute_action_loss(
+                        group_preds, targets, action_env_dims=action_env_dims, rl_games_tasks=rl_games_tasks
+                    )
+                    weight = float(sum(float(np.asarray(examples[i]["density_weight"])[k]) for i in indices))
+                    contribution = step_loss * weight
+                    total_weighted_loss = contribution if total_weighted_loss is None else total_weighted_loss + contribution
+                    total_weight += weight
+            if profile:
+                timing["timing/mem_action_head"] += self._profile_elapsed(t_head)
+
+        action_loss = total_weighted_loss / max(total_weight, 1e-6)
+        return {"action_loss": action_loss, "loss_weight": total_weight, "timing": timing, "batch_stats": {}}
+
     def _instruction_with_state(self, instruction, state):
         if state is None:
             return instruction
         return self.add_discretized_state_to_instruction([instruction], [state])[0]
 
     def _forward_memory(self, examples: List[dict]) -> dict:
-        """Training forward with the streaming KV memory (req3, milestone 5).
+        """Training forward with the streaming KV memory: per-frame supervision.
 
-        Each sample is a contiguous R-frame rollout (R = rollout_len, R > window so
-        eviction is exercised). History KV is detached between steps (truncated BPTT,
-        depth 1), and the action loss is taken at the final step. Per-step action
-        labels (loss at every step) are a future extension.
+        Each sample is an R-frame rollout `[t-R+1 .. t]`; the dataloader marks clamp
+        padding via ``valid`` and supplies one action chunk per frame in
+        ``actions_per_frame`` ([R, H, dim]). We skip padding frames (never feed memory,
+        never supervise) and supervise EVERY real frame at the window it naturally has
+        (1 -> window, then evict), which matches eval (`_predict_action_memory`) frame
+        for frame, including the unfilled window at an episode's start. History KV is
+        detached between steps (truncated BPTT depth 1), so each step's loss flows only
+        through that step's forward; the per-step weighted losses are summed and the
+        trainer backpropagates once.
 
-        Samples that share an instruction (hence the same token layout) run their
-        rollout in one batched forward via `_kv_forward_step_batched`; differing
-        instructions form their own group, so this degrades to per-sample at worst
-        (mirrors `_predict_action_memory`). The non-final R-1 steps run under
-        `no_grad` since their KV is detached and never carries gradient anyway, which
-        keeps only the final step's activations and avoids 8x graph-building cost.
+        Same-instruction, same-`valid` rollouts share a token layout and window
+        evolution, so they run each step in one batched forward via
+        `_kv_forward_step_batched` (degrades to per-sample otherwise), mirroring
+        `_predict_action_memory`.
         """
+        profile = self._profile_timing_enabled()
+        timing = {"timing/mem_nograd_fwd": 0.0, "timing/mem_grad_fwd": 0.0, "timing/mem_action_head": 0.0}
+
         instructions = [
             self._instruction_with_state(ex["lang"], ex.get("state") if "state" in ex else None)
             for ex in examples
         ]
 
-        # Group same-instruction (same-layout) rollouts so they batch into one forward.
+        # Group rollouts that share the prompt AND the same real/padding pattern: those
+        # march through identical window states each step, so they batch cleanly.
         groups: dict = {}
         for idx, instruction in enumerate(instructions):
-            groups.setdefault(instruction, []).append(idx)
+            valid = np.asarray(examples[idx]["valid"], dtype=bool)
+            groups.setdefault((instruction, tuple(valid.tolist())), []).append(idx)
 
-        preds: List[Optional[torch.Tensor]] = [None] * len(examples)
-        for instruction, indices in groups.items():
+        total_weighted_loss = None
+        total_weight = 0.0
+        for (instruction, valid_key), indices in groups.items():
+            valid = np.asarray(valid_key, dtype=bool)
+            real_positions = [k for k in range(len(valid)) if valid[k]]
             memories = [self._new_kv_memory() for _ in indices]
             rollout = [examples[i]["image"] for i in indices]
-            rollout_len = len(rollout[0])
-            last_hidden = new_ids = None
-            for step in range(rollout_len):
-                if step > 0:
+            action_env_dims = [int(examples[i].get("action_env_dim", self.action_env_dim)) for i in indices]
+            rl_games_tasks = [str(examples[i].get("rl_games_task", "")) for i in indices]
+            if not any(rl_games_tasks):
+                rl_games_tasks = None
+
+            for step_pos, k in enumerate(real_positions):
+                if step_pos > 0:
                     for memory in memories:
                         memory.detach_()  # truncated BPTT: history is a fixed memory
-                step_frames = [frames[step] for frames in rollout]
-                if step < rollout_len - 1:
-                    with torch.no_grad():
-                        last_hidden, new_ids = self._kv_forward_step_batched(memories, step_frames, instruction)
-                else:
-                    last_hidden, new_ids = self._kv_forward_step_batched(memories, step_frames, instruction)
+                step_frames = [frames[k] for frames in rollout]
 
-            with torch.autocast("cuda", dtype=torch.float32):
-                action_queries = self._gather_action_token_embeddings(
-                    last_hidden, new_ids, action_token_id=self.action_token_id
+                t_fwd = self._profile_start() if profile else None
+                last_hidden, new_ids = self._kv_forward_step_batched(memories, step_frames, instruction)
+                if profile:
+                    timing["timing/mem_grad_fwd"] += self._profile_elapsed(t_fwd)
+
+                t_head = self._profile_start() if profile else None
+                with torch.autocast("cuda", dtype=torch.float32):
+                    action_queries = self._gather_action_token_embeddings(
+                        last_hidden, new_ids, action_token_id=self.action_token_id
+                    )
+                    group_preds = self.action_model.predict_action(action_queries)  # [Bg, chunk, dim]
+                    targets = [
+                        self._prepare_action_array(examples[i]["actions_per_frame"][k]) for i in indices
+                    ]
+                    targets = torch.tensor(
+                        np.array(targets), device=group_preds.device, dtype=group_preds.dtype
+                    )  # [Bg, H, dim]
+                    targets = targets[:, -self.action_horizon :, :]
+                    step_loss = self._compute_action_loss(
+                        group_preds,
+                        targets,
+                        action_env_dims=action_env_dims,
+                        rl_games_tasks=rl_games_tasks,
+                    )
+                if profile:
+                    timing["timing/mem_action_head"] += self._profile_elapsed(t_head)
+
+                # Per-supervised-step density weight: sum of the group's per-frame
+                # weights at frame k. Uniform weights reduce this to a sample-count
+                # weighting, i.e. the exact mean over all supervised (sample, step).
+                weight = float(
+                    sum(float(np.asarray(examples[i]["density_weight"])[k]) for i in indices)
                 )
-                group_preds = self.action_model.predict_action(action_queries)  # [Bg, chunk, dim]
-            for local, original in enumerate(indices):
-                preds[original] = group_preds[local : local + 1]
+                contribution = step_loss * weight
+                total_weighted_loss = contribution if total_weighted_loss is None else total_weighted_loss + contribution
+                total_weight += weight
 
-        # Assemble the batch in original order and reduce once, matching the non-memory
-        # `forward` loss semantics (per-sample action_env_dim and rl_games_task).
-        pred_actions = torch.cat(preds, dim=0)  # [B, chunk, dim]
-        targets = [self._prepare_action_array(ex["action"]) for ex in examples]
-        targets = torch.tensor(np.array(targets), device=pred_actions.device, dtype=pred_actions.dtype)
-        targets = targets[:, -self.action_horizon :, :]
-        action_env_dims = [int(ex.get("action_env_dim", self.action_env_dim)) for ex in examples]
-        rl_games_tasks = [str(ex.get("rl_games_task", "")) for ex in examples]
-        if not any(rl_games_tasks):
-            rl_games_tasks = None
-
-        action_loss = self._compute_action_loss(
-            pred_actions,
-            targets,
-            action_env_dims=action_env_dims,
-            rl_games_tasks=rl_games_tasks,
-        )
-        return {"action_loss": action_loss}
+        action_loss = total_weighted_loss / max(total_weight, 1e-6)
+        return {"action_loss": action_loss, "loss_weight": total_weight, "timing": timing, "batch_stats": {}}
 
     @torch.inference_mode()
     def _predict_action_memory(self, examples: List[dict]) -> dict:

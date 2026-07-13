@@ -6,6 +6,7 @@ import time
 from typing import Optional
 
 import torch
+from starVLA.model.profiling import stage_timer as _stage
 from starVLA.training.trainer_utils import initialize_overwatch
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -25,6 +26,86 @@ _ACTION_TOKEN_MAX = (
 
 
 import torch.nn as nn
+
+
+def _patch_qwen3vl_flash_attention_position_ids() -> None:
+    from transformers.models.qwen3_vl import modeling_qwen3_vl as qwen3_vl
+
+    text_attention_cls = qwen3_vl.Qwen3VLTextAttention
+    if hasattr(text_attention_cls, "_starvla_flash_attention_position_ids_patched"):
+        return
+
+    original_forward = text_attention_cls.forward
+
+    def forward_without_flash_attention_position_ids(self, *args, **kwargs):
+        # Qwen3-VL already applies M-RoPE through position_embeddings before
+        # attention. Passing the repeated temporal M-RoPE ids into HF's FA2
+        # wrapper makes Transformers 4.57 mis-detect packed sequences and build
+        # empty cu_seqlens on KV-memory cache steps.
+        if self.config._attn_implementation == "flash_attention_2" and "position_ids" in kwargs:
+            del kwargs["position_ids"]
+        return original_forward(self, *args, **kwargs)
+
+    text_attention_cls.forward = forward_without_flash_attention_position_ids
+    text_attention_cls._starvla_flash_attention_position_ids_patched = True
+
+
+# FlexAttention backend selector. PyTorch 2.12 has native sm_120 Triton flex
+# configs, so the old torch-2.7 small-smem num_stages override is intentionally
+# not injected on the Triton path. FA4 is a distinct FlexAttention backend and
+# should receive only the backend selector.
+_FLEX_KERNEL_OPTIONS_BY_BACKEND = {
+    "triton": {"BACKEND": "TRITON"},
+    "flash": {"BACKEND": "FLASH"},
+}
+
+
+def _patch_qwen3vl_flex_attention_support(flex_backend: str) -> None:
+    """Allow loading Qwen3-VL with ``attn_implementation='flex_attention'``.
+
+    Qwen3-VL's attention already dispatches through the generic
+    ``ALL_ATTENTION_FUNCTIONS`` interface (which includes the ``flex_attention``
+    integration), but the model classes conservatively declare
+    ``_supports_flex_attn = False``, so Transformers 4.57 refuses to load with
+    flex at __init__. Flipping the flag lets the official dispatch path run; the
+    packed KV-memory training (`QwenOFT._forward_memory_packed`) passes a
+    BlockMask that FlexAttention consumes natively.
+
+    Also wraps the registered ``flex_attention`` interface to inject the explicit
+    backend selector. Wrapping the dispatch entry — rather than threading
+    ``kernel_options`` through the top-level forward kwargs — guarantees both the
+    forward and the gradient-checkpointing backward recompile pick it up.
+    """
+    from transformers.models.qwen3_vl import modeling_qwen3_vl as qwen3_vl
+
+    for cls_name in (
+        "Qwen3VLForConditionalGeneration",
+        "Qwen3VLModel",
+        "Qwen3VLTextModel",
+        "Qwen3VLPreTrainedModel",
+    ):
+        cls = getattr(qwen3_vl, cls_name, None)
+        if cls is not None:
+            cls._supports_flex_attn = True
+
+    from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+    base_flex = ALL_ATTENTION_FUNCTIONS["flex_attention"]
+    if getattr(base_flex, "_starvla_kernel_options_patched", False):
+        if base_flex._starvla_flex_backend == flex_backend:
+            return
+        base_flex = base_flex._starvla_base_flex_attention
+
+    kernel_options = _FLEX_KERNEL_OPTIONS_BY_BACKEND[flex_backend]
+
+    def flex_attention_with_kernel_options(*args, **kwargs):
+        kwargs["kernel_options"] = kernel_options
+        return base_flex(*args, **kwargs)
+
+    flex_attention_with_kernel_options._starvla_kernel_options_patched = True
+    flex_attention_with_kernel_options._starvla_flex_backend = flex_backend
+    flex_attention_with_kernel_options._starvla_base_flex_attention = base_flex
+    ALL_ATTENTION_FUNCTIONS["flex_attention"] = flex_attention_with_kernel_options
 
 
 class _QWen3_VL_Interface(nn.Module):
@@ -59,10 +140,15 @@ class _QWen3_VL_Interface(nn.Module):
         # Fallback to sdpa if flash_attention_2 is requested but flash_attn is not installed
         if attn_implementation == "flash_attention_2":
             try:
-                import flash_attn  # noqa: F401
+                import flash_attn_2_cuda  # noqa: F401
             except ImportError:
                 print("[WARNING] flash_attn not installed, falling back to sdpa")
                 attn_implementation = "sdpa"
+            else:
+                _patch_qwen3vl_flash_attention_position_ids()
+
+        if attn_implementation == "flex_attention":
+            _patch_qwen3vl_flex_attention_support(qwenvl_config["flex_backend"])
 
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_id,
@@ -219,39 +305,41 @@ class _QWen3_VL_Interface(nn.Module):
             )
         return generation_output
 
-    def build_qwenvl_inputs(self, images, instructions, solutions=None, **kwargs):
+    def build_qwenvl_inputs(self, images, instructions, solutions=None, profiler=None, **kwargs):
         """
         Build model inputs from raw data (images + instructions + optional solutions).
         Follow Oficial Qwen3-VL Instruct format: https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct
         """
 
         # Create messages: one message per sample
-        messages = []
-        assert len(images) == len(instructions), "Images and instructions must have the same length"
-        for imgs, instruction in zip(images, instructions):
-            content = [{"type": "image", "image": img} for img in imgs]
+        with _stage(profiler, "starvla_qwen_message_build_ms"):
+            messages = []
+            assert len(images) == len(instructions), "Images and instructions must have the same length"
+            for imgs, instruction in zip(images, instructions):
+                content = [{"type": "image", "image": img} for img in imgs]
 
-            if "CoT_prompt" in self.config.datasets.vla_data:  # If using a grounding prompt to task
-                CoT_prompt = self.config.datasets.vla_data.get("CoT_prompt", "")
-                prompt = CoT_prompt.replace("{instruction}", instruction)
-            else:
-                prompt = instruction
+                if "CoT_prompt" in self.config.datasets.vla_data:  # If using a grounding prompt to task
+                    CoT_prompt = self.config.datasets.vla_data.get("CoT_prompt", "")
+                    prompt = CoT_prompt.replace("{instruction}", instruction)
+                else:
+                    prompt = instruction
 
-            content.append({"type": "text", "text": prompt})
-            msg = [{"role": "user", "content": content}]
+                content.append({"type": "text", "text": prompt})
+                msg = [{"role": "user", "content": content}]
 
-            if solutions is not None:
-                solution = solutions[len(messages)]
-                msg.append({"role": "assistant", "content": [{"type": "text", "text": solution}]})
-            messages.append(msg)
+                if solutions is not None:
+                    solution = solutions[len(messages)]
+                    msg.append({"role": "assistant", "content": [{"type": "text", "text": solution}]})
+                messages.append(msg)
 
         profile_timing = self._profile_timing_enabled()
         build_timing = {}
 
         t_processor = time.perf_counter() if profile_timing else None
-        batch_inputs = self.processor.apply_chat_template(
-            messages, tokenize=True, padding=True, add_generation_prompt=True, return_dict=True, return_tensors="pt"
-        )
+        with _stage(profiler, "starvla_qwen_processor_ms"):
+            batch_inputs = self.processor.apply_chat_template(
+                messages, tokenize=True, padding=True, add_generation_prompt=True, return_dict=True, return_tensors="pt"
+            )
         if profile_timing:
             build_timing["timing/qwen_processor"] = time.perf_counter() - t_processor
 
@@ -281,7 +369,8 @@ class _QWen3_VL_Interface(nn.Module):
             batch_inputs["labels"] = labels
 
         t_h2d = time.perf_counter() if profile_timing else None
-        batch_inputs = batch_inputs.to(self.model.device)
+        with _stage(profiler, "starvla_qwen_h2d_ms"):
+            batch_inputs = batch_inputs.to(self.model.device)
         if profile_timing:
             self._profile_sync()
             build_timing["timing/qwen_h2d"] = time.perf_counter() - t_h2d

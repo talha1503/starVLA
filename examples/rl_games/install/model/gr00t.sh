@@ -11,5 +11,8 @@ pip_install peft "imageio[ffmpeg]" draccus opencv-python-headless
 
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN}" "${INSTALL_DIR}/flash_attn.sh"
+if [[ "${STARVLA_TORCH_PROFILE:-}" == "cu130" ]]; then
+  PYTHON_BIN="${PYTHON_BIN}" "${INSTALL_DIR}/flash_attn4.sh"
+fi
 
 echo "[install/model/gr00t] done"

@@ -1,10 +1,12 @@
-cd starVLA
+bash /workspace/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh
 
-bash examples/rl_games/install/install_stack.sh openvla cross_task
+cd /workspace/starVLA
+
+bash examples/rl_games/install/install_stack.sh openvla flappy
 
 conda activate starvla_rl_games_openvla
 
-pip install flash-attn --no-build-isolation
+bash /workspace/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh 
 
 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
@@ -12,13 +14,13 @@ python examples/rl_games/scripts/launch_train.py \
     init=bridge \
     mode=cross_task \
     cross_task_setup=deadly_zero_flappy_mixed \
-    run_id="openvla_bridge_cross_deadly_zero_flappy_024_exp1" \
+    run_id="openvla_bridge_cross_deadly_zero_flappy_024_exp2" \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
     wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha1503/openvla_bridge_cross_deadly_zero_flappy_024_exp1" \
+    checkpoint.hf_repo_id="talha1503/openvla_bridge_cross_deadly_zero_flappy_024_exp2" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha1503/openvla_bridge_cross_deadly_zero_flappy_024_exp1" \
+    checkpoint.sync.repo_id="talha1503/openvla_bridge_cross_deadly_zero_flappy_024_exp2" \
     checkpoint.save_best_model=false \
     trainer.max_train_steps=7000 \
     trainer.num_warmup_steps=0 \
@@ -32,6 +34,7 @@ python examples/rl_games/scripts/launch_train.py \
     framework.action_model.action_env_dim=7 \
     trainer.per_latency_eval_num_batches=5 \
     rl_games.cross_task.train_tasks.0.name=flappy \
+    trainer.eval_action_classification=true \
     rl_games.cross_task.train_tasks.0.converted_name=flappy_200ep_cross_0_train \
     rl_games.cross_task.train_tasks.0.train_source_hf=latency-sensitive-bench/flappy_200ep \
     rl_games.cross_task.train_tasks.0.prompt_source_hf=latency-sensitive-bench/flappy_200ep \
@@ -46,6 +49,7 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.1.eval_latency_filter=[0,2,4] \
     rl_games.cross_task.train_tasks.1.episodes_per_latency=40 \
     rl_games.cross_task.train_tasks.1.action_layout=multibinary_7 \
+    rl_games.env_eval.eval_backend=eval_core \
     rl_games.env_eval.deadly.multibinary_threshold=0.0 \
     rl_games.cross_task.train_tasks.0.max_episodes=null \
     rl_games.cross_task.train_tasks.1.max_episodes=null \

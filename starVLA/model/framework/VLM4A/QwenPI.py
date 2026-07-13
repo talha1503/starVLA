@@ -297,7 +297,7 @@ class Qwen_PI(baseframework):
                     state_repeated,
                 )  # (B, chunk_len, action_dim)
 
-        return {"action_loss": action_loss}
+        return {"action_loss": action_loss, "loss_weight": float(len(examples))}
 
     @torch.inference_mode()
     def predict_action(  # TODO align  predict_action with forward, make api more flexible

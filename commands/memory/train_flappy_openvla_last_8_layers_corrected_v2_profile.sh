@@ -31,6 +31,7 @@ python examples/rl_games/scripts/launch_train.py \
   rl_games.env_eval.mid_train.interval_steps=250 \
   rl_games.env_eval.post_train.enabled=false \
   checkpoint.save_pt_file=false \
+  checkpoint.save_safetensors_file=true \
   checkpoint.save_best_model=false \
   checkpoint.local.keep_last_n=1 \
   checkpoint.load=none

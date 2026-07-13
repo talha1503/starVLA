@@ -18,6 +18,7 @@ import math
 import os
 import re
 import shutil
+import signal
 import time
 from pathlib import Path
 from typing import Any, Dict, Tuple
@@ -25,10 +26,11 @@ from typing import Any, Dict, Tuple
 # Third-Party Libraries
 import numpy as np
 import torch
+import torch._dynamo
 import torch.distributed as dist
 import wandb
 from accelerate import Accelerator, DeepSpeedPlugin
-from accelerate.utils import set_seed
+from accelerate.utils import DistributedType, set_seed
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
@@ -36,18 +38,14 @@ from transformers import AutoProcessor, get_scheduler
 
 # Local Modules
 from starVLA.dataloader import build_dataloader
+from starVLA.dataloader.worker_context import build_cpu_only_dataloader_kwargs
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
 from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias, sync_kv_memory_obs_window, validate_rl_games_config
 from starVLA.training.rl_games.auth import login_training_services
 from starVLA.training.rl_games.eval_core import EvalResult
 from starVLA.training.rl_games import action_cc_f1
-from starVLA.training.rl_games.action_cc_f1_budget import build_frame_records
-from starVLA.training.train_step_events import (
-    calculate_epoch_progress,
-    should_run_optional_step_interval_event,
-    should_run_step_interval_event,
-)
+from starVLA.training.train_step_events import calculate_epoch_progress, should_run_step_interval_event
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
 
@@ -57,6 +55,20 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Initialize logger
 logger = logging.getLogger(__name__)
 
+_DYNAMO_RECOMPILE_LIMIT = 64
+_DYNAMO_ACCUMULATED_RECOMPILE_LIMIT = 1024
+_GRACEFUL_STOP_REQUESTED = False
+_GRACEFUL_STOP_SIGNAL = None
+
+
+def _configure_torch_dynamo_recompile_limits() -> None:
+    config = torch._dynamo.config
+    config.recompile_limit = max(config.recompile_limit, _DYNAMO_RECOMPILE_LIMIT)
+    config.accumulated_recompile_limit = max(
+        config.accumulated_recompile_limit,
+        _DYNAMO_ACCUMULATED_RECOMPILE_LIMIT,
+    )
+
 
 def _as_bool(value, default: bool = False) -> bool:
     if value in (None, ""):
@@ -64,6 +76,45 @@ def _as_bool(value, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _request_graceful_stop(signum, frame) -> None:
+    global _GRACEFUL_STOP_REQUESTED, _GRACEFUL_STOP_SIGNAL
+    _GRACEFUL_STOP_REQUESTED = True
+    _GRACEFUL_STOP_SIGNAL = signum
+
+
+def _install_graceful_stop_handlers() -> dict[int, Any]:
+    global _GRACEFUL_STOP_REQUESTED, _GRACEFUL_STOP_SIGNAL
+    _GRACEFUL_STOP_REQUESTED = False
+    _GRACEFUL_STOP_SIGNAL = None
+    previous_handlers = {
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+    }
+    signal.signal(signal.SIGINT, _request_graceful_stop)
+    signal.signal(signal.SIGTERM, _request_graceful_stop)
+    return previous_handlers
+
+
+def _restore_signal_handlers(previous_handlers: dict[int, Any]) -> None:
+    for signum, handler in previous_handlers.items():
+        signal.signal(signum, handler)
+
+
+def _destroy_distributed_process_group(*, use_barrier: bool) -> None:
+    if not dist.is_initialized():
+        return
+    if use_barrier:
+        try:
+            dist.barrier()
+        except Exception as exc:
+            logger.warning("Distributed barrier failed during shutdown: %s", exc)
+    try:
+        dist.destroy_process_group()
+        logger.info("Destroyed distributed process group")
+    except Exception as exc:
+        logger.warning("Failed to destroy distributed process group: %s", exc)
 
 
 def _sample_latency(sample: dict) -> int | None:
@@ -287,7 +338,6 @@ def _configure_quota_cumulative_training_steps(cfg, dataloader, accelerator) -> 
 
     cfg.trainer.max_train_steps = total_steps
     curriculum_cfg.computed_plan = plan
-    curriculum_cfg.effective_batch_size = effective_batch_size
     if not dist.is_initialized() or dist.get_rank() == 0:
         logger.info(
             "quota_cumulative derived max_train_steps=%s from %s phases and effective_batch_size=%s",
@@ -306,6 +356,15 @@ def _configure_quota_cumulative_training_steps(cfg, dataloader, accelerator) -> 
                 phase["rows_by_latency"],
                 phase["end_step"],
             )
+
+
+def _parse_phase_distributions(raw: Any) -> list[dict[int, float]] | None:
+    if raw is None:
+        return None
+    phases = list(raw)
+    if not phases:
+        return None
+    return [{int(k): float(v) for k, v in dict(phase).items()} for phase in phases]
 
 
 def _dataset_latency_values(dataset) -> list[int]:
@@ -410,7 +469,8 @@ def prepare_data(cfg, accelerator, output_dir) -> tuple[DataLoader, DataLoader |
         )
 
     accelerator.dataloader_config.dispatch_batches = False
-    _distributed_barrier()
+    if dist.is_initialized():
+        dist.barrier()
     return vla_train_dataloader, vla_eval_dataloader
 
 
@@ -478,17 +538,6 @@ def _pin_cuda_device_from_local_rank() -> None:
     torch.cuda.set_device(device_idx)
 
 
-def _distributed_barrier() -> None:
-    if not dist.is_initialized():
-        return
-    backend = str(dist.get_backend()).lower()
-    if backend == "nccl" and torch.cuda.is_available():
-        device_idx = int(torch.cuda.current_device())
-        dist.barrier(device_ids=[device_idx])
-        return
-    dist.barrier()
-
-
 def _preload_model_checkpoint_before_accelerator(cfg, model):
     """Load model-only checkpoints before ZeRO-3 can replace params with shards."""
     trainer_cfg = getattr(cfg, "trainer", None)
@@ -545,6 +594,10 @@ class VLATrainer(TrainerUtils):
             getattr(getattr(self.config, "checkpoint", {}), "save_training_state", None),
             default=True,
         )
+        self._save_safetensors_file_enabled = _as_bool(
+            getattr(getattr(self.config, "checkpoint", {}), "save_safetensors_file", None),
+            default=False,
+        )
         self._best_score = float("-inf")
         self._best_step = 0
         self._best_state_path = None
@@ -552,15 +605,40 @@ class VLATrainer(TrainerUtils):
         self._latency_curriculum_phase = None
         self._action_cc_f1_frame_loader = None
         self._action_cc_f1_frame_loader_key = None
+        self._train_loss_sum = 0.0
+        self._train_loss_weight = 0.0
+        self.graceful_stop_requested = False
+        self._graceful_stop_logged = False
+        self._interrupt_checkpoint_saved = False
+        stop_file = os.environ.get("STARVLA_STOP_FILE")
+        self._graceful_stop_file = Path(stop_file) if stop_file else None
         if hasattr(self.config, "rl_games") and hasattr(self.config.rl_games, "env_eval"):
             enabled = bool(getattr(self.config.rl_games.env_eval, "enabled", False))
             if enabled:
-                self._rl_games_eval_runner = RlGamesEvalRunner(cfg=self.config, output_dir=self.config.output_dir)
+                # Default to the latency_bench ("corrected") eval; keep eval_core
+                # reachable via rl_games.env_eval.eval_backend=eval_core.
+                backend = str(
+                    getattr(self.config.rl_games.env_eval, "eval_backend", "latency_bench")
+                    or "latency_bench"
+                ).strip().lower()
+                if backend == "eval_core":
+                    runner_cls = RlGamesEvalRunner
+                else:
+                    # latency_bench is importable because the install registers the
+                    # parent repo root via a .pth file (see install/common.sh).
+                    from latency_bench.integrations.starvla_rl_games_eval_runner import (
+                        LatencyBenchRlGamesEvalRunner,
+                    )
+
+                    runner_cls = LatencyBenchRlGamesEvalRunner
+                self._rl_games_eval_runner = runner_cls(cfg=self.config, output_dir=self.config.output_dir)
 
     def _save_periodic_checkpoints_enabled(self) -> bool:
         return not self._save_best_model_enabled
 
     def prepare_training(self):
+        _configure_torch_dynamo_recompile_limits()
+
         rank = dist.get_rank() if dist.is_initialized() else 0
         seed = self.config.seed + rank if hasattr(self.config, "seed") else rank + 3047
         set_seed(seed)
@@ -756,13 +834,41 @@ class VLATrainer(TrainerUtils):
         mode = str(getattr(env_eval, "distributed_mode", "none") or "none").strip().lower()
         return mode in {"rank_sharded", "distributed", "sharded"} and int(self.accelerator.num_processes) > 1
 
+    def _run_rl_games_eval_with_model_mode(
+        self,
+        *,
+        stage: str,
+        shard_rank: int = 0,
+        shard_count: int = 1,
+        save: bool = True,
+    ):
+        was_training = self.model.training
+        self.model.eval()
+        unwrapped = self.accelerator.unwrap_model(self.model)
+        try:
+            run_eval = torch._dynamo.disable(self._rl_games_eval_runner.run)
+            return run_eval(
+                model=unwrapped,
+                step=self.completed_steps,
+                stage=stage,
+                shard_rank=int(shard_rank),
+                shard_count=int(shard_count),
+                save=save,
+            )
+        finally:
+            try:
+                reset = getattr(unwrapped, "reset_memory", None)
+                if callable(reset):
+                    reset()
+            finally:
+                if was_training:
+                    self.model.train()
+
     def _run_distributed_rl_games_eval(self, stage: str):
         if self._rl_games_eval_runner is None:
             return None
 
-        local_result = self._rl_games_eval_runner.run(
-            model=self.accelerator.unwrap_model(self.model),
-            step=self.completed_steps,
+        local_result = self._run_rl_games_eval_with_model_mode(
             stage=stage,
             shard_rank=int(self.accelerator.process_index),
             shard_count=int(self.accelerator.num_processes),
@@ -791,32 +897,18 @@ class VLATrainer(TrainerUtils):
         self.accelerator.wait_for_everyone()
         return merged_result
 
-    def _run_rl_games_eval_with_model_mode(self, stage: str):
-        if self._rl_games_eval_runner is None:
-            return None
-
-        was_training = bool(getattr(self.model, "training", False))
-        self.model.eval()
-        try:
-            with torch.inference_mode():
-                if int(getattr(self.accelerator, "num_processes", 1)) > 1 and self._distributed_rl_games_eval_enabled():
-                    return self._run_distributed_rl_games_eval(stage=stage)
-                if self.accelerator.is_main_process:
-                    return self._rl_games_eval_runner.run(
-                        model=self.accelerator.unwrap_model(self.model),
-                        step=self.completed_steps,
-                        stage=stage,
-                    )
-                return None
-        finally:
-            if was_training:
-                self.model.train()
-
     def _run_mid_train_rl_games_eval(self, step_metrics: dict[str, float]) -> dict[str, float]:
         if self._rl_games_eval_runner is None or not self._rl_games_eval_runner.is_enabled(stage="mid_train"):
             return step_metrics
+        if self._refresh_graceful_stop_requested():
+            if self.accelerator.is_main_process:
+                logger.info("Skipping RL-games mid-train eval at step %s due to graceful stop", self.completed_steps)
+            return step_metrics
         t_profile_eval = self._profile_start()
-        eval_result = self._run_rl_games_eval_with_model_mode(stage="mid_train")
+        if self._distributed_rl_games_eval_enabled():
+            eval_result = self._run_distributed_rl_games_eval(stage="mid_train")
+        else:
+            eval_result = self._run_rl_games_eval_with_model_mode(stage="mid_train")
         step_metrics = self._append_rl_games_eval_metrics(
             step_metrics=step_metrics,
             eval_result=eval_result,
@@ -913,10 +1005,22 @@ class VLATrainer(TrainerUtils):
 
         if self.accelerator.is_main_process:
             model_checkpoint_path = None
-            if self._save_pt_file_enabled:
+            if self._save_pt_file_enabled or self._save_safetensors_file_enabled:
                 state_dict = self.accelerator.get_state_dict(self.model)
+
+            if self._save_pt_file_enabled:
                 model_checkpoint_path = checkpoint_path + "_pytorch_model.pt"
                 torch.save(state_dict, model_checkpoint_path)
+
+            if self._save_safetensors_file_enabled:
+                from safetensors.torch import save_file
+
+                safetensors_state_dict = {
+                    name: tensor.detach().to(torch.bfloat16) if torch.is_floating_point(tensor) else tensor.detach()
+                    for name, tensor in state_dict.items()
+                }
+                model_checkpoint_path = checkpoint_path + "_model.safetensors"
+                save_file(safetensors_state_dict, model_checkpoint_path)
 
             summary_data = {"steps": self.completed_steps}
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
@@ -967,6 +1071,23 @@ class VLATrainer(TrainerUtils):
         norms = torch.stack([torch.linalg.vector_norm(g.to(device), 2) for g in grads])
         return float(torch.linalg.vector_norm(norms, 2).item())
 
+    def _record_train_loss(self, action_loss, loss_weight) -> None:
+        weight = float(loss_weight)
+        self._train_loss_sum += float(action_loss.detach().float().item()) * weight
+        self._train_loss_weight += weight
+
+    def _finalize_train_loss(self, device) -> float:
+        loss_stats = torch.tensor(
+            [self._train_loss_sum, self._train_loss_weight],
+            device=device,
+            dtype=torch.float32,
+        )
+        if dist.is_initialized():
+            dist.all_reduce(loss_stats, op=dist.ReduceOp.SUM)
+        self._train_loss_sum = 0.0
+        self._train_loss_weight = 0.0
+        return float((loss_stats[0] / loss_stats[1]).item())
+
     @staticmethod
     def _append_rl_games_eval_metrics(step_metrics: Dict[str, float], eval_result, stage: str) -> Dict[str, float]:
         aggregate = eval_result.aggregate
@@ -996,6 +1117,76 @@ class VLATrainer(TrainerUtils):
     def _create_data_iterators(self):
         """Create data iterators."""
         self.vla_iter = iter(self.vla_train_dataloader)
+
+    def _mark_graceful_stop_requested(self, reason: str) -> None:
+        self.graceful_stop_requested = True
+        if self._graceful_stop_file is not None and not self._graceful_stop_file.exists():
+            try:
+                self._graceful_stop_file.parent.mkdir(parents=True, exist_ok=True)
+                self._graceful_stop_file.write_text(f"reason={reason}\ntime={time.time():.6f}\n", encoding="utf-8")
+            except Exception as exc:
+                logger.warning("Failed to write graceful stop file %s: %s", self._graceful_stop_file, exc)
+        if self.accelerator.is_main_process and not self._graceful_stop_logged:
+            logger.info("Graceful stop requested (%s); stopping at the next safe training boundary.", reason)
+            self._graceful_stop_logged = True
+
+    def _refresh_graceful_stop_requested(self) -> bool:
+        if _GRACEFUL_STOP_REQUESTED:
+            signal_name = (
+                signal.Signals(_GRACEFUL_STOP_SIGNAL).name
+                if _GRACEFUL_STOP_SIGNAL is not None
+                else "signal"
+            )
+            self._mark_graceful_stop_requested(signal_name)
+        if self._graceful_stop_file is not None and self._graceful_stop_file.exists():
+            self._mark_graceful_stop_requested(f"stop_file:{self._graceful_stop_file}")
+        return self.graceful_stop_requested
+
+    def _save_interrupt_checkpoint(self) -> None:
+        if self._interrupt_checkpoint_saved or self.completed_steps <= 0:
+            return
+        self._interrupt_checkpoint_saved = True
+        if self.accelerator.is_main_process:
+            logger.info("Saving interrupt checkpoint at step %s", self.completed_steps)
+        self._save_checkpoint()
+
+    def _shutdown_dataloader_workers(self) -> None:
+        seen: set[int] = set()
+
+        def shutdown(obj) -> None:
+            if obj is None:
+                return
+            obj_id = id(obj)
+            if obj_id in seen:
+                return
+            seen.add(obj_id)
+            shutdown_fn = getattr(obj, "_shutdown_workers", None)
+            if callable(shutdown_fn):
+                try:
+                    shutdown_fn()
+                except Exception as exc:
+                    logger.warning("Failed to shutdown dataloader workers for %s: %s", type(obj).__name__, exc)
+            for attr in ("_iterator", "dataloader", "_dataloader", "base_dataloader", "_loader"):
+                shutdown(getattr(obj, attr, None))
+
+        shutdown(getattr(self, "vla_iter", None))
+        shutdown(self.vla_train_dataloader)
+        shutdown(self.vla_eval_dataloader)
+        shutdown(self._action_cc_f1_frame_loader)
+
+    def cleanup_runtime(self) -> None:
+        self._shutdown_dataloader_workers()
+        unwrapped = None
+        try:
+            unwrapped = self.accelerator.unwrap_model(self.model)
+        except Exception:
+            unwrapped = self.model
+        reset = getattr(unwrapped, "reset_memory", None)
+        if callable(reset):
+            try:
+                reset()
+            except Exception as exc:
+                logger.warning("Failed to reset model memory during cleanup: %s", exc)
 
     def _profile_timing_enabled(self) -> bool:
         return self.config.trainer.profile_timing.enabled
@@ -1029,6 +1220,22 @@ class VLATrainer(TrainerUtils):
         if cfg is None or not _as_bool(getattr(cfg, "enabled", False), default=False):
             return None
         return cfg
+
+    def _distribution_curriculum_phase_steps(self, cfg, num_phases: int) -> list[int]:
+        explicit = _optional_int_list(getattr(cfg, "phase_steps", None))
+        if explicit:
+            if len(explicit) != num_phases:
+                raise ValueError(
+                    "datasets.vla_data.latency_curriculum.phase_steps must have one value per phase "
+                    f"(got {len(explicit)} steps for {num_phases} phases)."
+                )
+            if any(step <= 0 for step in explicit):
+                raise ValueError("latency_curriculum.phase_steps values must be positive.")
+            return explicit
+        total_steps = int(getattr(self.config.trainer, "max_train_steps"))
+        base = total_steps // num_phases
+        remainder = total_steps % num_phases
+        return [base + (1 if idx < remainder else 0) for idx in range(num_phases)]
 
     def _latency_curriculum_phase_steps(self, cfg, latencies: list[int]) -> list[int]:
         explicit = _optional_int_list(getattr(cfg, "phase_steps", None))
@@ -1085,6 +1292,23 @@ class VLATrainer(TrainerUtils):
             active = sorted(quotas)
             return int(phase["phase_idx"]), active, quotas, quota_starts, str(phase.get("name", f"phase_{phase['phase_idx']}"))
 
+        if strategy == "curriculum_cumulative_distribution":
+            phase_distributions = _parse_phase_distributions(getattr(cfg, "phase_distributions", None))
+            if not phase_distributions:
+                raise ValueError("curriculum_cumulative_distribution requires phase_distributions to be configured.")
+            num_phases = len(phase_distributions)
+            phase_steps = self._distribution_curriculum_phase_steps(cfg, num_phases)
+            cursor = 0
+            phase_idx = num_phases - 1
+            for idx, num_steps in enumerate(phase_steps):
+                cursor += int(num_steps)
+                if int(step) < cursor:
+                    phase_idx = idx
+                    break
+            distribution = phase_distributions[phase_idx]
+            active = sorted(distribution)
+            return phase_idx, active, distribution, {}, f"phase_{phase_idx}"
+
         latencies = _optional_int_list(getattr(cfg, "latencies", None))
         if not latencies:
             latencies = _dataset_latency_values(getattr(self.vla_train_dataloader, "dataset", None))
@@ -1093,7 +1317,8 @@ class VLATrainer(TrainerUtils):
         latencies = sorted(dict.fromkeys(int(value) for value in latencies))
         if strategy not in {"exclusive", "cumulative"}:
             raise ValueError(
-                f"Unsupported latency_curriculum.strategy={strategy!r}; expected exclusive, cumulative, or quota_cumulative."
+                f"Unsupported latency_curriculum.strategy={strategy!r}; "
+                "expected exclusive, cumulative, quota_cumulative, or curriculum_cumulative_distribution."
             )
 
         phase_steps = self._latency_curriculum_phase_steps(cfg, latencies)
@@ -1120,6 +1345,19 @@ class VLATrainer(TrainerUtils):
             plan = self._quota_curriculum_plan()
             final_step = int(getattr(self.config.trainer, "max_train_steps"))
             return any(int(phase["end_step"]) == int(step) and int(step) < final_step for phase in plan)
+
+        if strategy == "curriculum_cumulative_distribution":
+            phase_distributions = _parse_phase_distributions(getattr(cfg, "phase_distributions", None))
+            if not phase_distributions:
+                return False
+            phase_steps = self._distribution_curriculum_phase_steps(cfg, len(phase_distributions))
+            cursor = 0
+            final_step = int(getattr(self.config.trainer, "max_train_steps"))
+            for num_steps in phase_steps[:-1]:
+                cursor += int(num_steps)
+                if cursor == int(step) and int(step) < final_step:
+                    return True
+            return False
 
         latencies = _optional_int_list(getattr(cfg, "latencies", None))
         if not latencies:
@@ -1154,7 +1392,7 @@ class VLATrainer(TrainerUtils):
             raise ValueError("latency curriculum requires a train dataset.")
         if active_quotas is not None:
             if not callable(getattr(dataset, "set_latency_quota_filter", None)):
-                raise ValueError("quota_cumulative requires a train dataset with set_latency_quota_filter(...).")
+                raise ValueError("latency curriculum with quotas requires a train dataset with set_latency_quota_filter(...).")
             dataset.set_latency_quota_filter(active_quotas, quota_starts=quota_starts)
         else:
             if not callable(getattr(dataset, "set_active_latency_filter", None)):
@@ -1218,145 +1456,179 @@ class VLATrainer(TrainerUtils):
             disable=not self.accelerator.is_local_main_process,
         )
 
-        while self.completed_steps < self.config.trainer.max_train_steps:
-            profile_enabled = self._profile_timing_enabled()
-            t_profile_data = self._profile_start() if profile_enabled else None
-            t_start_data = time.perf_counter()
-            batch_vla = self._get_next_batch()
-            t_end_data = time.perf_counter()
-            profile_data_seconds = self._profile_elapsed(t_profile_data) if profile_enabled else None
+        try:
+            while self.completed_steps < self.config.trainer.max_train_steps:
+                if self._refresh_graceful_stop_requested():
+                    self._save_interrupt_checkpoint()
+                    break
 
-            t_profile_model = self._profile_start() if profile_enabled else None
-            t_start_model = time.perf_counter()
-            step_metrics = self._train_step(batch_vla)
-            t_end_model = time.perf_counter()
-            profile_model_seconds = self._profile_elapsed(t_profile_model) if profile_enabled else None
+                profile_enabled = self._profile_timing_enabled()
+                t_profile_data = self._profile_start() if profile_enabled else None
+                t_start_data = time.perf_counter()
+                batch_vla = self._get_next_batch()
+                t_end_data = time.perf_counter()
+                profile_data_seconds = self._profile_elapsed(t_profile_data) if profile_enabled else None
 
-            if self.accelerator.sync_gradients:
-                progress_bar.update(1)
-                self.completed_steps += 1
-                phase_ended = self._latency_curriculum_phase_end_at_step(self.completed_steps)
+                t_profile_model = self._profile_start() if profile_enabled else None
+                t_start_model = time.perf_counter()
+                step_metrics = self._train_step(batch_vla)
+                t_end_model = time.perf_counter()
+                profile_model_seconds = self._profile_elapsed(t_profile_model) if profile_enabled else None
+
+                optimizer_stepped = bool(step_metrics.pop("_optimizer_step"))
+                stop_requested = False
                 ran_mid_train_rl_eval = False
-                curriculum_cfg = self._latency_curriculum_cfg()
-                if (
-                    phase_ended
-                    and curriculum_cfg is not None
-                    and _as_bool(getattr(curriculum_cfg, "eval_at_phase_end", False), default=False)
+                if optimizer_stepped:
+                    progress_bar.update(1)
+                    self.completed_steps += 1
+                    stop_requested = self._refresh_graceful_stop_requested()
+                    phase_ended = self._latency_curriculum_phase_end_at_step(self.completed_steps)
+                    curriculum_cfg = self._latency_curriculum_cfg()
+                    if not stop_requested:
+                        if (
+                            phase_ended
+                            and curriculum_cfg is not None
+                            and _as_bool(getattr(curriculum_cfg, "eval_at_phase_end", False), default=False)
+                        ):
+                            if self.accelerator.is_main_process:
+                                logger.info("Starting phase-end RL-games mid-train eval at step %s", self.completed_steps)
+                            step_metrics = self._run_mid_train_rl_games_eval(step_metrics)
+                            ran_mid_train_rl_eval = True
+                            if self.accelerator.is_main_process:
+                                logger.info("Finished phase-end RL-games mid-train eval at step %s", self.completed_steps)
+                        if (
+                            phase_ended
+                            and curriculum_cfg is not None
+                            and _as_bool(getattr(curriculum_cfg, "save_at_phase_end", False), default=False)
+                            and self._save_periodic_checkpoints_enabled()
+                        ):
+                            self._save_checkpoint()
+                        curriculum_metrics = self._apply_latency_curriculum()
+                        if curriculum_metrics:
+                            step_metrics.update(curriculum_metrics)
+                    if self._profile_timing_should_log():
+                        step_metrics["timing/dataloader_next"] = profile_data_seconds
+                        step_metrics["timing/train_step_total"] = profile_model_seconds
+                        if "batch/size" in step_metrics:
+                            step_metrics["throughput/samples_per_sec"] = step_metrics["batch/size"] / profile_model_seconds
+                        if "batch/effective_tokens" in step_metrics:
+                            step_metrics["throughput/effective_tokens_per_sec"] = (
+                                step_metrics["batch/effective_tokens"] / profile_model_seconds
+                            )
+
+                if self.accelerator.is_local_main_process:
+                    progress_bar.set_postfix(
+                        {
+                            "data_times": f"{t_end_data - t_start_data:.3f}",
+                            "model_times": f"{t_end_model - t_start_model:.3f}",
+                        }
+                    )
+
+                gradients_synced = optimizer_stepped
+                if gradients_synced and not stop_requested:
+                    if should_run_step_interval_event(
+                        completed_steps=self.completed_steps,
+                        interval=self.config.trainer.eval_interval,
+                        gradients_synced=gradients_synced,
+                    ):
+                        if self.accelerator.is_main_process:
+                            logger.info("Starting held-out action loss eval at step %s", self.completed_steps)
+                        t_profile_eval = self._profile_start()
+                        step_metrics = self.eval_action_loss(step_metrics)
+                        if self._profile_timing_should_log():
+                            step_metrics["timing/eval_action_loss_total"] = self._profile_elapsed(t_profile_eval)
+                        if self.accelerator.is_main_process:
+                            logger.info("Finished held-out action loss eval at step %s", self.completed_steps)
+                    action_classification_interval = getattr(
+                        self.config.trainer,
+                        "eval_action_classification_interval",
+                        None,
+                    )
+                    if action_classification_interval is None:
+                        action_classification_interval = self.config.trainer.eval_interval
+                    eval_action_classification_enabled = _as_bool(
+                        getattr(self.config.trainer, "eval_action_classification", True),
+                        default=True,
+                    )
+                    if eval_action_classification_enabled and should_run_step_interval_event(
+                        completed_steps=self.completed_steps,
+                        interval=action_classification_interval,
+                        gradients_synced=gradients_synced,
+                    ):
+                        if self.accelerator.is_main_process:
+                            logger.info("Starting held-out action classification eval at step %s", self.completed_steps)
+                        t_profile_eval = self._profile_start()
+                        step_metrics = self.eval_action_cc_f1(step_metrics)
+                        if self._profile_timing_should_log():
+                            step_metrics["timing/eval_action_classification_total"] = self._profile_elapsed(t_profile_eval)
+                        if self.accelerator.is_main_process:
+                            logger.info("Finished held-out action classification eval at step %s", self.completed_steps)
+                    if self._rl_games_eval_runner is not None:
+                        eval_every = self._rl_games_eval_runner.interval_steps()
+                        if eval_every > 0 and should_run_step_interval_event(
+                            completed_steps=self.completed_steps,
+                            interval=eval_every,
+                            gradients_synced=gradients_synced,
+                        ) and not ran_mid_train_rl_eval:
+                            step_metrics = self._run_mid_train_rl_games_eval(step_metrics)
+                elif gradients_synced and stop_requested and self.accelerator.is_main_process:
+                    logger.info("Skipping eval at step %s due to graceful stop", self.completed_steps)
+
+                step_metrics["timing/data"] = t_end_data - t_start_data
+                step_metrics["timing/model"] = t_end_model - t_start_model
+                if stop_requested:
+                    step_metrics["train/graceful_stop_requested"] = 1.0
+                if should_run_step_interval_event(
+                    completed_steps=self.completed_steps,
+                    interval=self.config.trainer.logging_frequency,
+                    gradients_synced=gradients_synced,
                 ):
-                    if self.accelerator.is_main_process:
-                        logger.info("Starting phase-end RL-games mid-train eval at step %s", self.completed_steps)
-                    step_metrics = self._run_mid_train_rl_games_eval(step_metrics)
-                    ran_mid_train_rl_eval = True
-                    if self.accelerator.is_main_process:
-                        logger.info("Finished phase-end RL-games mid-train eval at step %s", self.completed_steps)
-                if (
-                    phase_ended
-                    and curriculum_cfg is not None
-                    and _as_bool(getattr(curriculum_cfg, "save_at_phase_end", False), default=False)
-                    and self._save_periodic_checkpoints_enabled()
-                ):
-                    self._save_checkpoint()
-                curriculum_metrics = self._apply_latency_curriculum()
-                if curriculum_metrics:
-                    step_metrics.update(curriculum_metrics)
-                if self._profile_timing_should_log():
-                    step_metrics["timing/dataloader_next"] = profile_data_seconds
-                    step_metrics["timing/train_step_total"] = profile_model_seconds
-                    if "batch/size" in step_metrics:
-                        step_metrics["throughput/samples_per_sec"] = step_metrics["batch/size"] / profile_model_seconds
-                    if "batch/effective_tokens" in step_metrics:
-                        step_metrics["throughput/effective_tokens_per_sec"] = (
-                            step_metrics["batch/effective_tokens"] / profile_model_seconds
+                    t_profile_log = self._profile_start() if self._profile_timing_should_log() else None
+                    self._log_metrics(step_metrics)
+                    if self._profile_timing_should_log() and self.accelerator.is_main_process:
+                        wandb.log(
+                            {"timing/log_metrics_total": self._profile_elapsed(t_profile_log)},
+                            step=self.completed_steps,
                         )
 
-            if self.accelerator.is_local_main_process:
-                progress_bar.set_postfix(
-                    {
-                        "data_times": f"{t_end_data - t_start_data:.3f}",
-                        "model_times": f"{t_end_model - t_start_model:.3f}",
-                    }
-                )
+                if stop_requested:
+                    self._save_interrupt_checkpoint()
+                    break
 
-            gradients_synced = bool(self.accelerator.sync_gradients)
-            if gradients_synced:
-                if should_run_step_interval_event(
+                if self._save_periodic_checkpoints_enabled() and should_run_step_interval_event(
                     completed_steps=self.completed_steps,
-                    interval=self.config.trainer.eval_interval,
+                    interval=self.config.trainer.save_interval,
                     gradients_synced=gradients_synced,
                 ):
-                    if self.accelerator.is_main_process:
-                        logger.info("Starting held-out action loss eval at step %s", self.completed_steps)
-                    t_profile_eval = self._profile_start()
-                    step_metrics = self.eval_action_loss(step_metrics)
-                    if self._profile_timing_should_log():
-                        step_metrics["timing/eval_action_loss_total"] = self._profile_elapsed(t_profile_eval)
-                    if self.accelerator.is_main_process:
-                        logger.info("Finished held-out action loss eval at step %s", self.completed_steps)
-                action_classification_interval = getattr(
-                    self.config.trainer,
-                    "eval_action_classification_interval",
-                    None,
-                )
-                if action_classification_interval is None:
-                    action_classification_interval = self.config.trainer.eval_interval
-                if should_run_step_interval_event(
-                    completed_steps=self.completed_steps,
-                    interval=action_classification_interval,
-                    gradients_synced=gradients_synced,
-                ):
-                    if self.accelerator.is_main_process:
-                        logger.info("Starting held-out action classification eval at step %s", self.completed_steps)
-                    t_profile_eval = self._profile_start()
-                    step_metrics = self.eval_action_cc_f1(step_metrics)
-                    if self._profile_timing_should_log():
-                        step_metrics["timing/eval_action_classification_total"] = self._profile_elapsed(t_profile_eval)
-                    if self.accelerator.is_main_process:
-                        logger.info("Finished held-out action classification eval at step %s", self.completed_steps)
-                if self._rl_games_eval_runner is not None:
-                    eval_every = self._rl_games_eval_runner.interval_steps()
-                    if eval_every > 0 and should_run_step_interval_event(
-                        completed_steps=self.completed_steps,
-                        interval=eval_every,
-                        gradients_synced=gradients_synced,
-                    ) and not ran_mid_train_rl_eval:
-                        step_metrics = self._run_mid_train_rl_games_eval(step_metrics)
+                    t_profile_checkpoint = self._profile_start() if self._profile_timing_should_log() else None
+                    self._save_checkpoint()
+                    if self._profile_timing_should_log() and self.accelerator.is_main_process:
+                        wandb.log(
+                            {"timing/checkpoint_total": self._profile_elapsed(t_profile_checkpoint)},
+                            step=self.completed_steps,
+                        )
 
-            step_metrics["timing/data"] = t_end_data - t_start_data
-            step_metrics["timing/model"] = t_end_model - t_start_model
-            if should_run_step_interval_event(
-                completed_steps=self.completed_steps,
-                interval=self.config.trainer.logging_frequency,
-                gradients_synced=gradients_synced,
-            ):
-                t_profile_log = self._profile_start() if self._profile_timing_should_log() else None
-                self._log_metrics(step_metrics)
-                if self._profile_timing_should_log() and self.accelerator.is_main_process:
-                    wandb.log(
-                        {"timing/log_metrics_total": self._profile_elapsed(t_profile_log)},
-                        step=self.completed_steps,
-                    )
+                if self.completed_steps >= self.config.trainer.max_train_steps:
+                    break
+        finally:
+            progress_bar.close()
+            if self.graceful_stop_requested:
+                self.cleanup_runtime()
 
-            if self._save_periodic_checkpoints_enabled() and should_run_optional_step_interval_event(
-                completed_steps=self.completed_steps,
-                interval=self.config.trainer.save_interval,
-                gradients_synced=gradients_synced,
-            ):
-                t_profile_checkpoint = self._profile_start() if self._profile_timing_should_log() else None
-                self._save_checkpoint()
-                if self._profile_timing_should_log() and self.accelerator.is_main_process:
-                    wandb.log(
-                        {"timing/checkpoint_total": self._profile_elapsed(t_profile_checkpoint)},
-                        step=self.completed_steps,
-                    )
-
-            if self.completed_steps >= self.config.trainer.max_train_steps:
-                break
+        if self.graceful_stop_requested:
+            if self.accelerator.is_main_process:
+                logger.info("Training stopped gracefully at step %s; skipping final/post-train eval.", self.completed_steps)
+            return
 
         self._finalize_training()
 
     def eval_action_loss(self, step_metrics: dict = None) -> dict:
         """Compute held-out action loss over the validation LeRobot dataset."""
         step_metrics = step_metrics or {}
+        if self._refresh_graceful_stop_requested():
+            if self.accelerator.is_main_process:
+                logger.info("Skipping held-out action loss eval at step %s due to graceful stop", self.completed_steps)
+            return step_metrics
         if self.vla_eval_dataloader is None:
             return step_metrics
 
@@ -1568,7 +1840,8 @@ class VLATrainer(TrainerUtils):
                         task_latency_loss_sums[(task_name, latency)] / count.clamp_min(1.0)
                     ).item()
 
-        _distributed_barrier()
+        if dist.is_initialized():
+            dist.barrier()
         return step_metrics
 
     def eval_action_model(self, step_metrics: dict = None) -> dict:
@@ -1589,6 +1862,13 @@ class VLATrainer(TrainerUtils):
         CC-F1 on the main process. See ``action_cc_f1`` for the metric definition.
         """
         step_metrics = step_metrics or {}
+        if self._refresh_graceful_stop_requested():
+            if self.accelerator.is_main_process:
+                logger.info(
+                    "Skipping held-out action classification eval at step %s due to graceful stop",
+                    self.completed_steps,
+                )
+            return step_metrics
         if self.vla_eval_dataloader is None:
             return step_metrics
         task = str(getattr(getattr(self.config, "rl_games", None), "task", "") or "").lower()
@@ -1661,14 +1941,53 @@ class VLATrainer(TrainerUtils):
         per_latency_batches = _optional_positive_int(getattr(self.config.trainer, "per_latency_eval_num_batches", None))
         shared_frame_budget = max(1, int(getattr(self.config.trainer, "eval_num_batches", 20)) * bs)
         per_latency_frame_budget = per_latency_batches * bs if per_latency_batches is not None else None
-        frame_records = build_frame_records(
-            episodes=episodes,
-            num_procs=num_procs,
-            rank=rank,
-            shared_frame_budget=shared_frame_budget,
-            per_latency_frame_budget=per_latency_frame_budget,
-            cross_task_mode=cross_task_mode,
+        assigned = []
+        frame_count = 0
+        latency_frame_counts: dict[int, int] = {}
+        task_latency_frame_counts: dict[tuple[str, int], int] = {}
+        expected_latencies = sorted({int(ep[3]) for ep in episodes if ep[3] is not None})
+        expected_task_latencies = (
+            sorted({(str(ep[0]), int(ep[3])) for ep in episodes if ep[3] is not None})
+            if cross_task_mode
+            else []
         )
+        use_per_latency_budget = per_latency_frame_budget is not None and bool(expected_latencies)
+        for ep_idx, ep in enumerate(episodes):
+            if ep_idx % num_procs != rank:
+                continue
+            ep_task = str(ep[0])
+            latency = ep[3]
+            if latency is not None and use_per_latency_budget:
+                latency = int(latency)
+                if cross_task_mode:
+                    task_latency_key = (ep_task, latency)
+                    if task_latency_frame_counts.get(task_latency_key, 0) >= per_latency_frame_budget:
+                        continue
+                else:
+                    if latency_frame_counts.get(latency, 0) >= per_latency_frame_budget:
+                        continue
+            assigned.append(ep)
+            frame_count += len(ep[4])
+            if latency is not None and use_per_latency_budget:
+                if cross_task_mode:
+                    task_latency_key = (ep_task, int(latency))
+                    task_latency_frame_counts[task_latency_key] = (
+                        task_latency_frame_counts.get(task_latency_key, 0) + len(ep[4])
+                    )
+                    if all(
+                        task_latency_frame_counts.get(value, 0) >= per_latency_frame_budget
+                        for value in expected_task_latencies
+                    ):
+                        break
+                else:
+                    latency_frame_counts[int(latency)] = latency_frame_counts.get(int(latency), 0) + len(ep[4])
+                    if all(
+                        latency_frame_counts.get(value, 0) >= per_latency_frame_budget
+                        for value in expected_latencies
+                    ):
+                        break
+            elif not use_per_latency_budget and frame_count >= shared_frame_budget:
+                break
 
         was_training = self.model.training
         self.model.eval()
@@ -1687,20 +2006,41 @@ class VLATrainer(TrainerUtils):
                 entry = per_ep.setdefault(episode_key, {"task": sample_task, "latency": latency, "items": []})
                 entry["items"].append((base_idx, sample_spec.comp_fn(teacher_vec), sample_spec.comp_fn(model_vec)))
 
+        frame_records = []
+        for ep_task, dataset_index, episode_key, episode_latency_value, frames in assigned:
+            for flat_idx, base_idx in frames:
+                frame_records.append((
+                    int(dataset_index),
+                    int(flat_idx),
+                    str(episode_key),
+                    int(base_idx),
+                    str(ep_task),
+                    episode_latency_value,
+                ))
+
         eval_num_workers = getattr(self.config.datasets.vla_data, "eval_num_workers", None)
         if eval_num_workers is None:
             eval_num_workers = self.config.datasets.vla_data.num_workers
         eval_num_workers = int(eval_num_workers)
-        dataloader_kwargs = {
-            "pin_memory": _as_bool(self.config.datasets.vla_data.pin_memory),
-        }
-        if eval_num_workers > 0:
-            dataloader_kwargs["multiprocessing_context"] = "spawn"
-            dataloader_kwargs["persistent_workers"] = _as_bool(self.config.datasets.vla_data.persistent_workers)
-            if "prefetch_factor" in self.config.datasets.vla_data:
-                dataloader_kwargs["prefetch_factor"] = int(self.config.datasets.vla_data.prefetch_factor)
+        dataloader_kwargs = build_cpu_only_dataloader_kwargs(
+            eval_num_workers,
+            pin_memory=self.config.datasets.vla_data.pin_memory,
+            persistent_workers=self.config.datasets.vla_data.persistent_workers,
+            prefetch_factor=(
+                self.config.datasets.vla_data.prefetch_factor
+                if "prefetch_factor" in self.config.datasets.vla_data
+                else None
+            ),
+        )
         frame_loader_key = (tuple(frame_records), bs, eval_num_workers)
         if self._action_cc_f1_frame_loader_key != frame_loader_key:
+            if self.accelerator.is_main_process:
+                logger.info(
+                    "Created action CC-F1 frame dataloader with num_workers=%s, persistent_workers=%s, cpu_only_workers=%s",
+                    eval_num_workers,
+                    dataloader_kwargs.get("persistent_workers", False),
+                    "multiprocessing_context" in dataloader_kwargs,
+                )
             self._action_cc_f1_frame_loader = DataLoader(
                 _ActionCCF1FrameDataset(single_datasets, frame_records),
                 batch_size=bs,
@@ -1866,7 +2206,8 @@ class VLATrainer(TrainerUtils):
             step_metrics["eval/action_classification/predict_seconds"] = predict_t.item()
             step_metrics["eval/action_classification/frames"] = frames_t.item()
 
-        _distributed_barrier()
+        if dist.is_initialized():
+            dist.barrier()
         return step_metrics
 
     def _log_training_config(self):
@@ -1883,11 +2224,55 @@ class VLATrainer(TrainerUtils):
         profile_next_step = self.completed_steps + 1
         profile_log = self._profile_timing_should_log(profile_next_step)
         profile_metrics = {}
+        if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            t_forward = self._profile_start() if profile_log else None
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                output_dict = self.model.forward(batch_vla)
+                action_loss = output_dict["action_loss"]
+                loss_weight = output_dict["loss_weight"]
+                total_loss = action_loss
+            if profile_log:
+                profile_metrics["timing/forward"] = self._profile_elapsed(t_forward)
+                profile_metrics.update(output_dict["timing"])
+                profile_metrics.update(output_dict["batch_stats"])
+
+            t_backward = self._profile_start() if profile_log else None
+            self.model.backward(total_loss)
+            self._record_train_loss(action_loss, loss_weight)
+            if profile_log:
+                profile_metrics["timing/backward"] = self._profile_elapsed(t_backward)
+
+            optimizer_stepped = bool(self.model.is_gradient_accumulation_boundary())
+            t_optimizer = self._profile_start() if profile_log else None
+            self.model.step()
+            if profile_log:
+                profile_metrics["timing/optimizer_step"] = self._profile_elapsed(t_optimizer)
+
+            t_scheduler = self._profile_start() if profile_log else None
+            if optimizer_stepped:
+                self.lr_scheduler.step()
+            if profile_log:
+                profile_metrics["timing/lr_scheduler"] = self._profile_elapsed(t_scheduler)
+
+            if not optimizer_stepped:
+                return {"_optimizer_step": False}
+            grad_norm = self.model.get_global_grad_norm()
+            metrics = {
+                "train/loss": self._finalize_train_loss(action_loss.device),
+                "_optimizer_step": True,
+            }
+            metrics.update(profile_metrics)
+            if isinstance(grad_norm, torch.Tensor):
+                grad_norm = grad_norm.detach().float().item()
+            metrics["train/grad_norm_pre_clip"] = float(grad_norm)
+            return metrics
+
         with self.accelerator.accumulate(self.model):
             t_forward = self._profile_start() if profile_log else None
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
                 action_loss = output_dict["action_loss"]
+                loss_weight = output_dict["loss_weight"]
                 total_loss = action_loss
             if profile_log:
                 profile_metrics["timing/forward"] = self._profile_elapsed(t_forward)
@@ -1896,6 +2281,7 @@ class VLATrainer(TrainerUtils):
 
             t_backward = self._profile_start() if profile_log else None
             self.accelerator.backward(total_loss)
+            self._record_train_loss(action_loss, loss_weight)
             if profile_log:
                 profile_metrics["timing/backward"] = self._profile_elapsed(t_backward)
 
@@ -1929,10 +2315,10 @@ class VLATrainer(TrainerUtils):
                 profile_metrics["timing/zero_grad"] = self._profile_elapsed(t_zero_grad)
 
         if not gradients_synced:
-            return {}
-        action_loss_value = action_loss.item()
+            return {"_optimizer_step": False}
         metrics = {
-            "train/loss": action_loss_value,
+            "train/loss": self._finalize_train_loss(action_loss.device),
+            "_optimizer_step": True,
         }
         metrics.update(profile_metrics)
         if grad_norm is not None:
@@ -1986,7 +2372,12 @@ class VLATrainer(TrainerUtils):
         self.accelerator.wait_for_everyone()
 
         if self._rl_games_eval_runner is not None and self._rl_games_eval_runner.is_enabled(stage="post_train"):
-            eval_result = self._run_rl_games_eval_with_model_mode(stage="post_train")
+            if self._distributed_rl_games_eval_enabled():
+                eval_result = self._run_distributed_rl_games_eval(stage="post_train")
+            elif self.accelerator.is_main_process:
+                eval_result = self._run_rl_games_eval_with_model_mode(stage="post_train")
+            else:
+                eval_result = None
 
             if self.accelerator.is_main_process and eval_result is not None:
                 final_metrics = self._append_rl_games_eval_metrics(
@@ -2010,48 +2401,168 @@ class VLATrainer(TrainerUtils):
         self.accelerator.wait_for_everyone()
 
 
+def _run_eval_batch_benchmark(trainer) -> None:
+    """Benchmark rl_games (latency_bench) eval wall-clock + VRAM across batch sizes.
+
+    Gated by env var LB_EVAL_BENCH=1. The plan is a comma list of
+    ``parallel:episodes`` pairs in LB_EVAL_BENCH_PLAN (default
+    ``1:4,5:20,10:20,20:20``). Model is loaded ONCE; every config runs against
+    the same live model so the comparison is apples-to-apples. The serial 1:4
+    row is meant to be linearly extrapolated to 20 eps (4x serial is too slow).
+    """
+    import os
+    import time
+
+    plan_str = os.environ.get("LB_EVAL_BENCH_PLAN", "1:4,5:20,10:20,20:20")
+    plan = []
+    for item in plan_str.split(","):
+        p, e = item.strip().split(":")
+        plan.append((int(p), int(e)))
+
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        _nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(torch.cuda.current_device())
+    except Exception:
+        pynvml = None
+        _nvml_handle = None
+
+    def _nvml_used_mb():
+        if _nvml_handle is None:
+            return None
+        return pynvml.nvmlDeviceGetMemoryInfo(_nvml_handle).used / 1024 / 1024
+
+    runner = trainer._rl_games_eval_runner
+    model = trainer.accelerator.unwrap_model(trainer.model)
+
+    def _set(parallel, episodes):
+        # The trainer cfg is an access-tracked wrapper that OmegaConf.update can't
+        # touch, so override the runner's per-stage getters directly instead.
+        runner._eval_parallel_envs = lambda *a, **k: int(parallel)
+        runner._num_episodes = lambda *a, **k: int(episodes)
+
+    import threading
+
+    def _timed_run(parallel, episodes, label):
+        _set(parallel, episodes)
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        nvml_peak = {"v": 0.0}
+        stop = threading.Event()
+
+        def _sample():
+            while not stop.is_set():
+                u = _nvml_used_mb()
+                if u is not None and u > nvml_peak["v"]:
+                    nvml_peak["v"] = u
+                time.sleep(0.1)
+
+        t = threading.Thread(target=_sample, daemon=True)
+        t.start()
+        t0 = time.perf_counter()
+        result = runner.run(model=model, step=0, stage="mid_train", save=False)
+        torch.cuda.synchronize()
+        dt = time.perf_counter() - t0
+        stop.set()
+        t.join(timeout=1.0)
+        torch_peak = torch.cuda.max_memory_reserved() / 1024 / 1024
+        mean_r = result.aggregate.get("mean_reward")
+        logger.info(
+            "[LB_EVAL_BENCH] %s | parallel=%d eps=%d | wall=%.1fs | torch_reserved_peak=%.0fMB | "
+            "nvml_used_peak=%sMB | mean_reward=%s",
+            label, parallel, episodes, dt, torch_peak,
+            f"{nvml_peak['v']:.0f}" if _nvml_handle is not None else "n/a", mean_r,
+        )
+        return {"parallel": parallel, "episodes": episodes, "wall_s": dt,
+                "torch_peak_mb": torch_peak, "nvml_peak_mb": nvml_peak["v"], "mean_reward": mean_r}
+
+    logger.info("[LB_EVAL_BENCH] warmup (parallel=1 eps=2, untimed) to trigger CUDA init/autotune ...")
+    _set(1, 2)
+    runner.run(model=model, step=0, stage="mid_train", save=False)
+    torch.cuda.synchronize()
+
+    rows = []
+    for parallel, episodes in plan:
+        rows.append(_timed_run(parallel, episodes, label="bench"))
+
+    # Summary table with serial-extrapolation + speedup vs the 1:* serial row.
+    serial = next((r for r in rows if r["parallel"] == 1), None)
+    serial_per_ep = (serial["wall_s"] / serial["episodes"]) if serial else None
+    logger.info("[LB_EVAL_BENCH] ==== SUMMARY ====")
+    logger.info("[LB_EVAL_BENCH] parallel | eps | wall_s | s/ep | extrap_20ep_s | speedup_vs_serial20 | torch_peak_MB | nvml_peak_MB | mean_reward")
+    serial20 = serial_per_ep * 20 if serial_per_ep else None
+    for r in rows:
+        s_per_ep = r["wall_s"] / r["episodes"]
+        extrap20 = s_per_ep * 20
+        speedup = (serial20 / extrap20) if serial20 else float("nan")
+        logger.info(
+            "[LB_EVAL_BENCH] %8d | %3d | %6.1f | %5.2f | %12.1f | %18.2fx | %12.0f | %11.0f | %s",
+            r["parallel"], r["episodes"], r["wall_s"], s_per_ep, extrap20, speedup,
+            r["torch_peak_mb"], r["nvml_peak_mb"], r["mean_reward"],
+        )
+    if serial20 is not None:
+        logger.info("[LB_EVAL_BENCH] serial 20-ep estimate (1:4 x5) = %.1fs", serial20)
+
+
 def main(cfg) -> None:
+    previous_signal_handlers = _install_graceful_stop_handlers()
+    trainer = None
+    normal_completion = False
     _pin_cuda_device_from_local_rank()
-    logger.info("VLA Training :: Warming Up")
-    if hasattr(cfg, "rl_games"):
-        login_training_services(cfg, workspace_dir=getattr(cfg, "workspace_dir", None))
-        validate_rl_games_config(cfg)
-    # Keep the obs window tied to the KV-memory rollout length before the config is
-    # wrapped/consumed by the dataloader and framework.
-    sync_kv_memory_obs_window(cfg)
-    apply_model_alias(cfg)
-    apply_action_spec(cfg)
+    try:
+        logger.info("VLA Training :: Warming Up")
+        if hasattr(cfg, "rl_games"):
+            login_training_services(cfg, workspace_dir=getattr(cfg, "workspace_dir", None))
+            validate_rl_games_config(cfg)
+        # Keep the obs window tied to the KV-memory rollout length before the config is
+        # wrapped/consumed by the dataloader and framework.
+        sync_kv_memory_obs_window(cfg)
+        apply_model_alias(cfg)
+        apply_action_spec(cfg)
 
-    cfg = wrap_config(cfg)
-    logger.info("✅ Configuration wrapped for access tracking")
+        cfg = wrap_config(cfg)
+        logger.info("✅ Configuration wrapped for access tracking")
 
-    output_dir = setup_directories(cfg=cfg)
-    vla = build_framework(cfg)
-    vla = _preload_model_checkpoint_before_accelerator(cfg=cfg, model=vla)
+        output_dir = setup_directories(cfg=cfg)
+        vla = build_framework(cfg)
+        vla = _preload_model_checkpoint_before_accelerator(cfg=cfg, model=vla)
 
-    accelerator = _build_accelerator(cfg)
+        accelerator = _build_accelerator(cfg)
 
-    vla_train_dataloader, vla_eval_dataloader = prepare_data(cfg=cfg, accelerator=accelerator, output_dir=output_dir)
-    _configure_quota_cumulative_training_steps(cfg=cfg, dataloader=vla_train_dataloader, accelerator=accelerator)
-    optimizer, lr_scheduler = setup_optimizer_and_scheduler(model=vla, cfg=cfg)
+        vla_train_dataloader, vla_eval_dataloader = prepare_data(cfg=cfg, accelerator=accelerator, output_dir=output_dir)
+        _configure_quota_cumulative_training_steps(cfg=cfg, dataloader=vla_train_dataloader, accelerator=accelerator)
+        optimizer, lr_scheduler = setup_optimizer_and_scheduler(model=vla, cfg=cfg)
 
-    trainer = VLATrainer(
-        cfg=cfg,
-        model=vla,
-        vla_train_dataloader=vla_train_dataloader,
-        vla_eval_dataloader=vla_eval_dataloader,
-        optimizer=optimizer,
-        lr_scheduler=lr_scheduler,
-        accelerator=accelerator,
-    )
+        trainer = VLATrainer(
+            cfg=cfg,
+            model=vla,
+            vla_train_dataloader=vla_train_dataloader,
+            vla_eval_dataloader=vla_eval_dataloader,
+            optimizer=optimizer,
+            lr_scheduler=lr_scheduler,
+            accelerator=accelerator,
+        )
 
-    trainer.prepare_training()
-    trainer.train()
+        trainer.prepare_training()
 
-    logger.info("... and that's all, folks!")
-    _distributed_barrier()
-    if dist.is_initialized():
-        dist.destroy_process_group()
+        import os as _os
+        if _os.environ.get("LB_EVAL_BENCH"):
+            _run_eval_batch_benchmark(trainer)
+            logger.info("[LB_EVAL_BENCH] done; skipping training.")
+            normal_completion = True
+            return
+
+        trainer.train()
+        normal_completion = not bool(getattr(trainer, "graceful_stop_requested", False))
+
+        if normal_completion:
+            logger.info("... and that's all, folks!")
+    finally:
+        if trainer is not None:
+            trainer.cleanup_runtime()
+        _destroy_distributed_process_group(use_barrier=normal_completion)
+        _restore_signal_handlers(previous_signal_handlers)
 
 
 if __name__ == "__main__":

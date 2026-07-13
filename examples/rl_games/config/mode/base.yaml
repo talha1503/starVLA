@@ -3,6 +3,7 @@
 rl_games:
   env_eval:
     enabled: true
+    eval_backend: latency_bench
     distributed_mode: none
     vectorized:
       enabled: false

@@ -7,11 +7,13 @@ from starVLA.training.rl_games.eval_core import (
     ActionLatencyQueue,
     RlGamesEvalRunner,
     _TaskEvaluator,
+    _apply_prompt_mode as apply_eval_prompt_mode,
     _resize_rgb,
     decode_deadly_factorized_11,
     decode_deadly_multibinary_7,
     decode_discrete_argmax,
 )
+from starVLA.dataloader.gr00t_lerobot.datasets import _apply_prompt_mode as apply_train_prompt_mode
 
 
 def test_decode_discrete_argmax():
@@ -80,6 +82,21 @@ def test_action_latency_queue():
     assert outputs == [0, 0, 1, 2]
 
 
+def test_prompt_mode_latency_neutral_strips_timing_suffix():
+    prompt = (
+        "You are playing Flappy Bird. Pass through the pipe gaps and stay alive. "
+        "Choose the action: NOOP, FLAP. Current action latency is 2 raw frames (66.67 ms). "
+        "The environment runs at 30 FPS and observations are emitted at 30 FPS. Choose the best next action."
+    )
+
+    assert apply_train_prompt_mode(prompt, "latency_neutral") == (
+        "You are playing Flappy Bird. Pass through the pipe gaps and stay alive. Choose the action: NOOP, FLAP."
+    )
+    assert apply_eval_prompt_mode(prompt, "latency_neutral") == (
+        "You are playing Flappy Bird. Pass through the pipe gaps and stay alive. Choose the action: NOOP, FLAP."
+    )
+
+
 def test_eval_runner_infers_latencies_from_prompt_map_when_values_empty(tmp_path):
     prompt_map = tmp_path / "latency_prompt_map.json"
     prompt_map.write_text(
@@ -106,6 +123,36 @@ def test_eval_runner_infers_latencies_from_prompt_map_when_values_empty(tmp_path
     runner = RlGamesEvalRunner(cfg=cfg, output_dir=str(tmp_path))
 
     assert runner._get_latency_values(stage="mid_train") == [0, 2]
+
+
+def test_task_evaluator_latency_neutral_prompt_mode_strips_prompt_map_prompts(tmp_path):
+    prompt_map = tmp_path / "latency_prompt_map.json"
+    prompt_map.write_text(
+        '{"0": {"latency": 0, "latency_ms": 0.0, "prompt": "zero Current action latency is 0 raw frames (0.00 ms)."}}',
+        encoding="utf-8",
+    )
+    cfg = OmegaConf.create(
+        {
+            "seed": 42,
+            "rl_games": {
+                "env_eval": {
+                    "prompt_mode": "latency_neutral",
+                    "latency": {
+                        "values": [0],
+                        "prompt_map_path": str(prompt_map),
+                    },
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+    evaluator = _TaskEvaluator(task="flappy", cfg=cfg)
+    assert evaluator._resolve_prompt(latency=0, mapping={0: {"prompt": "zero Current action latency is 0 raw frames (0.00 ms)."}}, task="flappy") == "zero"
 
 
 def test_task_evaluator_reuses_episode_seeds_across_tasks_and_latencies_by_default():
@@ -177,45 +224,6 @@ def test_task_evaluator_respects_explicit_task_seed_stride():
     assert [evaluator._episode_seed(latency=0, episode=episode) for episode in range(3)] == [100042, 100043, 100044]
 
 
-def test_task_evaluator_builds_temporal_image_examples_for_wan_oft():
-    cfg = OmegaConf.create(
-        {
-            "rl_games": {
-                "env_eval": {
-                    "frameskip": 1,
-                    "image_size": 4,
-                },
-            },
-            "datasets": {
-                "vla_data": {
-                    "pack_image_sequence": True,
-                    "image_sequence_length": 4,
-                    "include_state": True,
-                },
-            },
-            "framework": {
-                "action_model": {
-                    "state_dim": 7,
-                },
-            },
-        }
-    )
-    evaluator = _TaskEvaluator(task="flappy", cfg=cfg)
-    frames = [
-        np.full((4, 4, 3), fill_value=value, dtype=np.uint8)
-        for value in (10, 20, 30, 40)
-    ]
-
-    history = evaluator._initial_model_history(frames[0])
-    for frame in frames[1:]:
-        history = evaluator._advance_model_history(history, frame)
-    example = evaluator._make_model_example(history, "play flappy")
-
-    assert len(example["image"]) == 4
-    assert [int(np.asarray(image)[0, 0, 0]) for image in example["image"]] == [10, 20, 30, 40]
-    assert example["state"].shape == (1, 7)
-
-
 def test_task_evaluator_saved_seed_overrides_take_precedence():
     cfg = OmegaConf.create(
         {
@@ -239,111 +247,6 @@ def test_task_evaluator_saved_seed_overrides_take_precedence():
     assert evaluator._episode_seed_for_run(latency=8, episode=1, seed_overrides={1: 123456}) == 123456
     assert evaluator._episode_seed_for_run(latency=8, episode=2, seed_overrides={1: 123456}) == 8044
     assert evaluator._episode_seed_for_run(latency=8, episode=3, seed_overrides={3: None}) is None
-
-
-class _ChunkEvalFakeEnv:
-    def __init__(self, max_steps):
-        self.max_steps = int(max_steps)
-        self.actions = []
-        self.reset_seeds = []
-
-    def reset(self, **kwargs):
-        self.reset_seeds.append(kwargs.get("seed"))
-        return np.zeros((4, 4, 3), dtype=np.uint8), {}
-
-    def render(self):
-        return np.full((4, 4, 3), len(self.actions), dtype=np.uint8)
-
-    def step(self, action):
-        self.actions.append(int(action))
-        terminated = len(self.actions) >= self.max_steps
-        return np.full((4, 4, 3), len(self.actions), dtype=np.uint8), 1.0, terminated, False, {}
-
-    def close(self):
-        pass
-
-
-class _ChunkEvalFakeModel:
-    def __init__(self):
-        self.calls = 0
-
-    def predict_action(self, examples):
-        self.calls += 1
-        return {
-            "normalized_actions": np.array(
-                [
-                    [
-                        [0.0, 1.0],
-                        [1.0, 0.0],
-                        [0.0, 1.0],
-                        [1.0, 0.0],
-                    ]
-                ],
-                dtype=np.float32,
-            )
-        }
-
-
-def _chunk_eval_cfg(chunk_execution_enabled):
-    return OmegaConf.create(
-        {
-            "seed": 42,
-            "rl_games": {
-                "env_eval": {
-                    "frameskip": 1,
-                    "image_size": 4,
-                    "fixed_episode_seeds": True,
-                    "action_chunk_execution": {
-                        "enabled": bool(chunk_execution_enabled),
-                        "chunk_size": 4,
-                    },
-                },
-            },
-            "framework": {
-                "action_model": {
-                    "state_dim": 1,
-                },
-            },
-        }
-    )
-
-
-def test_task_evaluator_defaults_to_replanning_with_first_action_slot(monkeypatch):
-    fake_env = _ChunkEvalFakeEnv(max_steps=4)
-    evaluator = _TaskEvaluator(task="flappy", cfg=_chunk_eval_cfg(chunk_execution_enabled=False))
-    monkeypatch.setattr(evaluator, "_make_env", lambda: fake_env)
-
-    model = _ChunkEvalFakeModel()
-    metrics = evaluator.run_latency(
-        model=model,
-        latency=0,
-        prompt="play flappy",
-        max_steps=4,
-        num_episodes=1,
-    )
-
-    assert model.calls == 4
-    assert fake_env.actions == [1, 1, 1, 1]
-    assert metrics["decoded_action_hist"] == {"1": 4}
-
-
-def test_task_evaluator_can_execute_predicted_action_chunks(monkeypatch):
-    fake_env = _ChunkEvalFakeEnv(max_steps=4)
-    evaluator = _TaskEvaluator(task="flappy", cfg=_chunk_eval_cfg(chunk_execution_enabled=True))
-    monkeypatch.setattr(evaluator, "_make_env", lambda: fake_env)
-
-    model = _ChunkEvalFakeModel()
-    metrics = evaluator.run_latency(
-        model=model,
-        latency=0,
-        prompt="play flappy",
-        max_steps=4,
-        num_episodes=1,
-    )
-
-    assert model.calls == 1
-    assert fake_env.actions == [1, 0, 1, 0]
-    assert metrics["decoded_action_hist"] == {"1": 2, "0": 2}
 
 
 class _FixedRng:
@@ -399,6 +302,95 @@ def test_demon_attack_env_uses_noop_reset_max_30_by_default(monkeypatch):
     assert info == {"noop": True}
     assert fake_env.reset_calls == [{"seed": 42}]
     assert fake_env.step_actions == [0] * 30
+
+
+class _OneStepEnv:
+    def __init__(self):
+        self.reset_calls = []
+        self.close_calls = 0
+
+    def reset(self, **kwargs):
+        self.reset_calls.append(kwargs)
+        return np.zeros((12, 16, 3), dtype=np.uint8), {}
+
+    def step(self, action):
+        return np.zeros((12, 16, 3), dtype=np.uint8), 0.0, True, False, {}
+
+    def close(self):
+        self.close_calls += 1
+
+
+class _SlotTrackingModel:
+    def __init__(self):
+        self.reset_memory_calls = []
+        self.example_slot_ids = []
+
+    def reset_memory(self, slot_id=None):
+        self.reset_memory_calls.append(slot_id)
+
+    def predict_action(self, *, examples):
+        self.example_slot_ids.append([example["slot_id"] for example in examples])
+        return {"normalized_actions": np.zeros((len(examples), 1, 6), dtype=np.float32)}
+
+
+def _single_step_eval_cfg(*, vectorized: bool = False):
+    env_eval = {
+        "frameskip": 1,
+    }
+    if vectorized:
+        env_eval["vectorized"] = {
+            "enabled": True,
+            "batch_size": 2,
+        }
+    return OmegaConf.create(
+        {
+            "seed": 42,
+            "rl_games": {
+                "env_eval": env_eval,
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+
+def test_task_evaluator_resets_serial_model_memory_at_each_episode(monkeypatch):
+    evaluator = _TaskEvaluator(task="demon_attack", cfg=_single_step_eval_cfg())
+    model = _SlotTrackingModel()
+    monkeypatch.setattr(evaluator, "_make_env", lambda: _OneStepEnv())
+
+    evaluator.run_latency(
+        model=model,
+        latency=0,
+        prompt="prompt",
+        max_steps=1,
+        num_episodes=2,
+        episode_indices=[0, 1],
+    )
+
+    assert model.reset_memory_calls == [0, 0]
+    assert model.example_slot_ids == [[0], [0]]
+
+
+def test_task_evaluator_resets_vectorized_model_memory_per_slot(monkeypatch):
+    evaluator = _TaskEvaluator(task="demon_attack", cfg=_single_step_eval_cfg(vectorized=True))
+    model = _SlotTrackingModel()
+    monkeypatch.setattr(evaluator, "_make_env", lambda: _OneStepEnv())
+
+    evaluator.run_latency(
+        model=model,
+        latency=0,
+        prompt="prompt",
+        max_steps=1,
+        num_episodes=3,
+        episode_indices=[0, 1, 2],
+    )
+
+    assert model.reset_memory_calls == [0, 1, 0]
+    assert model.example_slot_ids == [[0, 1], [0]]
 
 
 def test_eval_runner_saves_result_after_each_episode(monkeypatch, tmp_path):

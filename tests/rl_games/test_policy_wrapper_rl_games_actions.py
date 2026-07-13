@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -14,6 +15,13 @@ if str(STARVLA_ROOT) not in sys.path:
 
 
 def _load_policy_wrapper_module():
+    module_names = [
+        "starVLA.model.framework.base_framework",
+        "starVLA.model.framework.share_tools",
+        "deployment.model_server.policy_norm_processor",
+        "torch",
+    ]
+    original_modules = {name: sys.modules[name] for name in module_names if name in sys.modules}
     torch_module = ModuleType("torch")
     torch_module.bfloat16 = object()
     base_framework_module = ModuleType("starVLA.model.framework.base_framework")
@@ -30,7 +38,14 @@ def _load_policy_wrapper_module():
     module_path = STARVLA_ROOT / "deployment/model_server/policy_wrapper.py"
     spec = importlib.util.spec_from_file_location("policy_wrapper_module", module_path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        for name in module_names:
+            if name in original_modules:
+                sys.modules[name] = original_modules[name]
+            else:
+                sys.modules.pop(name, None)
     return module
 
 
@@ -50,9 +65,34 @@ class FakeProcessor:
 class FakeFramework:
     def __init__(self, normalized_actions):
         self.normalized_actions = np.asarray(normalized_actions, dtype=np.float32)
+        self.calls = []
+        self.to_calls = []
+        self.eval_calls = 0
+
+    def to(self, target):
+        self.to_calls.append(target)
+        return self
+
+    def eval(self):
+        self.eval_calls += 1
+        return self
 
     def predict_action(self, examples, **kwargs):
+        self.calls.append({"examples": examples, "kwargs": kwargs})
         return {"normalized_actions": self.normalized_actions}
+
+
+class FakeProfiler:
+    def __init__(self):
+        self.timings = {}
+
+    def time(self, stage):
+        @contextmanager
+        def timer():
+            yield
+            self.timings[stage] = 1.0
+
+        return timer()
 
 
 def test_decode_flappy_logits_to_discrete_action_payload():
@@ -140,3 +180,73 @@ def test_policy_wrapper_rl_games_mode_returns_decoded_actions_without_unapply():
     assert np.allclose(prediction["raw_action_scores"], [[[0.1, 0.9]]])
     assert prediction["action_output_type"] == "rl_games_discrete_id"
     assert processor.calls == []
+
+
+def test_policy_wrapper_default_mode_records_unnormalize_timing():
+    policy_wrapper_module = _load_policy_wrapper_module()
+    processor = FakeProcessor()
+    framework = FakeFramework([[[1.0, 2.0]]])
+    profiler = FakeProfiler()
+    wrapper = policy_wrapper_module.PolicyServerWrapper.__new__(policy_wrapper_module.PolicyServerWrapper)
+    wrapper._framework = framework
+    wrapper._default_unnorm_key = "new_embodiment"
+    wrapper._available_unnorm_keys = ["new_embodiment"]
+    wrapper._action_output_mode = "deployment"
+    wrapper._rl_games_env_name = None
+    wrapper._get_processor = lambda unnorm_key: processor
+
+    prediction = wrapper.predict_action(
+        examples=[{"image": [], "lang": ""}],
+        unnorm_key="new_embodiment",
+        profiler=profiler,
+    )
+
+    assert prediction["actions"].tolist() == [[[11.0, 12.0]]]
+    assert framework.calls[0]["kwargs"]["profiler"] is profiler
+    assert profiler.timings["starvla_wrapper_unnormalize_ms"] == 1.0
+
+
+def test_policy_wrapper_rl_games_mode_records_decode_timing():
+    policy_wrapper_module = _load_policy_wrapper_module()
+    processor = FakeProcessor()
+    framework = FakeFramework([[[0.1, 0.9]]])
+    profiler = FakeProfiler()
+    wrapper = policy_wrapper_module.PolicyServerWrapper.__new__(policy_wrapper_module.PolicyServerWrapper)
+    wrapper._framework = framework
+    wrapper._default_unnorm_key = "new_embodiment"
+    wrapper._available_unnorm_keys = ["new_embodiment"]
+    wrapper._action_output_mode = "rl_games"
+    wrapper._rl_games_env_name = "flappy"
+    wrapper._get_processor = lambda unnorm_key: processor
+
+    prediction = wrapper.predict_action(
+        examples=[{"image": [], "lang": ""}],
+        unnorm_key="new_embodiment",
+        profiler=profiler,
+    )
+
+    assert prediction["actions"].tolist() == [[[1]]]
+    assert framework.calls[0]["kwargs"]["profiler"] is profiler
+    assert profiler.timings["starvla_wrapper_rl_games_decode_ms"] == 1.0
+    assert processor.calls == []
+
+
+def test_policy_wrapper_loads_checkpoint_framework_in_eval_mode():
+    policy_wrapper_module = _load_policy_wrapper_module()
+    framework = FakeFramework([[[0.1, 0.9]]])
+    policy_wrapper_module.baseframework.from_pretrained = lambda ckpt_path: framework
+    policy_wrapper_module.read_mode_config = lambda ckpt_path: (
+        {"framework": {"action_model": {"action_horizon": 1}}},
+        {},
+    )
+
+    wrapper = policy_wrapper_module.PolicyServerWrapper(
+        ckpt_path="/tmp/checkpoint",
+        device="cuda",
+        use_bf16=True,
+        action_output_mode="rl_games",
+        rl_games_env_name="flappy",
+    )
+
+    assert wrapper._framework is framework
+    assert framework.eval_calls == 1

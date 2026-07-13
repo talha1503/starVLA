@@ -20,11 +20,7 @@ detect_torch_profile() {
 
   local compute_caps
   compute_caps="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null || true)"
-  # Consumer Blackwell (sm_120) keeps the tested CUDA 12.8 stack.
-  if echo "${compute_caps}" | grep -qx "12.0"; then
-    echo "cu128"
-  # Datacenter Blackwell (sm_100, compute cap 10.x, e.g. B200) needs CUDA 13.
-  elif echo "${compute_caps}" | awk -F. '$1 >= 10 {found=1} END {exit found ? 0 : 1}'; then
+  if echo "${compute_caps}" | awk -F. '$1 >= 10 {found=1} END {exit found ? 0 : 1}'; then
     echo "cu130"
   else
     echo "cu124"
@@ -36,28 +32,28 @@ install_torch() {
 
   case "${profile}" in
     cu130)
-      echo "[install/torch] Installing PyTorch 2.10.0 CUDA 13.0 stack for datacenter Blackwell/sm_100"
-      pip_install torch==2.10.0+cu130 torchvision==0.25.0+cu130 torchaudio==2.10.0+cu130 \
+      echo "[install/torch] Installing PyTorch 2.12.1 CUDA 13.0 stack for Blackwell"
+      pip_install torch==2.12.1+cu130 torchvision==0.27.1+cu130 \
         --index-url "${TORCH_INDEX_BASE}/cu130"
       ;;
     cu128)
-      echo "[install/torch] Installing PyTorch 2.7.1 CUDA 12.8 stack for Blackwell/sm_120"
-      pip_install torch==2.7.1+cu128 torchvision==0.22.1+cu128 torchaudio==2.7.1+cu128 \
+      echo "[install/torch] Installing PyTorch 2.7.1 CUDA 12.8 stack"
+      pip_install torch==2.7.1+cu128 torchvision==0.22.1+cu128 \
         --index-url "${TORCH_INDEX_BASE}/cu128"
       ;;
     cu126)
       echo "[install/torch] Installing PyTorch 2.6.0 CUDA 12.6 stack"
-      pip_install torch==2.6.0+cu126 torchvision==0.21.0+cu126 torchaudio==2.6.0+cu126 \
+      pip_install torch==2.6.0+cu126 torchvision==0.21.0+cu126 \
         --index-url "${TORCH_INDEX_BASE}/cu126"
       ;;
     cu124)
       echo "[install/torch] Installing PyTorch 2.6.0 CUDA 12.4 stack"
-      pip_install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 \
+      pip_install torch==2.6.0+cu124 torchvision==0.21.0+cu124 \
         --index-url "${TORCH_INDEX_BASE}/cu124"
       ;;
     cpu)
       echo "[install/torch] Installing PyTorch 2.6.0 CPU stack"
-      pip_install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
+      pip_install torch==2.6.0 torchvision==0.21.0 \
         --index-url "${TORCH_INDEX_BASE}/cpu"
       ;;
     *)
@@ -70,6 +66,7 @@ install_torch() {
 if [[ "${TORCH_PROFILE}" == "auto" ]]; then
   TORCH_PROFILE="$(detect_torch_profile)"
 fi
+export STARVLA_TORCH_PROFILE="${TORCH_PROFILE}"
 
 install_torch "${TORCH_PROFILE}"
 

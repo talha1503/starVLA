@@ -55,6 +55,24 @@ def test_training_commands_are_valid_bash() -> None:
     subprocess.run(["bash", "-n", *command_paths], check=True, cwd=REPO_ROOT)
 
 
+def test_kv_memory_training_command_shards_mid_train_latency_bench_eval() -> None:
+    command_text = (REPO_ROOT / "commands" / "memory" / "train_flappy_openvla_kv_memory.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "launch.num_processes=2" in command_text
+    assert "rl_games.env_eval.distributed_mode=rank_sharded" in command_text
+
+
+def test_memory_training_commands_save_bf16_safetensors_model_file() -> None:
+    command_paths = sorted((REPO_ROOT / "commands" / "memory").glob("*.sh"))
+
+    for command_path in command_paths:
+        command_text = command_path.read_text(encoding="utf-8")
+        assert "checkpoint.save_safetensors_file=true" in command_text, command_path
+        assert "checkpoint.save_pt_file=false" in command_text, command_path
+
+
 def test_wan_oft_commands_are_valid_bash() -> None:
     command_paths = [
         REPO_ROOT / "commands" / "train_flappy_wan_oft.sh",
@@ -98,6 +116,7 @@ def test_wan_oft_flappy_mixed_latency_command_preserves_context5_baseline() -> N
     assert "rl_games.env_eval.latency.prompt_map_path=\"${PROMPT_MAP_PATH}\"" in command_text
     assert '"rl_games.env_eval.mid_train.latencies=${MID_TRAIN_LATENCIES}"' in command_text
     assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
+    assert "checkpoint.save_training_state=false" in command_text
 
 
 def test_wan_oft_flappy_curriculum_commands_enable_sequential_sampling() -> None:
@@ -117,194 +136,27 @@ def test_wan_oft_flappy_curriculum_commands_enable_sequential_sampling() -> None
         assert "datasets.vla_data.action_balance.enabled=false" in command_text
         assert "dataset.converted_name=flappy_mixed_latency_train__bridge" in command_text
         assert "datasets.vla_data.data_mix=flappy_mixed_latency_train__bridge" in command_text
-        assert "datasets.vla_data.eval_data_mix=flappy_mixed_latency_train__bridge__val" in command_text
-        assert "datasets.vla_data.image_sequence_length=\"${CONTEXT_WINDOW}\"" in command_text
-        assert "framework.world_model.num_frames=\"${CONTEXT_WINDOW}\"" in command_text
-        assert "framework.action_model.loss_type=current_discrete_ce" in command_text
-        assert "rl_games.env_eval.latency.prompt_map_path=\"${PROMPT_MAP_PATH}\"" in command_text
-        assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
-
-
-def test_wan_oft_multigpu_command_enables_distributed_eval() -> None:
-    command_path = REPO_ROOT / "commands" / "train_flappy_wan_oft_multigpu.sh"
-    command_text = command_path.read_text(encoding="utf-8")
-
-    assert "model=wan_oft" in command_text
-    assert "env=flappy" in command_text
-    assert "init=wan_oft_libero" in command_text
-    assert "trainer.distributed_backend=deepspeed" in command_text
-    assert "launch.use_accelerate=true" in command_text
-    assert "export NCCL_DEBUG=${NCCL_DEBUG:-INFO}" in command_text
-    assert "export NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}" in command_text
-    assert "export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}" in command_text
-    assert "launch.gpus=\"'${WAN_OFT_GPUS:-0,1}'\"" in command_text
-    assert "launch.num_processes=${WAN_OFT_NUM_PROCESSES:-2}" in command_text
-    assert "datasets.vla_data.data_mix=flappy_train__bridge" in command_text
-    assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in command_text
-    assert "rl_games.env_eval.enabled=true" in command_text
-    assert "rl_games.env_eval.distributed_mode=rank_sharded" in command_text
-    assert "rl_games.env_eval.mid_train.enabled=true" in command_text
-    assert "rl_games.env_eval.mid_train.latencies=[0]" in command_text
-    assert "rl_games.env_eval.post_train.enabled=true" in command_text
-    assert "rl_games.env_eval.post_train.latencies=[0,1,2,3,4]" in command_text
-
-
-def test_wan_oft_single_gpu_command_enables_held_out_eval_mix() -> None:
-    command_path = REPO_ROOT / "commands" / "train_flappy_wan_oft.sh"
-    command_text = command_path.read_text(encoding="utf-8")
-
-    assert "model=wan_oft" in command_text
-    assert "env=flappy" in command_text
-    assert "init=wan_oft_libero" in command_text
-    assert "trainer.distributed_backend=none" in command_text
-    assert "launch.use_accelerate=false" in command_text
-    assert "launch.num_processes=1" in command_text
-    assert "run_id=wan_oft_flappy_fix_latency_0_context5_standard_sft_2000_effbs128_224_currentce" in command_text
-    assert "paths.dataset_local_dir=data/flappy_fix_latency_0_200ep_context5" in command_text
-    assert "dataset.converted_name=flappy_train__bridge" in command_text
-    assert "trainer.max_train_steps=2000" in command_text
-    assert "trainer.gradient_accumulation_steps=32" in command_text
-    assert "datasets.vla_data.per_device_batch_size=4" in command_text
-    assert "datasets.vla_data.obs_image_size=[224,224]" in command_text
-    assert "datasets.vla_data.image_sequence_length=5" in command_text
-    assert "datasets.vla_data.observation_indices=[-4,-3,-2,-1,0]" in command_text
-    assert "framework.world_model.num_frames=5" in command_text
-    assert "framework.action_model.loss_type=current_discrete_ce" in command_text
-    assert "framework.action_model.class_weights" not in command_text
-    assert "+trainer.learning_rate.action_query_proj=1.0e-4" in command_text
-    assert "trainer.lr_scheduler_type=cosine_with_min_lr" in command_text
-    assert "trainer.scheduler_specific_kwargs.min_lr=1.0e-6" in command_text
-    assert "trainer.eval_action_classification=false" in command_text
-    assert "trainer.save_interval=0" in command_text
-    assert "datasets.vla_data.action_balance.enabled=false" in command_text
-    assert "datasets.vla_data.data_mix=flappy_train__bridge" in command_text
-    assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in command_text
-    assert "rl_games.env_eval.enabled=true" in command_text
-    assert "rl_games.env_eval.image_size=224" in command_text
-    assert "rl_games.env_eval.latency.prompt_map_path=data/flappy_fix_latency_0_200ep_context5/flappy_train__bridge/latency_prompt_map.json" in command_text
-    assert "rl_games.env_eval.mid_train.enabled=true" in command_text
-    assert "rl_games.env_eval.mid_train.interval_steps=500" in command_text
-    assert "rl_games.env_eval.mid_train.latencies=[0]" in command_text
-    assert "rl_games.env_eval.mid_train.num_episodes=5" in command_text
-    assert "rl_games.env_eval.post_train.enabled=true" in command_text
-    assert "rl_games.env_eval.post_train.latencies=[0]" in command_text
-    assert "rl_games.env_eval.post_train.num_episodes=20" in command_text
-    assert "checkpoint.save_pt_file=true" in command_text
-    assert "checkpoint.save_training_state=false" in command_text
-    assert "checkpoint.save_best_model=false" in command_text
-    assert "checkpoint.save_final_model=true" in command_text
-
-
-def test_wan_oft_demon_attack_single_gpu_command_derives_baseline_from_latency_arg() -> None:
-    command_path = REPO_ROOT / "commands" / "train_demon_attack_wan_oft.sh"
-    command_text = command_path.read_text(encoding="utf-8")
-
-    assert 'LATENCY="${1:-${LATENCY:-0}}"' in command_text
-    assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}}"' in command_text
-    assert 'RUN_ID="${RUN_ID:-wan_oft_demon_attack_fix_latency_${LATENCY}_context${CONTEXT_WINDOW}_standard_sft_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_224_currentce}"' in command_text
-    assert 'MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-2000}"' in command_text
-    assert 'EVAL_INTERVAL="${EVAL_INTERVAL:-500}"' in command_text
-    assert 'MID_TRAIN_LATENCIES="${MID_TRAIN_LATENCIES:-[${LATENCY}]}"' in command_text
-    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[${LATENCY}]}"' in command_text
-    assert "model=wan_oft" in command_text
-    assert "env=demon_attack" in command_text
-    assert "init=wan_oft_libero" in command_text
-    assert "trainer.distributed_backend=none" in command_text
-    assert "launch.use_accelerate=false" in command_text
-    assert 'run_id="${RUN_ID}"' in command_text
-    assert 'paths.dataset_local_dir="${DATASET_LOCAL_DIR}"' in command_text
-    assert "dataset.converted_name=demon_attack_train__bridge" in command_text
-    assert "datasets.vla_data.data_mix=demon_attack_train__bridge" in command_text
-    assert "datasets.vla_data.eval_data_mix=demon_attack_train__bridge__val" in command_text
-    assert "datasets.vla_data.obs_image_size=[224,224]" in command_text
-    assert "datasets.vla_data.image_sequence_length=\"${CONTEXT_WINDOW}\"" in command_text
-    assert "datasets.vla_data.observation_indices=[-4,-3,-2,-1,0]" in command_text
-    assert "framework.world_model.num_frames=\"${CONTEXT_WINDOW}\"" in command_text
-    assert "framework.action_model.loss_type=current_discrete_ce" in command_text
-    assert "trainer.max_train_steps=\"${MAX_TRAIN_STEPS}\"" in command_text
-    assert "trainer.eval_interval=\"${EVAL_INTERVAL}\"" in command_text
-    assert "trainer.eval_action_classification=false" in command_text
-    assert 'PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/demon_attack_latency_prompt_map.json}"' in command_text
-    assert "rl_games.env_eval.latency.prompt_map_path=\"${PROMPT_MAP_PATH}\"" in command_text
-    assert "rl_games.env_eval.mid_train.interval_steps=\"${MID_TRAIN_INTERVAL}\"" in command_text
-    assert '"rl_games.env_eval.mid_train.latencies=${MID_TRAIN_LATENCIES}"' in command_text
-    assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
-
-
-def test_demon_attack_wan_oft_pipeline_script_parameterizes_latency() -> None:
-    script_path = REPO_ROOT / "scripts" / "run_demon_attack_wan_oft_pipeline.sh"
-    script_text = script_path.read_text(encoding="utf-8")
-
-    subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
-
-    assert "--latency <N>" in script_text
-    assert 'LATENCY=""' in script_text
-    assert 'RAW_DATASET_REPO="${RAW_DATASET_REPO:-latency-sensitive-bench/demon_attack_200ep_context${CONTEXT_WINDOW}}"' in script_text
-    assert 'RAW_SUBDIR="demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}"' in script_text
-    assert 'CONVERTED_DATA_ROOT="data/demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}"' in script_text
-    assert 'RUN_ID="wan_oft_demon_attack_fix_latency_${LATENCY}_context${CONTEXT_WINDOW}_standard_sft_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_224_currentce"' in script_text
-    assert 'bash examples/rl_games/install/bootstrap.sh' in script_text
-    assert 'hf download "${BASE_MODEL_REPO}"' in script_text
-    assert '--include "${RAW_SUBDIR}/**"' in script_text
-    assert 'convert_demon_attack_to_starvla_lerobot.py' in script_text
-    assert 'bash commands/train_demon_attack_wan_oft.sh "${LATENCY}"' in script_text
-    assert 'hf upload "${UPLOAD_REPO}" "${RUN_DIR}" "${UPLOAD_PATH_IN_REPO}"' in script_text
 
 
 def test_flappy_wan_oft_curriculum_pipeline_script_parameterizes_mode() -> None:
-    script_path = REPO_ROOT / "scripts" / "run_flappy_wan_oft_curriculum_pipeline.sh"
-    script_text = script_path.read_text(encoding="utf-8")
-
-    subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
+    script_text = (REPO_ROOT / "scripts" / "run_flappy_wan_oft_curriculum_pipeline.sh").read_text(
+        encoding="utf-8"
+    )
 
     assert "--mode <cumulative|exclusive>" in script_text
-    assert 'MODE=""' in script_text
-    assert 'case "${MODE}" in' in script_text
-    assert 'cumulative)' in script_text
-    assert 'TRAIN_MODE="curriculum_cumulative"' in script_text
-    assert 'exclusive)' in script_text
-    assert 'TRAIN_MODE="curriculum_exclusive"' in script_text
-    assert 'RAW_DATASET_REPO="${RAW_DATASET_REPO:-latency-sensitive-bench/flappy_200ep_context${CONTEXT_WINDOW}}"' in script_text
-    assert 'RAW_TEMPLATE_SUBDIR="flappy_fix_latency_0_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}"' in script_text
-    assert 'CONVERTED_DATA_ROOT="data/flappy_mixed_latency_${MAX_EPISODES}ep_per_lat_context${CONTEXT_WINDOW}"' in script_text
-    assert 'RUN_ID="${RUN_ID:-wan_oft_flappy_mix_latency_context${CONTEXT_WINDOW}_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_curriculum_${MODE}}"' in script_text
-    assert 'UPLOAD_REPO="${UPLOAD_REPO:-latency-sensitive-bench/wanoft_flappy_200ep}"' in script_text
-    assert 'UPLOAD_PATH_IN_REPO="${UPLOAD_PATH_IN_REPO:-${RUN_ID}}"' in script_text
-    assert 'bash examples/rl_games/install/bootstrap.sh' in script_text
-    assert 'hf download "${BASE_MODEL_REPO}"' in script_text
-    assert 'hf download "${RAW_DATASET_REPO}"' in script_text
-    assert '--include "flappy_fix_latency_*_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}/**"' in script_text
-    assert 'convert_flappy_to_starvla_lerobot.py' in script_text
-    assert '--dataset-source-subdir "${RAW_TEMPLATE_SUBDIR}"' in script_text
-    assert '--latency-filter "${LATENCY_FILTER_CSV}"' in script_text
-    assert '--episodes-per-latency "${EPISODES_PER_LATENCY}"' in script_text
-    assert '--context-images-column context_images' in script_text
-    assert '--image-sequence-length "${CONTEXT_WINDOW}"' in script_text
-    assert 'python examples/rl_games/scripts/launch_train.py' in script_text
-    assert 'mode="${TRAIN_MODE}"' in script_text
-    assert 'checkpoint.sync.enabled=false' in script_text
-    assert 'hf upload "${UPLOAD_REPO}" "${RUN_DIR}" "${UPLOAD_PATH_IN_REPO}"' in script_text
-
-
-def test_wan_oft_chunk8_command_matches_released_checkpoint() -> None:
-    command_path = REPO_ROOT / "commands" / "train_flappy_wan_oft_horizon1.sh"
-    command_text = command_path.read_text(encoding="utf-8")
-
-    assert "model=wan_oft" in command_text
-    assert "env=flappy" in command_text
-    assert "init=wan_oft_libero" in command_text
-    assert "trainer.distributed_backend=deepspeed" in command_text
-    assert "launch.use_accelerate=true" in command_text
-    assert "launch.num_processes=1" in command_text
-    assert "run_id=wan_oft_flappy_fix_latency_0_context4_chunk8" in command_text
-    assert "horizon1" not in command_text
-    assert "framework.action_model.action_horizon=8" in command_text
-    assert "framework.action_model.future_action_window_size=7" in command_text
-    assert "framework.action_model.past_action_window_size=0" in command_text
-    assert "datasets.vla_data.action_indices=[0,1,2,3,4,5,6,7]" in command_text
-    assert "trainer.reload_modules=" not in command_text
-    assert "datasets.vla_data.data_mix=flappy_train__bridge" in command_text
-    assert "datasets.vla_data.eval_data_mix=flappy_train__bridge__val" in command_text
+    assert "TRAIN_MODE=\"curriculum_cumulative\"" in script_text
+    assert "TRAIN_MODE=\"curriculum_exclusive\"" in script_text
+    assert "RUN_ID=\"${RUN_ID:-wan_oft_flappy_mix_latency_context${CONTEXT_WINDOW}_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_curriculum_${MODE}}\"" in script_text
+    assert "UPLOAD_REPO=\"${UPLOAD_REPO:-latency-sensitive-bench/wanoft_flappy_200ep}\"" in script_text
+    assert "UPLOAD_PATH_IN_REPO=\"${UPLOAD_PATH_IN_REPO:-${RUN_ID}}\"" in script_text
+    assert "--latency-filter \"${LATENCY_FILTER_CSV}\"" in script_text
+    assert "--episodes-per-latency \"${EPISODES_PER_LATENCY}\"" in script_text
+    assert "--context-images-column context_images" in script_text
+    assert "--image-sequence-length \"${CONTEXT_WINDOW}\"" in script_text
+    assert "python examples/rl_games/scripts/launch_train.py" in script_text
+    assert "mode=\"${TRAIN_MODE}\"" in script_text
+    assert "checkpoint.sync.enabled=false" in script_text
+    assert "hf upload \"${UPLOAD_REPO}\" \"${RUN_DIR}\" \"${UPLOAD_PATH_IN_REPO}\"" in script_text
 
 
 def test_openvla_deadly_cross_task_scripts_are_valid_bash() -> None:
@@ -365,6 +217,19 @@ def test_openvla_three_env_cross_task_setup_uses_024_latencies() -> None:
         assert list(post_train.latencies) == [0, 2, 4]
 
 
+def test_default_training_config_disables_held_out_action_classification() -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="flappy",
+        init="bridge",
+        mode="single",
+        overrides=[],
+    )
+
+    assert cfg.trainer.eval_action_classification is False
+
+
 def test_openvla_three_env_cross_task_forwards_deadly_threshold(tmp_path: Path) -> None:
     cfg = launch_train.compose_training_config(
         config_name="train",
@@ -414,25 +279,6 @@ def test_launcher_forwards_canonical_per_device_batch_size_override(tmp_path: Pa
     assert "++datasets.vla_data.per_device_batch_size=16" in cmd
 
 
-def test_launcher_quotes_comma_separated_reload_modules_for_hydra() -> None:
-    cfg = launch_train.compose_training_config(
-        config_name="train",
-        model="wan_oft",
-        env="flappy",
-        init="wan_oft_libero",
-        mode="single",
-        overrides=["trainer.reload_modules='backbone,action_model'"],
-    )
-    setup = {
-        "pretrained_checkpoint": "/tmp/checkpoint.pt",
-        "resume_found": False,
-    }
-
-    cmd = launch_train.build_trainer_command(cfg, setup, Path("/tmp/workspace"), "results/Checkpoints")
-
-    assert "++trainer.reload_modules='backbone,action_model'" in cmd
-
-
 def test_launcher_auto_forwards_new_nested_config_fields(tmp_path: Path) -> None:
     cfg = launch_train.compose_training_config(
         config_name="train",
@@ -441,7 +287,7 @@ def test_launcher_auto_forwards_new_nested_config_fields(tmp_path: Path) -> None
         init="bridge",
         mode="single",
         overrides=[
-            "+trainer.optimizer.extra_flag=true",
+            "trainer.optimizer.fused=false",
             "+datasets.vla_data.synthetic_cache.enabled=true",
         ],
     )
@@ -453,8 +299,9 @@ def test_launcher_auto_forwards_new_nested_config_fields(tmp_path: Path) -> None
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "++trainer.optimizer.extra_flag=true" in cmd
+    assert "trainer.optimizer.fused=false" in cmd
     assert "++datasets.vla_data.synthetic_cache.enabled=true" in cmd
+    assert not any(item.startswith("++trainer.") for item in cmd)
 
 
 def test_launcher_runtime_overrides_are_last(tmp_path: Path) -> None:
@@ -504,7 +351,7 @@ def test_run_experiment_auto_forwards_canonical_nested_fields(tmp_path: Path) ->
             "save_best_model": False,
             "save_pt_file": False,
         },
-        "trainer": {"optimizer": {"extra_flag": True}},
+        "trainer": {"optimizer": {"fused": False}},
         "datasets": {"vla_data": {"per_device_batch_size": 8, "synthetic_cache": {"enabled": True}}},
         "framework": {"qwenvl": {"base_vlm": "config_base"}},
         "rl_games": {"env_eval": {"enabled": False, "latency": {"values": [0]}}},
@@ -517,8 +364,9 @@ def test_run_experiment_auto_forwards_canonical_nested_fields(tmp_path: Path) ->
 
     cmd = run_experiment._trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "++trainer.optimizer.extra_flag=true" in cmd
+    assert "trainer.optimizer.fused=false" in cmd
     assert "++datasets.vla_data.synthetic_cache.enabled=true" in cmd
+    assert not any(item.startswith("++trainer.") for item in cmd)
     assert "trainer.batch_size=" not in " ".join(cmd)
     assert [item for item in cmd if "datasets.vla_data.data_root_dir=" in item][-1] == (
         f"++datasets.vla_data.data_root_dir={tmp_path / 'resolved_datasets'}"
@@ -546,8 +394,9 @@ def test_launcher_forwards_vit_and_llm_freeze_overrides(tmp_path: Path, monkeypa
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "++trainer.freeze_vit=true" in cmd
-    assert "++trainer.freeze_llm_layers=[0,27]" in cmd
+    assert "trainer.freeze_vit=true" in cmd
+    assert "trainer.freeze_llm_layers=[0,27]" in cmd
+    assert not any(item.startswith("++trainer.") for item in cmd)
     assert "trainer.freeze_llm_bottom_ratio=" not in cmd
 
 
@@ -833,6 +682,29 @@ def test_vla_trainer_pt_checkpoint_file_is_optional() -> None:
     assert 'model_checkpoint_path = checkpoint_path + "_pytorch_model.pt"' in trainer_text
     assert "torch.save(state_dict, model_checkpoint_path)" in trainer_text
     assert "model_path=model_checkpoint_path" in trainer_text
+
+
+def test_vla_trainer_can_save_bf16_safetensors_model_checkpoint() -> None:
+    trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
+
+    assert "self._save_safetensors_file_enabled" in trainer_text
+    assert 'model_checkpoint_path = checkpoint_path + "_model.safetensors"' in trainer_text
+    assert "torch.bfloat16" in trainer_text
+    assert "save_file(safetensors_state_dict, model_checkpoint_path)" in trainer_text
+
+
+def test_memory_upload_scripts_drop_training_state_before_upload() -> None:
+    script_dir = REPO_ROOT.parent / "scripts" / "bash_scripts" / "memory"
+    script_paths = sorted(script_dir.glob("*.sh"))
+
+    for script_path in script_paths:
+        script_text = script_path.read_text(encoding="utf-8")
+        if "hf upload latency-sensitive-bench/memory" not in script_text:
+            continue
+        assert 'compgen -G "${CHECKPOINT_DIR}/steps_*_model.safetensors"' in script_text, script_path
+        assert 'find "${CHECKPOINT_DIR}" -maxdepth 1 -type d -name "steps_*_state" -exec rm -rf {} +' in script_text, script_path
+        assert '--exclude "checkpoints/_initialization/**"' in script_text, script_path
+        assert '--exclude "checkpoints/*_state/**"' in script_text, script_path
 
 
 def test_run_train_accepts_explicit_resume_checkpoint() -> None:

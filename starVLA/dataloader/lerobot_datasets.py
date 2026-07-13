@@ -80,6 +80,14 @@ def make_LeRobotSingleDataset(
     num_obs_frames = int(data_cfg.get("num_obs_frames", 1) or 1) if data_cfg else 1
     if num_obs_frames > 1:
         modality_config["video"].delta_indices = list(range(-(num_obs_frames - 1), 1))
+        # KV-memory per-frame supervision (scheme B): each of the R observation frames
+        # needs its OWN action chunk, not just the base-index one. Widen the action delta
+        # to cover the rollout window so `_pack_sample` can slice a chunk per frame.
+        # Assumes the base action_indices are a contiguous horizon range(0, H).
+        if data_cfg and bool(data_cfg.get("kv_memory", False)):
+            action_cfg = modality_config["action"]
+            horizon = len(list(action_cfg.delta_indices))
+            action_cfg.delta_indices = list(range(-(num_obs_frames - 1), horizon))
     dataset_path = data_root_dir / data_name
     if robot_type not in ROBOT_TYPE_TO_EMBODIMENT_TAG:
         print(f"Warning: Robot type {robot_type} not found in ROBOT_TYPE_TO_EMBODIMENT_TAG, using {EmbodimentTag.NEW_EMBODIMENT} as default")

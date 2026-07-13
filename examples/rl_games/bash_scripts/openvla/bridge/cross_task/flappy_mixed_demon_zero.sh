@@ -1,10 +1,12 @@
-cd starVLA
+bash /workspace/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh
 
-bash examples/rl_games/install/install_stack.sh openvla cross_task
+cd /workspace/starVLA
+
+bash examples/rl_games/install/install_stack.sh openvla flappy
 
 conda activate starvla_rl_games_openvla
 
-bash examples/rl_games/install/flash_attn.sh --check >/dev/null 2>&1 || bash examples/rl_games/install/flash_attn.sh
+bash /workspace/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh 
 
 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
@@ -12,14 +14,16 @@ python examples/rl_games/scripts/launch_train.py \
     init=bridge \
     mode=cross_task \
     cross_task_setup=flappy_mixed_demon_zero \
-    run_id="openvla_bridge_cross_flappy_024_demon_zero_clean_data_exp1" \
+    run_id="openvla_bridge_cross_flappy_024_demon_zero_clean_data_exp3" \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
     wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_zero_clean_data_exp1" \
+    checkpoint.hf_repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_zero_clean_data_exp3" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_zero_clean_data_exp1" \
+    checkpoint.sync.repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_zero_clean_data_exp3" \
     checkpoint.save_best_model=false \
+    datasets.vla_data.sequential_step_sampling=true \
+    datasets.vla_data.shuffle=true \
     trainer.max_train_steps=7000 \
     trainer.num_warmup_steps=0 \
     trainer.eval_interval=1400 \
@@ -31,6 +35,7 @@ python examples/rl_games/scripts/launch_train.py \
     framework.action_model.loss_type=discrete_ce \
     framework.action_model.action_dim=7 \
     framework.action_model.action_env_dim=7 \
+    rl_games.env_eval.eval_backend=latency_bench \
     trainer.per_latency_eval_num_batches=5 \
     rl_games.cross_task.train_tasks.0.name=demon_attack \
     rl_games.cross_task.train_tasks.0.converted_name=demon_attack_0_200ep_cross_train \

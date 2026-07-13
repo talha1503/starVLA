@@ -1,30 +1,41 @@
-cd starVLA
+WORKSPACE_DIR=""
+export WORKSPACE_DIR
 
-bash examples/rl_games/install/install_stack.sh openvla cross_task
+bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh
+
+cd "${WORKSPACE_DIR}/starVLA"
+
+bash examples/rl_games/install/install_stack.sh openvla flappy
+bash examples/rl_games/install/install_stack.sh openvla demon_attack
 
 conda activate starvla_rl_games_openvla
 
-bash examples/rl_games/install/flash_attn.sh --check >/dev/null 2>&1 || bash examples/rl_games/install/flash_attn.sh
+bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
+
+export PYTHONPATH="${WORKSPACE_DIR}/latency-sensitive-bench:${PYTHONPATH:-}"
 
 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
     env=cross_task \
     init=bridge \
     mode=cross_task \
-    cross_task_setup=flappy_mixed_demon_zero \
-    run_id="openvla_bridge_cross_flappy_024_demon_024_clean_data_exp1" \
+    cross_task_setup=flappy_mixed_demon_mixed \
+    run_id="openvla_bridge_cross_flappy_024_demon_024_clean_data_exp3" \
     trainer.distributed_backend=none \
-    workspace_dir="/workspace" \
+    workspace_dir="$WORKSPACE_DIR" \
     wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_024_clean_data_exp1" \
+    checkpoint.hf_repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_024_clean_data_exp3" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_024_clean_data_exp1" \
+    checkpoint.sync.repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_024_clean_data_exp3" \
     checkpoint.save_best_model=false \
-    trainer.max_train_steps=7000 \
+    trainer.max_train_steps=10500 \
     trainer.num_warmup_steps=0 \
     trainer.eval_interval=1400 \
-    trainer.save_interval=7000 \
+    trainer.save_interval=10500 \
     trainer.logging_frequency=1 \
+    datasets.vla_data.sequential_step_sampling=true \
+    datasets.vla_data.shuffle=true \
+    trainer.eval_action_classification=true \
     trainer.gradient_accumulation_steps=4 \
     datasets.vla_data.per_device_batch_size=32 \
     datasets.vla_data.include_state=false \
@@ -48,6 +59,7 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.1.episodes_per_latency=40 \
     rl_games.cross_task.train_tasks.0.max_episodes=null \
     rl_games.cross_task.train_tasks.1.max_episodes=null \
+    rl_games.env_eval.eval_backend=eval_core \
     rl_games.cross_task.eval_tasks.demon_attack.mid_train.enabled=false \
     rl_games.cross_task.eval_tasks.demon_attack.post_train.latencies=[0,2,4] \
     rl_games.cross_task.eval_tasks.demon_attack.post_train.num_episodes=20 \

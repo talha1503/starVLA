@@ -28,6 +28,52 @@ from transformers.cache_utils import DynamicCache
 from transformers.models.qwen3_vl.modeling_qwen3_vl import rotate_half
 
 
+def make_packed_sliding_mask_mod(kind: torch.Tensor, step: torch.Tensor, window: int):
+    """FlexAttention ``mask_mod`` for the packed sliding-window + attention-sink layout.
+
+    Used by the packed single-forward training path
+    (``QwenOFT._forward_memory_packed``), which lays the whole rollout out as
+    ``[text/sink] [frame_1][action_1] ... [frame_R][action_R]`` and runs ONE
+    Qwen3-VL forward under this mask instead of a per-frame Python loop.
+
+    ``kind`` (0=text/sink, 1=frame, 2=action) and ``step`` (frame/step index)
+    are per-token 1D long tensors on the attention device. A text/sink key's
+    ``step`` encodes which queries may see it:
+      * ``-1`` = legacy single global sink (``rebased_sink=false``), visible to
+        every query;
+      * ``-2`` = dedup shared front sink (``rebased_sink=true``), visible only to
+        the pre-eviction steps ``q < W`` — those steps' windows haven't evicted
+        anything yet, so eval keeps one sink at the front for all of them;
+      * ``>= W`` = per-step re-based sink, visible only to its own step ``q == k``
+        (re-based so its text→frame distance matches eval's rolling-KV layout).
+    ``window`` is the number of visible frames (``kv_window``). The predicate
+    composes:
+      * base causal (``kv <= q``);
+      * a sink (text) key is visible per the ``step`` encoding above
+        (``step==-1`` global, ``step==-2`` shared for ``q<W``, else own step);
+      * a frame key is visible to any non-text query within the last ``window``
+        frames (``step[q]-window < step[kv] <= step[q]``);
+      * an action key is visible ONLY to its own step's action query (read-out
+        isolation), so frames never attend any action and the frame KV stream is
+        bit-identical to the streaming loop / eval.
+    Every query sees at least its own sink and itself → no fully-masked row → no NaN.
+    """
+    W = int(window)
+
+    def mask_mod(b, h, q_idx, kv_idx):
+        causal = kv_idx <= q_idx
+        kq = kind[q_idx]
+        kk = kind[kv_idx]
+        sq = step[q_idx]
+        sk = step[kv_idx]
+        sink = (kk == 0) & ((sk == -1) | ((sk == -2) & (sq < W)) | (sq == sk))
+        frame_vis = (kk == 1) & (kq != 0) & (sk <= sq) & (sk > sq - W)
+        action_vis = (kk == 2) & (kq == 2) & (sq == sk)
+        return causal & (sink | frame_vis | action_vis)
+
+    return mask_mod
+
+
 def _key_cos_sin(rotary_emb, keys: torch.Tensor, position_ids: torch.Tensor):
     """cos/sin for `keys` [B, n_kv, L, hd] at `position_ids` [3, B, L] -> [B,1,L,hd]."""
     cos, sin = rotary_emb(keys, position_ids)  # [B, L, hd]
