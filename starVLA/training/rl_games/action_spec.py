@@ -2,7 +2,7 @@ from __future__ import annotations
 
 BRIDGE_ACTION_DIM = 7
 BRIDGE_INIT_MODES = {"pre-trained", "pretrained", "bridge"}
-BRIDGE_CHUNK_PRESERVING_MODEL_ALIASES = {"wan_oft", "cosmo_predict_gr00t"}
+BRIDGE_CHUNK_PRESERVING_MODEL_ALIASES = {"wan_oft"}
 DEADLY_LOSS_TYPE_ALIASES = {
     "l1": "l1",
     "mae": "l1",
@@ -114,7 +114,7 @@ def apply_action_spec(cfg) -> None:
         _apply_deadly_loss_spec(cfg, action_cfg)
         return
 
-    if model_alias in {"pi-0", "pi-0.5", "gr00t", "cosmo_predict_gr00t"}:
+    if model_alias in {"pi-0", "pi-0.5", "gr00t"}:
         model_action_dim = int(getattr(action_cfg, "action_dim", 0))
         if model_action_dim < env_dim:
             raise ValueError(
