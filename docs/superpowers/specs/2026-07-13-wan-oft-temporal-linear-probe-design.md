@@ -71,6 +71,8 @@ Validation reports:
 
 The report also includes label distributions, selected episode files, feature dimensions, checkpoint paths, extraction seeds, and probe hyperparameters.
 
+Each completed checkpoint/condition logs scalar probe metrics to one Weights & Biases run. The final pre/post and control comparison tables are logged to that run, and `report.json` is uploaded as a W&B artifact.
+
 ## Storage And Failure Semantics
 
 The pipeline processes one checkpoint and one condition at a time. Features remain in CPU memory only long enough to train the corresponding probes. It writes compact probe state files and JSON reports, then releases model and feature memory. Large intermediate feature caches are not persisted.

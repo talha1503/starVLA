@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import cast
 
 import torch
+import wandb
 from omegaconf import DictConfig, OmegaConf
+from wandb.sdk.wandb_run import Run
 
 from starVLA.training.rl_games.linear_probe import (
     LinearProbeConfig,
@@ -82,6 +84,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--probe-batch-size", type=int, required=True)
     parser.add_argument("--probe-learning-rate", type=float, required=True)
     parser.add_argument("--probe-weight-decay", type=float, required=True)
+    parser.add_argument("--wandb-entity", type=str, required=True)
+    parser.add_argument("--wandb-project", type=str, required=True)
+    parser.add_argument("--wandb-run-name", type=str, required=True)
     return parser.parse_args()
 
 
@@ -389,6 +394,60 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _wandb_condition_metrics(
+    checkpoint_name: str,
+    condition_name: str,
+    condition_results: dict[str, object],
+) -> dict[str, float | int]:
+    prefix = f"probe/{checkpoint_name}/{condition_name}"
+    direct_metrics = cast(dict[str, object], condition_results["direct_action_metrics"])
+    payload: dict[str, float | int] = {
+        f"{prefix}/train_samples": int(condition_results["train_samples"]),
+        f"{prefix}/validation_samples": int(condition_results["validation_samples"]),
+        f"{prefix}/direct_action/accuracy": float(direct_metrics["accuracy"]),
+        f"{prefix}/direct_action/balanced_accuracy": float(direct_metrics["balanced_accuracy"]),
+        f"{prefix}/direct_action/macro_f1": float(direct_metrics["macro_f1"]),
+    }
+    probes = cast(dict[str, object], condition_results["probes"])
+    for feature_name in PROBE_FEATURE_NAMES:
+        feature_reports = cast(dict[str, object], probes[feature_name])
+        for label_name in PROBE_LABEL_NAMES:
+            report = cast(dict[str, object], feature_reports[label_name])
+            if report.get("status") != "evaluated":
+                continue
+            metrics = cast(dict[str, object], report["metrics"])
+            report_prefix = f"{prefix}/{feature_name}/{label_name}"
+            payload.update(
+                {
+                    f"{report_prefix}/accuracy": float(metrics["accuracy"]),
+                    f"{report_prefix}/balanced_accuracy": float(metrics["balanced_accuracy"]),
+                    f"{report_prefix}/macro_f1": float(metrics["macro_f1"]),
+                    f"{report_prefix}/first_epoch_loss": float(report["first_epoch_loss"]),
+                    f"{report_prefix}/final_epoch_loss": float(report["final_epoch_loss"]),
+                }
+            )
+    return payload
+
+
+def _wandb_comparison_table(records: list[dict[str, object]]) -> wandb.Table | None:
+    if not records:
+        return None
+    columns = list(records[0])
+    if any(list(record) != columns for record in records):
+        raise ValueError("W&B comparison records must use one consistent ordered schema")
+    return wandb.Table(columns=columns, data=[[record[column] for column in columns] for record in records])
+
+
+def _log_wandb_comparisons(run: Run, comparisons: dict[str, list[dict[str, object]]]) -> None:
+    payload: dict[str, wandb.Table] = {}
+    for comparison_name, records in comparisons.items():
+        table = _wandb_comparison_table(records)
+        if table is not None:
+            payload[f"comparisons/{comparison_name}"] = table
+    if payload:
+        run.log(payload)
+
+
 def _validate_devices(model_device_name: str, probe_device_name: str) -> None:
     model_device = torch.device(model_device_name)
     probe_device = torch.device(probe_device_name)
@@ -434,9 +493,36 @@ def main() -> int:
     train_prompts = load_task_prompts(train_dataset_dir)
     validation_prompts = load_task_prompts(validation_dataset_dir)
     probe_config = _probe_config(args)
+    wandb_run = wandb.init(
+        entity=str(args.wandb_entity),
+        project=str(args.wandb_project),
+        name=str(args.wandb_run_name),
+        tags=["WanOFT", "linear-probe", "flappy", "latency-2", "context5"],
+        config={
+            "objective": "WanOFT pre-SFT versus post-SFT temporal representation linear probing",
+            "config_path": str(config_path),
+            "base_model_dir": str(base_model_dir),
+            "pre_sft_checkpoint": str(checkpoint_paths["pre_sft"]),
+            "post_sft_checkpoint": str(checkpoint_paths["post_sft"]),
+            "train_dataset_dir": str(train_dataset_dir),
+            "validation_dataset_dir": str(validation_dataset_dir),
+            "max_train_episodes": int(args.max_train_episodes),
+            "max_validation_episodes": int(args.max_validation_episodes),
+            "extraction_batch_size": int(args.extraction_batch_size),
+            "image_sequence_length": int(args.image_sequence_length),
+            "maximum_exact_distance": int(args.maximum_exact_distance),
+            "selection_seed": int(args.selection_seed),
+            "control_seed": int(args.control_seed),
+            "vae_seed": int(args.vae_seed),
+            "linear_probe": dict(probe_config),
+        },
+    )
+    if wandb_run is None:
+        raise RuntimeError("wandb.init returned no run for the WanOFT temporal probe")
     results: dict[str, object] = {}
     reference_train: ProbeTargetSet | None = None
     reference_validation: ProbeTargetSet | None = None
+    wandb_step = 0
 
     for checkpoint_name in CHECKPOINTS:
         model = _build_frozen_model(cfg, checkpoint_paths[checkpoint_name], str(args.model_device))
@@ -472,7 +558,7 @@ def main() -> int:
                     probe_target_set(validation_data),
                     f"{checkpoint_name}/{condition_name}/validation",
                 )
-            checkpoint_results[condition_name] = _run_condition_probes(
+            condition_results = _run_condition_probes(
                 checkpoint_name=checkpoint_name,
                 condition_name=condition_name,
                 train_data=train_data,
@@ -481,6 +567,12 @@ def main() -> int:
                 config=probe_config,
                 maximum_exact_distance=int(args.maximum_exact_distance),
             )
+            checkpoint_results[condition_name] = condition_results
+            wandb_run.log(
+                _wandb_condition_metrics(checkpoint_name, condition_name, condition_results),
+                step=wandb_step,
+            )
+            wandb_step += 1
             del train_data
             del validation_data
             gc.collect()
@@ -490,6 +582,7 @@ def main() -> int:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    comparisons = _comparison_records(results)
     report: dict[str, object] = {
         "schema_version": 1,
         "objective": "WanOFT pre-SFT versus post-SFT temporal representation linear probing",
@@ -511,12 +604,29 @@ def main() -> int:
             "linear_probe": int(args.probe_seed),
         },
         "linear_probe": dict(probe_config),
+        "wandb": {
+            "entity": str(args.wandb_entity),
+            "project": str(args.wandb_project),
+            "run_name": str(args.wandb_run_name),
+            "run_id": wandb_run.id,
+            "run_url": wandb_run.url,
+        },
         "results": results,
-        "comparisons": _comparison_records(results),
+        "comparisons": comparisons,
     }
-    _write_json(output_dir / "report.json", report)
+    report_path = output_dir / "report.json"
+    _write_json(report_path, report)
+    _log_wandb_comparisons(wandb_run, comparisons)
+    report_artifact = wandb.Artifact(
+        name=f"{args.wandb_run_name}-report",
+        type="wan-oft-linear-probe-report",
+    )
+    report_artifact.add_file(str(report_path))
+    wandb_run.log_artifact(report_artifact)
+    wandb_run.summary["report_path"] = str(report_path)
+    wandb_run.finish()
     print(json.dumps(report["comparisons"], indent=2, sort_keys=True))
-    print(f"WanOFT temporal probe report: {output_dir / 'report.json'}")
+    print(f"WanOFT temporal probe report: {report_path}")
     return 0
 
 

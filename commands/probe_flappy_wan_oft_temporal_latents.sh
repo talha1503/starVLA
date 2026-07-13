@@ -14,6 +14,9 @@ required_variables=(
   TRAIN_DATASET_DIR
   VALIDATION_DATASET_DIR
   OUTPUT_DIR
+  WANDB_ENTITY
+  WANDB_PROJECT
+  WANDB_RUN_NAME
 )
 
 for variable_name in "${required_variables[@]}"; do
@@ -46,4 +49,7 @@ python examples/rl_games/scripts/probe_wan_oft_temporal_latents.py \
   --probe-epochs "${PROBE_EPOCHS:-50}" \
   --probe-batch-size "${PROBE_BATCH_SIZE:-512}" \
   --probe-learning-rate "${PROBE_LEARNING_RATE:-1e-3}" \
-  --probe-weight-decay "${PROBE_WEIGHT_DECAY:-1e-4}"
+  --probe-weight-decay "${PROBE_WEIGHT_DECAY:-1e-4}" \
+  --wandb-entity "${WANDB_ENTITY}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --wandb-run-name "${WANDB_RUN_NAME}"
