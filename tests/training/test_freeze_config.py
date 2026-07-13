@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import torch
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups
 
@@ -42,6 +42,13 @@ class _VLA(torch.nn.Module):
         self.action_model = torch.nn.Linear(2, 2, bias=False)
 
 
+class _NonQwenVLA(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.world_model = torch.nn.Linear(2, 2, bias=False)
+        self.action_model = torch.nn.Linear(2, 2, bias=False)
+
+
 def _cfg(freeze_vit: bool = True, freeze_tied_embedding: bool = False):
     return OmegaConf.create(
         {
@@ -53,6 +60,23 @@ def _cfg(freeze_vit: bool = True, freeze_tied_embedding: bool = False):
                 "learning_rate": {
                     "base": 2.0e-5,
                     "qwen_vl_interface": 1.0e-5,
+                    "action_model": 1.0e-4,
+                },
+            }
+        }
+    )
+
+
+def _non_qwen_no_freeze_cfg() -> DictConfig:
+    return OmegaConf.create(
+        {
+            "trainer": {
+                "freeze_modules": "",
+                "freeze_vit": False,
+                "freeze_tied_embedding": False,
+                "freeze_llm_layers": [],
+                "learning_rate": {
+                    "base": 2.0e-5,
                     "action_model": 1.0e-4,
                 },
             }
@@ -115,4 +139,15 @@ def test_optimizer_groups_exclude_frozen_vit_and_llm_params() -> None:
     assert id(model.qwen_vl_interface.model.model.language_model.layers[0].weight) not in optimizer_param_ids
     assert id(model.qwen_vl_interface.model.model.language_model.layers[2].weight) in optimizer_param_ids
     assert id(model.qwen_vl_interface.model.model.language_model.norm.weight) in optimizer_param_ids
+    assert id(model.action_model.weight) in optimizer_param_ids
+
+
+def test_optimizer_groups_do_not_require_qwen_interface_when_no_qwen_freeze_requested() -> None:
+    model = _NonQwenVLA()
+    cfg = _non_qwen_no_freeze_cfg()
+
+    groups = build_param_lr_groups(model, cfg)
+    optimizer_param_ids = {id(param) for group in groups for param in group["params"]}
+
+    assert id(model.world_model.weight) in optimizer_param_ids
     assert id(model.action_model.weight) in optimizer_param_ids

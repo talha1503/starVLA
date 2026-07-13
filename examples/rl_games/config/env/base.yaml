@@ -22,3 +22,6 @@ rl_games:
     # per-stage override allowed under mid_train/post_train. Set in the launch
     # script: rl_games.env_eval.eval_parallel_envs=8
     eval_parallel_envs: 5
+    action_chunk_execution:
+      enabled: false
+      chunk_size: null

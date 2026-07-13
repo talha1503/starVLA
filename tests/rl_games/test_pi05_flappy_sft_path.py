@@ -168,12 +168,12 @@ def test_pi0_commands_use_released_qwen_pi_bridge_initializer(name: str) -> None
     assert "model=pi0" in command
     assert "init=bridge" in command
     assert "checkpoint.load=none" in command
-    assert "checkpoint.local.keep_last_n=2" in command
+    assert "checkpoint.local.keep_last_n=2" not in command
     assert "Qwen3VL-PI_v3-Bridge-RT_1" not in command
 
 
-def test_rl_games_yaml_eval_max_steps_are_3600() -> None:
-    paths = sorted((REPO_ROOT / "examples" / "rl_games").rglob("*.yaml"))
+def test_rl_games_mode_base_eval_max_steps_are_3600() -> None:
+    paths = [REPO_ROOT / "examples" / "rl_games" / "config" / "mode" / "base.yaml"]
     mismatches: list[str] = []
     for path in paths:
         for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):

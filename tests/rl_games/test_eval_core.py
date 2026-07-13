@@ -8,6 +8,7 @@ from starVLA.training.rl_games.eval_core import (
     RlGamesEvalRunner,
     _TaskEvaluator,
     _apply_prompt_mode as apply_eval_prompt_mode,
+    _resize_rgb,
     decode_deadly_factorized_11,
     decode_deadly_multibinary_7,
     decode_discrete_argmax,
@@ -23,6 +24,35 @@ def test_decode_discrete_argmax():
 def test_decode_discrete_argmax_ignores_bridge_padding():
     values = np.array([0.1, 0.2, 99.0, 99.0, 99.0, 99.0, 99.0], dtype=np.float32)
     assert decode_discrete_argmax(values, 2) == 1
+
+
+def test_resize_rgb_preserves_source_resolution_when_image_size_is_none():
+    image = np.zeros((288, 512, 3), dtype=np.uint8)
+
+    resized = _resize_rgb(image, None, prefer_area=True)
+
+    assert resized.shape == (288, 512, 3)
+
+
+def test_task_evaluator_accepts_null_image_size_for_native_eval_resolution():
+    cfg = OmegaConf.create(
+        {
+            "rl_games": {
+                "env_eval": {
+                    "image_size": None,
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+    evaluator = _TaskEvaluator(task="flappy", cfg=cfg)
+
+    assert evaluator.image_size is None
 
 
 def test_decode_deadly_multibinary_7():

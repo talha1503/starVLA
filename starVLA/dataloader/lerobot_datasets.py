@@ -16,6 +16,7 @@ from starVLA.dataloader.gr00t_lerobot.registry import (
     get_dataset_named_mixture,
     load_custom_mixtures,
 )
+from starVLA.training.rl_games.temporal_clip import resolve_modality_indices
 
 RL_GAMES_TASK_METADATA = {
     "rl_games_flappy": ("flappy", 2),
@@ -25,6 +26,32 @@ RL_GAMES_TASK_METADATA = {
 
 def collate_fn(batch):
     return batch
+
+
+def _modality_config_with_dataset_indices(data_config, data_cfg: dict | None):
+    modality_config = data_config.modality_config()
+    if data_cfg is None:
+        return modality_config
+
+    video_cfg = modality_config.get("video")
+    state_cfg = modality_config.get("state")
+    action_cfg = modality_config.get("action")
+    language_cfg = modality_config.get("language")
+    if video_cfg is None or state_cfg is None or action_cfg is None:
+        return modality_config
+
+    resolved = resolve_modality_indices(
+        default_observation_indices=list(video_cfg.delta_indices),
+        default_state_indices=list(state_cfg.delta_indices),
+        default_action_indices=list(action_cfg.delta_indices),
+        data_cfg=data_cfg,
+    )
+    video_cfg.delta_indices = resolved.observation_indices
+    state_cfg.delta_indices = resolved.state_indices
+    action_cfg.delta_indices = resolved.action_indices
+    if language_cfg is not None:
+        language_cfg.delta_indices = resolved.language_indices
+    return modality_config
 
 def make_LeRobotSingleDataset(
     data_root_dir: Path | str,
@@ -44,7 +71,7 @@ def make_LeRobotSingleDataset(
     """
     
     data_config = ROBOT_TYPE_CONFIG_MAP[robot_type]
-    modality_config = data_config.modality_config()
+    modality_config = _modality_config_with_dataset_indices(data_config=data_config, data_cfg=data_cfg)
     transforms = data_config.transform()
 
     # Temporal observation window: expand the video modality's delta indices to the

@@ -125,17 +125,25 @@ def _hydra_value(value: Any) -> str:
     if isinstance(value, list):
         return "[" + ",".join(_hydra_value(item) for item in value) + "]"
     if isinstance(value, str) and any(ch.isspace() or ch in {",", ":", "{", "}", "[", "]"} for ch in value):
-        return shlex.quote(value)
+        return "'" + value.replace("'", "\\'") + "'"
     return str(value)
 
 
 CONFIG_GROUP_KEYS = {"model", "env", "init", "mode"}
-TRAINER_COMMAND_EXCLUDED_ROOTS = {"config_name", "hydra", "launch", "conda", "preprocess_cmd"}
+TRAINER_COMMAND_EXCLUDED_ROOTS = {
+    "config_name",
+    "hydra",
+    "launch",
+    "conda",
+    "preprocess_cmd",
+    "wandb_entity",
+    "wandb_project",
+}
 
 
 def _iter_leaf_overrides(node: Any, prefix: str = ""):
     if OmegaConf.is_config(node):
-        node = OmegaConf.to_container(node, resolve=True)
+        node = OmegaConf.to_container(node, resolve=False)
     if isinstance(node, dict):
         for key, value in node.items():
             path = f"{prefix}.{key}" if prefix else str(key)
@@ -160,6 +168,8 @@ def _append_leaf_override(cmd: list[str], path: str, value: Any) -> None:
 def _append_config_leaf_overrides(cmd: list[str], cfg: Any) -> None:
     for path, value in _iter_leaf_overrides(cfg):
         if _is_trainer_command_leaf(path):
+            if isinstance(cfg, DictConfig):
+                value = OmegaConf.select(cfg, path)
             _append_leaf_override(cmd, path, value)
 
 
@@ -362,6 +372,8 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
         _append_leaf_override(cmd, "datasets.vla_data.custom_mixtures_path", setup["custom_mixtures_path"])
     if setup.get("base_model_dir"):
         _append_leaf_override(cmd, "framework.qwenvl.base_vlm", setup["base_model_dir"])
+        if _cfg_get(cfg, "framework.world_model.base_wm") not in (None, ""):
+            _append_leaf_override(cmd, "framework.world_model.base_wm", setup["base_model_dir"])
 
     prompt_map = setup.get("latency_prompt_map_path")
     if prompt_map not in (None, ""):

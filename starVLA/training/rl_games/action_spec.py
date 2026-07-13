@@ -2,6 +2,7 @@ from __future__ import annotations
 
 BRIDGE_ACTION_DIM = 7
 BRIDGE_INIT_MODES = {"pre-trained", "pretrained", "bridge"}
+BRIDGE_CHUNK_PRESERVING_MODEL_ALIASES = {"wan_oft"}
 DEADLY_LOSS_TYPE_ALIASES = {
     "l1": "l1",
     "mae": "l1",
@@ -100,10 +101,11 @@ def apply_action_spec(cfg) -> None:
                 f"{getattr(rl_games, 'task', None)} resolved active action dim={env_dim}. "
                 "Use the 7D native/semantic layout for bridge-mode RL-games."
             )
-        action_cfg.action_horizon = 1
-        action_cfg.future_action_window_size = 0
-        if hasattr(action_cfg, "past_action_window_size"):
-            action_cfg.past_action_window_size = 0
+        if model_alias not in BRIDGE_CHUNK_PRESERVING_MODEL_ALIASES:
+            action_cfg.action_horizon = 1
+            action_cfg.future_action_window_size = 0
+            if hasattr(action_cfg, "past_action_window_size"):
+                action_cfg.past_action_window_size = 0
 
         # Bridge mode is intentionally a shared 7D carrier across models.
         # Loss and rollout decode use only the first action_env_dim task dims.

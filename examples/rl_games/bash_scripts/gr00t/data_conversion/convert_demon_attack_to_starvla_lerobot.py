@@ -12,6 +12,7 @@ from typing import Any, NamedTuple
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+import datasets
 from datasets import load_dataset
 from PIL import Image
 from tqdm import tqdm
@@ -35,6 +36,7 @@ STATE_DIM = 1
 BRIDGE_STATE_DIM = 7
 FPS = 30
 LATENCY_FRAMESKIP = 4
+DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN = "observation.context_images"
 EpisodeKey = int | tuple[int, int]
 
 
@@ -252,12 +254,49 @@ def _row_get(row: dict[str, Any], names: tuple[str, ...], default: Any = None) -
 
 
 def _png_bytes(image: Any) -> bytes:
+    if isinstance(image, dict):
+        image_bytes = image.get("bytes")
+        image_path = image.get("path")
+        if image_bytes is not None:
+            return bytes(image_bytes)
+        if image_path is not None:
+            return Path(str(image_path)).read_bytes()
+        raise ValueError("Image dict must contain `bytes` or `path`")
+    if isinstance(image, (bytes, bytearray, memoryview)):
+        return bytes(image)
     if not isinstance(image, Image.Image):
         image = Image.fromarray(np.asarray(image))
     image = image.convert("RGB")
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _image_struct(image: Any) -> dict[str, bytes | str | None]:
+    return {"bytes": _png_bytes(image), "path": None}
+
+
+def _context_images_from_context(
+    row: dict[str, Any],
+    *,
+    context_images_column: str,
+    image_sequence_length: int,
+) -> list[dict[str, bytes | str | None]]:
+    if image_sequence_length < 2:
+        raise ValueError(f"image_sequence_length must be at least 2 for context image conversion, got {image_sequence_length}")
+    if context_images_column not in row:
+        raise ValueError(f"Row is missing context_images_column={context_images_column!r}")
+    context_images = row[context_images_column]
+    if context_images is None:
+        raise ValueError(f"Row has null context_images_column={context_images_column!r}")
+    context_image_list = list(context_images)
+    expected_context_images = image_sequence_length - 1
+    if len(context_image_list) != expected_context_images:
+        raise ValueError(
+            f"Expected {expected_context_images} context image(s), got {len(context_image_list)} "
+            f"from column {context_images_column!r}"
+        )
+    return [_image_struct(image) for image in context_image_list]
 
 
 def _normalize_action_carrier(action_carrier: str) -> str:
@@ -491,6 +530,8 @@ def _write_metadata(
     action_labels: list[str],
     state_dim: int,
     state_labels: list[str],
+    context_images_output_column: str | None,
+    image_sequence_length: int | None,
 ) -> None:
     meta_dir = dataset_dir / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
@@ -557,6 +598,13 @@ def _write_metadata(
             "latency": {"dtype": "int64", "shape": [1]},
         },
     }
+    if context_images_output_column is not None:
+        info["features"][context_images_output_column] = {
+            "dtype": "image_sequence",
+            "shape": [int(image_sequence_length or 1) - 1, 84, 84, 3],
+            "names": ["time", "height", "width", "channel"],
+            "video_info": {"video.fps": FPS},
+        }
     (meta_dir / "info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
 
     episodes = [
@@ -570,32 +618,44 @@ def _write_metadata(
     )
 
 
-def _write_episode(path: Path, rows: list[dict[str, Any]], *, action_dim: int, state_dim: int) -> None:
+def _write_episode(
+    path: Path,
+    rows: list[dict[str, Any]],
+    *,
+    action_dim: int,
+    state_dim: int,
+    context_images_output_column: str | None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    table = pa.table(
-        {
-            "observation.image": pa.array(
-                [{"bytes": row["image_bytes"], "path": None} for row in rows],
-                type=pa.struct([("bytes", pa.binary()), ("path", pa.string())]),
-            ),
-            "observation.state": pa.array(
-                [[0.0] * state_dim for _ in rows],
-                type=pa.list_(pa.float32(), state_dim),
-            ),
-            "action": pa.array(
-                [row["action"] for row in rows],
-                type=pa.list_(pa.float32(), action_dim),
-            ),
-            "timestamp": pa.array([row["timestamp"] for row in rows], type=pa.float64()),
-            "episode_index": pa.array([row["episode_index"] for row in rows], type=pa.int64()),
-            "frame_index": pa.array([row["frame_index"] for row in rows], type=pa.int64()),
-            "task_index": pa.array([row["task_index"] for row in rows], type=pa.int64()),
-            "latency": pa.array([row["latency"] for row in rows], type=pa.int64()),
-            "done": pa.array([row["done"] for row in rows], type=pa.bool_()),
-            "reward": pa.array([row["reward"] for row in rows], type=pa.float32()),
-            "action_id": pa.array([row["action_id"] for row in rows], type=pa.int64()),
-        }
-    )
+    columns = {
+        "observation.image": pa.array(
+            [{"bytes": row["image_bytes"], "path": None} for row in rows],
+            type=pa.struct([("bytes", pa.binary()), ("path", pa.string())]),
+        ),
+        "observation.state": pa.array(
+            [[0.0] * state_dim for _ in rows],
+            type=pa.list_(pa.float32(), state_dim),
+        ),
+        "action": pa.array(
+            [row["action"] for row in rows],
+            type=pa.list_(pa.float32(), action_dim),
+        ),
+        "timestamp": pa.array([row["timestamp"] for row in rows], type=pa.float64()),
+        "episode_index": pa.array([row["episode_index"] for row in rows], type=pa.int64()),
+        "frame_index": pa.array([row["frame_index"] for row in rows], type=pa.int64()),
+        "task_index": pa.array([row["task_index"] for row in rows], type=pa.int64()),
+        "latency": pa.array([row["latency"] for row in rows], type=pa.int64()),
+        "done": pa.array([row["done"] for row in rows], type=pa.bool_()),
+        "reward": pa.array([row["reward"] for row in rows], type=pa.float32()),
+        "action_id": pa.array([row["action_id"] for row in rows], type=pa.int64()),
+    }
+    if context_images_output_column is not None:
+        image_struct_type = pa.struct([("bytes", pa.binary()), ("path", pa.string())])
+        columns[context_images_output_column] = pa.array(
+            [row["context_images"] for row in rows],
+            type=pa.list_(image_struct_type),
+        )
+    table = pa.table(columns)
     pq.write_table(table, path)
 
 
@@ -618,6 +678,9 @@ def convert_dataset(
     prompt_map_override: dict[str, Any] | dict[int, Any] | None = None,
     default_latency: int | None = None,
     action_carrier: str = "native",
+    context_images_column: str | None = None,
+    context_images_output_column: str | None = DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN,
+    image_sequence_length: int = 4,
 ) -> dict[str, Any]:
     action_carrier = _normalize_action_carrier(action_carrier)
     action_dim = _action_dim(action_carrier)
@@ -715,6 +778,12 @@ def convert_dataset(
             latency_column=demon_attack_columns.latency,
             default_latency=default_latency,
         )
+        if "image" in ds_full.column_names:
+            ds_full = ds_full.cast_column("image", datasets.Image(decode=False))
+        if context_images_column is not None:
+            if context_images_column not in ds_full.column_names:
+                raise ValueError(f"Configured context_images_column={context_images_column!r} is missing from {dataset_name}")
+            ds_full = ds_full.cast_column(context_images_column, datasets.Sequence(datasets.Image(decode=False)))
         episode_lengths: list[int] = []
 
         for new_episode_idx, original_episode_idx in enumerate(tqdm(original_episode_ids, desc=f"Writing Demon Attack {split} LeRobot episodes")):
@@ -738,7 +807,7 @@ def convert_dataset(
                         "latency_ms": latency_ms,
                         "prompt": prompt,
                     })
-                out_rows.append({
+                out_row = {
                     "image_bytes": _png_bytes(row["image"]),
                     "action": _one_hot(int(row["action_id"]), action_dim=action_dim),
                     "timestamp": float(frame_idx) / FPS,
@@ -754,7 +823,14 @@ def convert_dataset(
                     ),
                     "reward": float(row[demon_attack_columns.reward]),
                     "action_id": int(row["action_id"]),
-                })
+                }
+                if context_images_column is not None:
+                    out_row["context_images"] = _context_images_from_context(
+                        row,
+                        context_images_column=context_images_column,
+                        image_sequence_length=image_sequence_length,
+                    )
+                out_rows.append(out_row)
             episode_lengths.append(len(out_rows))
             episode_chunk = new_episode_idx // 1000
             _write_episode(
@@ -762,6 +838,7 @@ def convert_dataset(
                 out_rows,
                 action_dim=action_dim,
                 state_dim=state_dim,
+                context_images_output_column=context_images_output_column if context_images_column is not None else None,
             )
 
         _write_metadata(
@@ -772,6 +849,8 @@ def convert_dataset(
             action_labels=action_labels,
             state_dim=state_dim,
             state_labels=state_labels,
+            context_images_output_column=context_images_output_column if context_images_column is not None else None,
+            image_sequence_length=image_sequence_length if context_images_column is not None else None,
         )
 
         if latency_rows:
@@ -811,6 +890,9 @@ def convert_dataset(
             "state_dim": state_dim,
             "active_state_dim": STATE_DIM,
             "state_carrier": action_carrier,
+            "context_images_column": context_images_column,
+            "context_images_output_column": context_images_output_column if context_images_column is not None else None,
+            "image_sequence_length": int(image_sequence_length) if context_images_column is not None else None,
             "episodes": len(episode_lengths),
             "frames": int(sum(episode_lengths)),
             "task_prompts": task_prompts,
@@ -851,6 +933,9 @@ def main() -> int:
     parser.add_argument("--episodes-per-latency", "--episodes_per_latency", type=int, default=None)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--action-carrier", "--action_carrier", choices=["native", "bridge"], default="native")
+    parser.add_argument("--context-images-column", "--context_images_column", default=None)
+    parser.add_argument("--context-images-output-column", "--context_images_output_column", default=DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN)
+    parser.add_argument("--image-sequence-length", "--image_sequence_length", type=int, default=4)
     args = parser.parse_args()
     latency_filter = None
     if args.latency_filter:
@@ -868,6 +953,9 @@ def main() -> int:
         latency_filter=latency_filter,
         episodes_per_latency=args.episodes_per_latency,
         action_carrier=args.action_carrier,
+        context_images_column=args.context_images_column,
+        context_images_output_column=args.context_images_output_column,
+        image_sequence_length=args.image_sequence_length,
     )
     print(json.dumps(manifest, indent=2))
     return 0

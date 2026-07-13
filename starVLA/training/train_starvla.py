@@ -590,6 +590,10 @@ class VLATrainer(TrainerUtils):
             getattr(getattr(self.config, "checkpoint", {}), "save_pt_file", None),
             default=False,
         )
+        self._save_training_state_enabled = _as_bool(
+            getattr(getattr(self.config, "checkpoint", {}), "save_training_state", None),
+            default=True,
+        )
         self._save_safetensors_file_enabled = _as_bool(
             getattr(getattr(self.config, "checkpoint", {}), "save_safetensors_file", None),
             default=False,
@@ -988,13 +992,16 @@ class VLATrainer(TrainerUtils):
         checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
         state_checkpoint_path = checkpoint_path + "_state"
 
-        if self.accelerator.is_main_process and os.path.exists(state_checkpoint_path):
-            shutil.rmtree(state_checkpoint_path)
-        self.accelerator.wait_for_everyone()
-        self.accelerator.save_state(state_checkpoint_path, safe_serialization=True)
-        self.accelerator.wait_for_everyone()
-        if self.accelerator.is_main_process:
-            self.accelerator.print(f"✅ Full training state saved at {state_checkpoint_path}")
+        saved_state_path = None
+        if self._save_training_state_enabled:
+            if self.accelerator.is_main_process and os.path.exists(state_checkpoint_path):
+                shutil.rmtree(state_checkpoint_path)
+            self.accelerator.wait_for_everyone()
+            self.accelerator.save_state(state_checkpoint_path, safe_serialization=True)
+            self.accelerator.wait_for_everyone()
+            saved_state_path = state_checkpoint_path
+            if self.accelerator.is_main_process:
+                self.accelerator.print(f"✅ Full training state saved at {state_checkpoint_path}")
 
         if self.accelerator.is_main_process:
             model_checkpoint_path = None
@@ -1018,12 +1025,13 @@ class VLATrainer(TrainerUtils):
             summary_data = {"steps": self.completed_steps}
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
                 f.write(json.dumps(summary_data) + "\n")
-            self.accelerator.print(f"✅ Checkpoint state saved at {state_checkpoint_path}")
+            if saved_state_path is not None:
+                self.accelerator.print(f"✅ Checkpoint state saved at {saved_state_path}")
             if model_checkpoint_path is not None:
                 self.accelerator.print(f"✅ Model checkpoint saved at {model_checkpoint_path}")
             self._checkpoint_sync_manager.register_local_checkpoint(
                 step=self.completed_steps,
-                state_path=state_checkpoint_path,
+                state_path=saved_state_path,
                 model_path=model_checkpoint_path,
             )
 

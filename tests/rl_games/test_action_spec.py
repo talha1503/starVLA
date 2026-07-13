@@ -43,6 +43,19 @@ def test_openvla_bridge_flappy_uses_7d_carrier_with_2d_loss_surface():
     assert action_cfg.past_action_window_size == 0
 
 
+def test_wan_oft_bridge_flappy_preserves_checkpoint_action_chunk():
+    cfg = _cfg("flappy", model_alias="wan_oft", init_mode="bridge", action_carrier="bridge", action_dim=7)
+
+    apply_action_spec(cfg)
+
+    action_cfg = cfg.framework.action_model
+    assert action_cfg.action_dim == 7
+    assert action_cfg.action_env_dim == 2
+    assert action_cfg.action_horizon == 16
+    assert action_cfg.future_action_window_size == 15
+    assert action_cfg.past_action_window_size == 2
+
+
 def test_action_carrier_bridge_is_sufficient_for_demon_attack():
     cfg = _cfg("demon_attack", init_mode="scratch", action_carrier="bridge", action_dim=7)
 

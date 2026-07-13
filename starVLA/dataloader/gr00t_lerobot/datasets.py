@@ -1397,6 +1397,10 @@ class LeRobotSingleDataset(Dataset):
         """Pack transformed modality data into training sample format."""
         num_obs_frames = int(self.data_cfg.get("num_obs_frames", 1) or 1) if self.data_cfg is not None else 1
         image_mode = str(self.data_cfg.get("image_mode", "single")) if self.data_cfg is not None else "single"
+        if self.data_cfg is not None and self.data_cfg.get("pack_image_sequence", False) not in ["False", False]:
+            num_obs_frames = int(self.data_cfg.get("image_sequence_length", num_obs_frames) or num_obs_frames)
+            if image_mode == "single":
+                image_mode = "multiframe"
         stitch_grid = tuple(self.data_cfg.get("stitch_grid", [2, 2])) if self.data_cfg is not None else (2, 2)
         kv_memory = bool(self.data_cfg.get("kv_memory", False)) if self.data_cfg is not None else False
 
@@ -1823,30 +1827,59 @@ class LeRobotSingleDataset(Dataset):
         original_key = self.lerobot_modality_meta.video[key].original_key
         if original_key is None:
             original_key = key
+
+        def _decode_image_entry(entry):
+            if isinstance(entry, np.ndarray):
+                return entry
+            if isinstance(entry, Image.Image):
+                return np.array(entry)
+            if isinstance(entry, (bytes, bytearray, memoryview)):
+                return np.array(Image.open(io.BytesIO(bytes(entry))).convert("RGB"))
+            if isinstance(entry, dict):
+                img_bytes = entry.get("bytes", None)
+                img_path = entry.get("path", None)
+
+                if img_bytes is not None:
+                    return np.array(Image.open(io.BytesIO(img_bytes)).convert("RGB"))
+
+                if img_path is not None:
+                    path_obj = Path(img_path)
+                    if not path_obj.is_absolute():
+                        path_obj = self.dataset_path / path_obj
+                    return np.array(Image.open(path_obj).convert("RGB"))
+
+            raise TypeError(f"Unsupported image entry type: {type(entry)}")
+
+        context_images_column = None
+        if self.data_cfg is not None:
+            configured_context_images_column = self.data_cfg.get("context_images_column", None)
+            if configured_context_images_column not in (None, ""):
+                context_images_column = str(configured_context_images_column)
+        if context_images_column is not None and self.curr_traj_data is not None:
+            missing_columns = [
+                column
+                for column in (context_images_column, original_key)
+                if column not in self.curr_traj_data.columns
+            ]
+            if missing_columns:
+                raise ValueError(
+                    f"Configured context image columns are missing from dataset {self.dataset_name} "
+                    f"trajectory {trajectory_id}: {missing_columns}"
+                )
+            image_sequence_length = int(
+                self.data_cfg.get("image_sequence_length", 1) if self.data_cfg is not None else 1
+            )
+            expected_context_images = image_sequence_length - 1
+            row = self.curr_traj_data.iloc[int(base_index)]
+            context_values = list(row[context_images_column])
+            if len(context_values) != expected_context_images:
+                raise ValueError(
+                    f"Expected {expected_context_images} context image frames, got {len(context_values)}"
+                )
+            return np.stack([_decode_image_entry(item) for item in [*context_values, row[original_key]]])
+
         if self.curr_traj_data is not None and original_key in self.curr_traj_data.columns:
             image_entries = self.curr_traj_data[original_key].tolist()
-
-            def _decode_image_entry(entry):
-                if isinstance(entry, np.ndarray):
-                    return entry
-                if isinstance(entry, Image.Image):
-                    return np.array(entry)
-                if isinstance(entry, (bytes, bytearray, memoryview)):
-                    return np.array(Image.open(io.BytesIO(bytes(entry))).convert("RGB"))
-                if isinstance(entry, dict):
-                    img_bytes = entry.get("bytes", None)
-                    img_path = entry.get("path", None)
-
-                    if img_bytes is not None:
-                        return np.array(Image.open(io.BytesIO(img_bytes)).convert("RGB"))
-
-                    if img_path is not None:
-                        path_obj = Path(img_path)
-                        if not path_obj.is_absolute():
-                            path_obj = self.dataset_path / path_obj
-                        return np.array(Image.open(path_obj).convert("RGB"))
-
-                raise TypeError(f"Unsupported image entry type: {type(entry)}")
 
             frames = []
             for idx in step_indices:

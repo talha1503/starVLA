@@ -28,7 +28,7 @@ pip_install -r "$FILTERED_REQUIREMENTS"
 rm -f "$FILTERED_REQUIREMENTS"
 
 pip_install -e "$REPO_ROOT"
-pip_install omegaconf hydra-core tqdm wandb huggingface_hub
+pip_install omegaconf hydra-core tqdm wandb "huggingface-hub>=0.34.0,<1.0"
 
 # Make the parent repo's latency_bench package importable from the training env.
 # starVLA is nested under the parent repo (latency-sensitive-bench), which contains

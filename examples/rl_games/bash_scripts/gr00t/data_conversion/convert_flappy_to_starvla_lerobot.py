@@ -7,7 +7,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Iterator, NamedTuple
 
 import numpy as np
 import pyarrow as pa
@@ -36,6 +36,7 @@ STATE_DIM = 1
 BRIDGE_STATE_DIM = 7
 FPS = 30
 LATENCY_FRAMESKIP = 1
+DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN = "observation.context_images"
 EpisodeKey = int | tuple[int, int]
 
 
@@ -45,6 +46,11 @@ class FlappyColumns(NamedTuple):
     done: str | None
     latency: str | None
     latency_ms: str | None
+
+
+class LocalParquetPart(NamedTuple):
+    files: list[str]
+    split_specific: bool
 
 
 def _local_parquet_files(dataset_name: str, split: str, dataset_source_subdir: str | None = None) -> list[str] | None:
@@ -73,6 +79,22 @@ def _local_parquet_files(dataset_name: str, split: str, dataset_source_subdir: s
         if any(marker in part.lower() for marker in split_markers for part in parquet_file.relative_to(dataset_path).parts)
     ]
     return [str(parquet_file) for parquet_file in (split_files or parquet_files)]
+
+
+def _local_parquet_parts(
+    dataset_name: str,
+    split: str,
+    dataset_source_subdir: str | None,
+    latencies: list[int] | None,
+) -> list[LocalParquetPart] | None:
+    parts: list[LocalParquetPart] = []
+    for subdir in resolve_latency_subdirs(dataset_source_subdir, latencies):
+        local_files = _local_parquet_files(dataset_name, split, subdir)
+        if local_files is None:
+            return None
+        split_specific = _local_file_selection_is_split_specific(dataset_name, split, subdir, local_files)
+        parts.append(LocalParquetPart(files=local_files, split_specific=split_specific))
+    return parts
 
 
 def _local_parquet_columns(dataset_name: str, split: str, dataset_source_subdir: str | None = None) -> set[str] | None:
@@ -176,6 +198,45 @@ def _load_hf_dataset(
     return load_dataset(dataset_name, **load_kwargs)
 
 
+def _local_file_selection_is_split_specific(
+    dataset_name: str,
+    split: str,
+    dataset_source_subdir: str | None,
+    local_files: list[str],
+) -> bool:
+    dataset_path = Path(dataset_name)
+    if dataset_source_subdir not in (None, ""):
+        dataset_path = dataset_path / str(dataset_source_subdir)
+    split_markers = {"train"} if split == "train" else {"validation", "val", "test"}
+
+    for local_file in local_files:
+        local_path = Path(local_file)
+        try:
+            relative_parts = local_path.relative_to(dataset_path).parts
+        except ValueError:
+            relative_parts = local_path.parts
+        if not any(marker in part.lower() for marker in split_markers for part in relative_parts):
+            return False
+    return True
+
+
+def _cast_image_columns_to_encoded_bytes(ds: Any, image_columns: list[str] | None) -> Any:
+    if image_columns is None:
+        return ds
+    features = getattr(ds, "features", {})
+    for image_column in image_columns:
+        if image_column not in getattr(ds, "column_names", []):
+            continue
+        feature = features.get(image_column) if hasattr(features, "get") else None
+        if isinstance(feature, datasets.Image):
+            ds = ds.cast_column(image_column, datasets.Image(decode=False))
+            continue
+        nested_feature = getattr(feature, "feature", None)
+        if isinstance(nested_feature, datasets.Image):
+            ds = ds.cast_column(image_column, datasets.Sequence(datasets.Image(decode=False)))
+    return ds
+
+
 def _load_split(
     dataset_name: str,
     split: str,
@@ -184,6 +245,7 @@ def _load_split(
     dataset_config_name: str | None = None,
     dataset_source_subdir: str | None = None,
     latencies: list[int] | None = None,
+    image_columns: list[str] | None = None,
 ):
     split_values = {"train"} if split == "train" else {"validation", "val", "test"}
 
@@ -200,6 +262,7 @@ def _load_split(
     def _load_one(subdir: str | None):
         local_files = _local_parquet_files(dataset_name, split, subdir)
         if local_files is not None:
+            split_specific = _local_file_selection_is_split_specific(dataset_name, split, subdir, local_files)
             load_columns = list(columns) if columns is not None else None
             if load_columns is not None and "split" not in load_columns:
                 load_columns.append("split")
@@ -209,6 +272,9 @@ def _load_split(
                 if columns is None:
                     raise
                 ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=columns)
+            ds = _cast_image_columns_to_encoded_bytes(ds, image_columns)
+            if split_specific:
+                return ds
             return _filter_internal_split(ds)
 
         if split == "train":
@@ -217,6 +283,7 @@ def _load_split(
                     dataset_name, dataset_config_name, subdir,
                     split="train", cache_dir=cache_dir, columns=columns,
                 )
+                ds = _cast_image_columns_to_encoded_bytes(ds, image_columns)
                 return _filter_internal_split(ds)
             except (ValueError, KeyError):
                 pass
@@ -228,6 +295,7 @@ def _load_split(
                         split=candidate, cache_dir=cache_dir, columns=columns,
                     )
                     if len(ds) > 0:
+                        ds = _cast_image_columns_to_encoded_bytes(ds, image_columns)
                         return _filter_internal_split(ds)
                 except (ValueError, KeyError):
                     continue
@@ -247,6 +315,7 @@ def _load_split(
                 dataset_name, dataset_config_name, subdir,
                 split="train", cache_dir=cache_dir,
             )
+        ds_all = _cast_image_columns_to_encoded_bytes(ds_all, image_columns)
         return ds_all.filter(lambda row: str(row["split"]).lower() in split_values)
 
     subdirs = resolve_latency_subdirs(dataset_source_subdir, latencies)
@@ -255,12 +324,49 @@ def _load_split(
 
 
 def _png_bytes(image: Any) -> bytes:
+    if isinstance(image, dict):
+        image_bytes = image.get("bytes")
+        image_path = image.get("path")
+        if image_bytes is not None:
+            return bytes(image_bytes)
+        if image_path is not None:
+            return Path(str(image_path)).read_bytes()
+        raise ValueError("Image dict must contain `bytes` or `path`")
+    if isinstance(image, (bytes, bytearray, memoryview)):
+        return bytes(image)
     if not isinstance(image, Image.Image):
         image = Image.fromarray(np.asarray(image))
     image = image.convert("RGB")
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _image_struct(image: Any) -> dict[str, bytes | str | None]:
+    return {"bytes": _png_bytes(image), "path": None}
+
+
+def _context_images_from_context(
+    row: dict[str, Any],
+    *,
+    context_images_column: str,
+    image_sequence_length: int,
+) -> list[dict[str, bytes | str | None]]:
+    if image_sequence_length < 2:
+        raise ValueError(f"image_sequence_length must be at least 2 for context image conversion, got {image_sequence_length}")
+    if context_images_column not in row:
+        raise ValueError(f"Row is missing context_images_column={context_images_column!r}")
+    context_images = row[context_images_column]
+    if context_images is None:
+        raise ValueError(f"Row has null context_images_column={context_images_column!r}")
+    context_image_list = list(context_images)
+    expected_context_images = image_sequence_length - 1
+    if len(context_image_list) != expected_context_images:
+        raise ValueError(
+            f"Expected {expected_context_images} context image(s), got {len(context_image_list)} "
+            f"from column {context_images_column!r}"
+        )
+    return [_image_struct(image) for image in context_image_list]
 
 
 def _normalize_action_carrier(action_carrier: str) -> str:
@@ -377,6 +483,20 @@ def _filter_latency(ds, latency_filter: list[int] | None, *, latency_column: str
     return ds.filter(lambda row: _row_latency(row, latency_column=latency_column, default_latency=default_latency) in allowed)
 
 
+def _row_matches_latency(
+    row: dict[str, Any],
+    latency_filter: list[int] | None,
+    *,
+    latency_column: str | None,
+    default_latency: int | None,
+) -> bool:
+    if not latency_filter:
+        return True
+    allowed = {int(value) for value in latency_filter}
+    latency = _row_latency(row, latency_column=latency_column, default_latency=default_latency)
+    return latency in allowed
+
+
 def _episode_key(episode_idx: int, latency: int | None) -> EpisodeKey:
     return (episode_idx, int(latency)) if latency is not None else episode_idx
 
@@ -478,6 +598,331 @@ def _row_done(row: dict[str, Any], done_column: str | None, *, frame_idx: int, e
     return frame_idx == episode_length - 1
 
 
+def _iter_local_parquet_rows(
+    files: list[str],
+    columns: list[str],
+    *,
+    batch_size: int,
+) -> Iterator[dict[str, Any]]:
+    for parquet_file in files:
+        parquet = pq.ParquetFile(parquet_file)
+        for batch in parquet.iter_batches(batch_size=batch_size, columns=columns):
+            for row in batch.to_pylist():
+                yield row
+
+
+def _split_values_for(split: str) -> set[str]:
+    return {"train"} if split == "train" else {"validation", "val", "test"}
+
+
+def _row_matches_split(row: dict[str, Any], split_values: set[str], *, split_specific: bool) -> bool:
+    if split_specific or "split" not in row:
+        return True
+    return str(row["split"]).lower() in split_values
+
+
+def _dedupe_columns(columns: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for column in columns:
+        if column not in deduped:
+            deduped.append(column)
+    return deduped
+
+
+def _required_local_columns(
+    flappy_columns: FlappyColumns,
+    *,
+    include_images: bool,
+    context_images_column: str | None,
+) -> list[str]:
+    columns = ["episode_idx", flappy_columns.frame, "action_id", flappy_columns.reward, "prompt", "split"]
+    if flappy_columns.done is not None:
+        columns.append(flappy_columns.done)
+    if flappy_columns.latency is not None:
+        columns.append(flappy_columns.latency)
+    if flappy_columns.latency_ms is not None:
+        columns.append(flappy_columns.latency_ms)
+    if include_images:
+        columns.append("image")
+        if context_images_column is not None:
+            columns.append(context_images_column)
+    return _dedupe_columns(columns)
+
+
+def _available_local_columns(parts: list[LocalParquetPart]) -> set[str]:
+    columns: set[str] = set()
+    for part in parts:
+        for parquet_file in part.files:
+            columns.update(pq.read_schema(parquet_file).names)
+    return columns
+
+
+def _existing_local_columns(parts: list[LocalParquetPart], requested_columns: list[str]) -> list[str]:
+    available = _available_local_columns(parts)
+    missing_required = [
+        column
+        for column in requested_columns
+        if column != "split" and column not in available
+    ]
+    if missing_required:
+        raise ValueError(f"Local parquet dataset is missing required columns: {missing_required}; available={sorted(available)}")
+    return [column for column in requested_columns if column in available]
+
+
+def _convert_local_parquet_split(
+    dataset_name: str,
+    split: str,
+    split_output_dir: Path,
+    parts: list[LocalParquetPart],
+    *,
+    dataset_config_name: str | None,
+    dataset_source_subdir: str | None,
+    split_latency_filter: list[int] | None,
+    split_episodes_per_latency: int | None,
+    max_episodes: int | None,
+    require_latency_prompt_map: bool,
+    prompt_map_override: dict[int, dict[str, Any]],
+    default_latency: int | None,
+    action_carrier: str,
+    action_dim: int,
+    action_labels: list[str],
+    state_dim: int,
+    state_labels: list[str],
+    context_images_column: str | None,
+    context_images_output_column: str | None,
+    image_sequence_length: int,
+) -> dict[str, Any]:
+    want_latency = bool(
+        require_latency_prompt_map
+        or split_latency_filter
+        or prompt_map_override
+        or split_episodes_per_latency is not None
+    )
+    flappy_columns = _resolve_flappy_columns(dataset_name, split, want_latency=want_latency)
+    split_values = _split_values_for(split)
+    metadata_columns = _existing_local_columns(
+        parts,
+        _required_local_columns(
+            flappy_columns,
+            include_images=False,
+            context_images_column=context_images_column,
+        ),
+    )
+    episode_ids: list[EpisodeKey] = []
+    episode_id_set: set[EpisodeKey] = set()
+    episode_latencies: dict[EpisodeKey, int] = {}
+
+    for part in parts:
+        for row in tqdm(
+            _iter_local_parquet_rows(part.files, metadata_columns, batch_size=65536),
+            desc=f"Indexing Flappy {split} local parquet rows",
+        ):
+            if not _row_matches_split(row, split_values, split_specific=part.split_specific):
+                continue
+            if not _row_matches_latency(
+                row,
+                split_latency_filter,
+                latency_column=flappy_columns.latency,
+                default_latency=default_latency,
+            ):
+                continue
+            episode_idx = int(row["episode_idx"])
+            latency = _row_latency(row, latency_column=flappy_columns.latency, default_latency=default_latency)
+            episode_key = _episode_key(episode_idx, latency)
+            if episode_key not in episode_id_set:
+                episode_id_set.add(episode_key)
+                episode_ids.append(episode_key)
+            if latency is not None:
+                existing = episode_latencies.setdefault(episode_key, int(latency))
+                if existing != int(latency):
+                    raise ValueError(f"episode_key={episode_key!r} has inconsistent latencies: {existing} and {latency}")
+
+    if not episode_ids:
+        raise ValueError(f"{dataset_name} has no {split} rows")
+
+    selected_episode_ids = _select_episode_ids(
+        sorted(episode_ids, key=_episode_sort_key),
+        episode_latencies,
+        max_episodes=max_episodes,
+        require_latency_prompt_map=require_latency_prompt_map,
+        episodes_per_latency=split_episodes_per_latency,
+    )
+    selected_episode_set = set(selected_episode_ids)
+    data_columns = _existing_local_columns(
+        parts,
+        _required_local_columns(
+            flappy_columns,
+            include_images=True,
+            context_images_column=context_images_column,
+        ),
+    )
+
+    prompt_to_task_index: dict[str, int] = {}
+    task_prompts: list[str] = []
+    latency_rows: list[dict[str, Any]] = []
+    episode_lengths: list[int] = []
+    written_episode_ids: set[EpisodeKey] = set()
+    current_episode_id: EpisodeKey | None = None
+    current_rows: list[dict[str, Any]] = []
+
+    def _write_current_episode() -> None:
+        nonlocal current_episode_id
+        nonlocal current_rows
+        if current_episode_id is None:
+            return
+        if current_episode_id not in selected_episode_set:
+            current_episode_id = None
+            current_rows = []
+            return
+        current_rows.sort(key=lambda item: int(item[flappy_columns.frame]))
+        new_episode_idx = len(episode_lengths)
+        out_rows: list[dict[str, Any]] = []
+        for frame_idx, row in enumerate(current_rows):
+            prompt, latency, latency_ms = _canonical_prompt(
+                row,
+                prompt_map=prompt_map_override,
+                latency_column=flappy_columns.latency,
+                latency_ms_column=flappy_columns.latency_ms,
+                default_latency=default_latency,
+            )
+            if prompt not in prompt_to_task_index:
+                prompt_to_task_index[prompt] = len(task_prompts)
+                task_prompts.append(prompt)
+            if latency is not None:
+                latency_rows.append({
+                    "latency": latency,
+                    "latency_ms": latency_ms,
+                    "prompt": prompt,
+                })
+            img_cell = row["image"]
+            image_bytes = (
+                img_cell["bytes"]
+                if isinstance(img_cell, dict) and img_cell.get("bytes") is not None
+                else _png_bytes(img_cell)
+            )
+            out_row = {
+                "image_bytes": image_bytes,
+                "action": _one_hot(int(row["action_id"]), action_dim=action_dim),
+                "timestamp": float(frame_idx) / FPS,
+                "episode_index": new_episode_idx,
+                "frame_index": frame_idx,
+                "task_index": prompt_to_task_index[prompt],
+                "latency": int(latency) if latency is not None else int(default_latency or 0),
+                "done": _row_done(
+                    row,
+                    flappy_columns.done,
+                    frame_idx=frame_idx,
+                    episode_length=len(current_rows),
+                ),
+                "reward": float(row[flappy_columns.reward]),
+                "action_id": int(row["action_id"]),
+            }
+            if context_images_column is not None:
+                out_row["context_images"] = _context_images_from_context(
+                    row,
+                    context_images_column=context_images_column,
+                    image_sequence_length=image_sequence_length,
+                )
+            out_rows.append(out_row)
+        episode_lengths.append(len(out_rows))
+        episode_chunk = new_episode_idx // 1000
+        _write_episode(
+            split_output_dir / f"data/chunk-{episode_chunk:03d}/episode_{new_episode_idx:06d}.parquet",
+            out_rows,
+            action_dim=action_dim,
+            state_dim=state_dim,
+            context_images_output_column=context_images_output_column if context_images_column is not None else None,
+        )
+        written_episode_ids.add(current_episode_id)
+        current_episode_id = None
+        current_rows = []
+
+    for part in parts:
+        for row in tqdm(
+            _iter_local_parquet_rows(part.files, data_columns, batch_size=256),
+            desc=f"Writing Flappy {split} local parquet rows",
+        ):
+            if not _row_matches_split(row, split_values, split_specific=part.split_specific):
+                continue
+            if not _row_matches_latency(
+                row,
+                split_latency_filter,
+                latency_column=flappy_columns.latency,
+                default_latency=default_latency,
+            ):
+                continue
+            episode_idx = int(row["episode_idx"])
+            latency = _row_latency(row, latency_column=flappy_columns.latency, default_latency=default_latency)
+            episode_id = _episode_key(episode_idx, latency)
+            if episode_id in written_episode_ids:
+                raise ValueError(f"episode_id={episode_id!r} appears after it was already written; local parquet rows must be episode-contiguous")
+            if current_episode_id is None:
+                current_episode_id = episode_id
+            if episode_id != current_episode_id:
+                _write_current_episode()
+                current_episode_id = episode_id
+            if episode_id in selected_episode_set:
+                current_rows.append(row)
+        _write_current_episode()
+
+    missing_episode_ids = selected_episode_set - written_episode_ids
+    if missing_episode_ids:
+        raise ValueError(f"Selected episodes were not found during local parquet write pass: {sorted(missing_episode_ids, key=_episode_sort_key)[:10]}")
+
+    _write_metadata(
+        split_output_dir,
+        episode_lengths=episode_lengths,
+        task_prompts=task_prompts,
+        action_dim=action_dim,
+        action_labels=action_labels,
+        state_dim=state_dim,
+        state_labels=state_labels,
+        context_images_output_column=context_images_output_column if context_images_column is not None else None,
+        image_sequence_length=image_sequence_length if context_images_column is not None else None,
+    )
+
+    if latency_rows:
+        latency_prompt_map = build_latency_prompt_map(latency_rows)
+        (split_output_dir / "latency_prompt_map.json").write_text(
+            json.dumps(latency_prompt_map, indent=2),
+            encoding="utf-8",
+        )
+    elif require_latency_prompt_map:
+        raise ValueError(f"{dataset_name} {split} split has no latency rows; cannot build latency_prompt_map.json")
+
+    manifest = {
+        "dataset_name": split_output_dir.name,
+        "split": split,
+        "source": dataset_name,
+        "source_config": dataset_config_name,
+        "source_subdir": dataset_source_subdir,
+        "latency_subdirs": [str(s) for s in resolve_latency_subdirs(dataset_source_subdir, split_latency_filter)],
+        "format": "starvla_lerobot_v2_image_parquet",
+        "action_labels": action_labels,
+        "action_dim": action_dim,
+        "active_action_dim": ACTION_DIM,
+        "action_carrier": action_carrier,
+        "bridge_action_dim": BRIDGE_ACTION_DIM if action_carrier == "bridge" else None,
+        "latency_metadata": True,
+        "latency_filter": [int(value) for value in split_latency_filter] if split_latency_filter else None,
+        "episodes_per_latency": int(split_episodes_per_latency) if split_episodes_per_latency is not None else None,
+        "max_episodes": int(max_episodes) if max_episodes is not None else None,
+        "prompt_override": bool(prompt_map_override),
+        "default_latency": default_latency,
+        "state_dim": state_dim,
+        "active_state_dim": STATE_DIM,
+        "state_carrier": action_carrier,
+        "context_images_column": context_images_column,
+        "context_images_output_column": context_images_output_column if context_images_column is not None else None,
+        "image_sequence_length": int(image_sequence_length) if context_images_column is not None else None,
+        "episodes": len(episode_lengths),
+        "frames": int(sum(episode_lengths)),
+        "task_prompts": task_prompts,
+    }
+    (split_output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return manifest
+
+
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -494,6 +939,8 @@ def _write_metadata(
     action_labels: list[str],
     state_dim: int,
     state_labels: list[str],
+    context_images_output_column: str | None,
+    image_sequence_length: int | None,
 ) -> None:
     meta_dir = dataset_dir / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
@@ -560,6 +1007,13 @@ def _write_metadata(
             "latency": {"dtype": "int64", "shape": [1]},
         },
     }
+    if context_images_output_column is not None:
+        info["features"][context_images_output_column] = {
+            "dtype": "image_sequence",
+            "shape": [int(image_sequence_length or 1) - 1, 84, 84, 3],
+            "names": ["time", "height", "width", "channel"],
+            "video_info": {"video.fps": FPS},
+        }
     (meta_dir / "info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
 
     episodes = [
@@ -573,32 +1027,44 @@ def _write_metadata(
     )
 
 
-def _write_episode(path: Path, rows: list[dict[str, Any]], *, action_dim: int, state_dim: int) -> None:
+def _write_episode(
+    path: Path,
+    rows: list[dict[str, Any]],
+    *,
+    action_dim: int,
+    state_dim: int,
+    context_images_output_column: str | None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    table = pa.table(
-        {
-            "observation.image": pa.array(
-                [{"bytes": row["image_bytes"], "path": None} for row in rows],
-                type=pa.struct([("bytes", pa.binary()), ("path", pa.string())]),
-            ),
-            "observation.state": pa.array(
-                [[0.0] * state_dim for _ in rows],
-                type=pa.list_(pa.float32(), state_dim),
-            ),
-            "action": pa.array(
-                [row["action"] for row in rows],
-                type=pa.list_(pa.float32(), action_dim),
-            ),
-            "timestamp": pa.array([row["timestamp"] for row in rows], type=pa.float64()),
-            "episode_index": pa.array([row["episode_index"] for row in rows], type=pa.int64()),
-            "frame_index": pa.array([row["frame_index"] for row in rows], type=pa.int64()),
-            "task_index": pa.array([row["task_index"] for row in rows], type=pa.int64()),
-            "latency": pa.array([row["latency"] for row in rows], type=pa.int64()),
-            "done": pa.array([row["done"] for row in rows], type=pa.bool_()),
-            "reward": pa.array([row["reward"] for row in rows], type=pa.float32()),
-            "action_id": pa.array([row["action_id"] for row in rows], type=pa.int64()),
-        }
-    )
+    columns = {
+        "observation.image": pa.array(
+            [{"bytes": row["image_bytes"], "path": None} for row in rows],
+            type=pa.struct([("bytes", pa.binary()), ("path", pa.string())]),
+        ),
+        "observation.state": pa.array(
+            [[0.0] * state_dim for _ in rows],
+            type=pa.list_(pa.float32(), state_dim),
+        ),
+        "action": pa.array(
+            [row["action"] for row in rows],
+            type=pa.list_(pa.float32(), action_dim),
+        ),
+        "timestamp": pa.array([row["timestamp"] for row in rows], type=pa.float64()),
+        "episode_index": pa.array([row["episode_index"] for row in rows], type=pa.int64()),
+        "frame_index": pa.array([row["frame_index"] for row in rows], type=pa.int64()),
+        "task_index": pa.array([row["task_index"] for row in rows], type=pa.int64()),
+        "latency": pa.array([row["latency"] for row in rows], type=pa.int64()),
+        "done": pa.array([row["done"] for row in rows], type=pa.bool_()),
+        "reward": pa.array([row["reward"] for row in rows], type=pa.float32()),
+        "action_id": pa.array([row["action_id"] for row in rows], type=pa.int64()),
+    }
+    if context_images_output_column is not None:
+        image_struct_type = pa.struct([("bytes", pa.binary()), ("path", pa.string())])
+        columns[context_images_output_column] = pa.array(
+            [row["context_images"] for row in rows],
+            type=pa.list_(image_struct_type),
+        )
+    table = pa.table(columns)
     pq.write_table(table, path)
 
 
@@ -621,6 +1087,9 @@ def convert_dataset(
     prompt_map_override: dict[str, Any] | dict[int, Any] | None = None,
     default_latency: int | None = None,
     action_carrier: str = "native",
+    context_images_column: str | None = None,
+    context_images_output_column: str | None = DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN,
+    image_sequence_length: int = 4,
 ) -> dict[str, Any]:
     action_carrier = _normalize_action_carrier(action_carrier)
     action_dim = _action_dim(action_carrier)
@@ -650,6 +1119,30 @@ def convert_dataset(
         split_episodes_per_latency: int | None,
     ) -> dict[str, Any]:
         split_output_dir.mkdir(parents=True, exist_ok=True)
+        local_parts = _local_parquet_parts(dataset_name, split, dataset_source_subdir, split_latency_filter)
+        if local_parts is not None:
+            return _convert_local_parquet_split(
+                dataset_name,
+                split,
+                split_output_dir,
+                local_parts,
+                dataset_config_name=dataset_config_name,
+                dataset_source_subdir=dataset_source_subdir,
+                split_latency_filter=split_latency_filter,
+                split_episodes_per_latency=split_episodes_per_latency,
+                max_episodes=max_episodes,
+                require_latency_prompt_map=require_latency_prompt_map,
+                prompt_map_override=prompt_map_override,
+                default_latency=default_latency,
+                action_carrier=action_carrier,
+                action_dim=action_dim,
+                action_labels=action_labels,
+                state_dim=state_dim,
+                state_labels=state_labels,
+                context_images_column=context_images_column,
+                context_images_output_column=context_images_output_column,
+                image_sequence_length=image_sequence_length,
+            )
         want_latency = bool(
             require_latency_prompt_map
             or split_latency_filter
@@ -709,6 +1202,11 @@ def convert_dataset(
                 dataset_config_name=dataset_config_name,
                 dataset_source_subdir=dataset_source_subdir,
                 latencies=split_latency_filter,
+                image_columns=[
+                    column
+                    for column in ("image", context_images_column)
+                    if column is not None
+                ],
             ),
             split_latency_filter,
             latency_column=flappy_columns.latency,
@@ -719,6 +1217,10 @@ def convert_dataset(
         # cast_column 是惰性的（只改 feature 类型，不重写数据）。
         if "image" in ds_full.column_names:
             ds_full = ds_full.cast_column("image", datasets.Image(decode=False))
+        if context_images_column is not None:
+            if context_images_column not in ds_full.column_names:
+                raise ValueError(f"Configured context_images_column={context_images_column!r} is missing from {dataset_name}")
+            ds_full = ds_full.cast_column(context_images_column, datasets.Sequence(datasets.Image(decode=False)))
         episode_lengths: list[int] = []
 
         for new_episode_idx, original_episode_idx in enumerate(tqdm(original_episode_ids, desc=f"Writing Flappy {split} LeRobot episodes")):
@@ -750,7 +1252,7 @@ def convert_dataset(
                     if isinstance(img_cell, dict) and img_cell.get("bytes") is not None
                     else _png_bytes(img_cell)
                 )
-                out_rows.append({
+                out_row = {
                     "image_bytes": image_bytes,
                     "action": _one_hot(int(row["action_id"]), action_dim=action_dim),
                     "timestamp": float(frame_idx) / FPS,
@@ -766,7 +1268,14 @@ def convert_dataset(
                     ),
                     "reward": float(row[flappy_columns.reward]),
                     "action_id": int(row["action_id"]),
-                })
+                }
+                if context_images_column is not None:
+                    out_row["context_images"] = _context_images_from_context(
+                        row,
+                        context_images_column=context_images_column,
+                        image_sequence_length=image_sequence_length,
+                    )
+                out_rows.append(out_row)
             episode_lengths.append(len(out_rows))
             episode_chunk = new_episode_idx // 1000
             _write_episode(
@@ -774,6 +1283,7 @@ def convert_dataset(
                 out_rows,
                 action_dim=action_dim,
                 state_dim=state_dim,
+                context_images_output_column=context_images_output_column if context_images_column is not None else None,
             )
 
         _write_metadata(
@@ -784,6 +1294,8 @@ def convert_dataset(
             action_labels=action_labels,
             state_dim=state_dim,
             state_labels=state_labels,
+            context_images_output_column=context_images_output_column if context_images_column is not None else None,
+            image_sequence_length=image_sequence_length if context_images_column is not None else None,
         )
 
         if latency_rows:
@@ -823,6 +1335,9 @@ def convert_dataset(
             "state_dim": state_dim,
             "active_state_dim": STATE_DIM,
             "state_carrier": action_carrier,
+            "context_images_column": context_images_column,
+            "context_images_output_column": context_images_output_column if context_images_column is not None else None,
+            "image_sequence_length": int(image_sequence_length) if context_images_column is not None else None,
             "episodes": len(episode_lengths),
             "frames": int(sum(episode_lengths)),
             "task_prompts": task_prompts,
@@ -863,6 +1378,9 @@ def main() -> int:
     parser.add_argument("--episodes-per-latency", "--episodes_per_latency", type=int, default=None)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--action-carrier", "--action_carrier", choices=["native", "bridge"], default="native")
+    parser.add_argument("--context-images-column", "--context_images_column", default=None)
+    parser.add_argument("--context-images-output-column", "--context_images_output_column", default=DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN)
+    parser.add_argument("--image-sequence-length", "--image_sequence_length", type=int, default=4)
     args = parser.parse_args()
     latency_filter = None
     if args.latency_filter:
@@ -880,6 +1398,9 @@ def main() -> int:
         latency_filter=latency_filter,
         episodes_per_latency=args.episodes_per_latency,
         action_carrier=args.action_carrier,
+        context_images_column=args.context_images_column,
+        context_images_output_column=args.context_images_output_column,
+        image_sequence_length=args.image_sequence_length,
     )
     print(json.dumps(manifest, indent=2))
     return 0
