@@ -13,10 +13,23 @@ import torch
 import torch.distributed as dist
 from transformers import get_scheduler
 
+from accelerate import Accelerator, DeepSpeedPlugin
 from accelerate.logging import get_logger
 from starVLA.training.trainer_utils.config_tracker import reload_module_paths
 
 logger = get_logger(__name__)
+
+
+def build_accelerator(cfg, *, use_deepspeed: bool) -> Accelerator:
+    accelerator_kwargs = {
+        "gradient_accumulation_steps": cfg.trainer.gradient_accumulation_steps,
+    }
+    if use_deepspeed:
+        accelerator_kwargs["deepspeed_plugin"] = DeepSpeedPlugin()
+
+    accelerator = Accelerator(**accelerator_kwargs)
+    accelerator.print(accelerator.state)
+    return accelerator
 
 
 _VOCAB_SIZED_WEIGHT_SUFFIXES = (
