@@ -299,9 +299,38 @@ def test_launcher_auto_forwards_new_nested_config_fields(tmp_path: Path) -> None
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "trainer.optimizer.fused=false" in cmd
+    assert "++trainer.optimizer.fused=false" in cmd
     assert "++datasets.vla_data.synthetic_cache.enabled=true" in cmd
-    assert not any(item.startswith("++trainer.") for item in cmd)
+
+
+def test_launcher_preserves_added_trainer_field_across_second_composition(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="wan_oft",
+        env="demon_attack",
+        init="wan_oft_libero",
+        mode="single",
+        overrides=["+trainer.learning_rate.action_query_proj=1.0e-4"],
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "wan_base"),
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+    forwarded_override = next(item for item in cmd if "action_query_proj" in item)
+    recomposed_cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="wan_oft",
+        env="demon_attack",
+        init="wan_oft_libero",
+        mode="single",
+        overrides=[forwarded_override],
+    )
+
+    assert forwarded_override == "++trainer.learning_rate.action_query_proj=0.0001"
+    assert recomposed_cfg.trainer.learning_rate.action_query_proj == 1.0e-4
 
 
 def test_launcher_runtime_overrides_are_last(tmp_path: Path) -> None:
@@ -394,9 +423,8 @@ def test_launcher_forwards_vit_and_llm_freeze_overrides(tmp_path: Path, monkeypa
 
     cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
 
-    assert "trainer.freeze_vit=true" in cmd
-    assert "trainer.freeze_llm_layers=[0,27]" in cmd
-    assert not any(item.startswith("++trainer.") for item in cmd)
+    assert "++trainer.freeze_vit=true" in cmd
+    assert "++trainer.freeze_llm_layers=[0,27]" in cmd
     assert "trainer.freeze_llm_bottom_ratio=" not in cmd
 
 
