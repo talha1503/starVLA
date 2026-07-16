@@ -108,7 +108,8 @@ def test_wan_oft_flappy_mixed_latency_command_preserves_context5_baseline() -> N
     assert "datasets.vla_data.sequential_step_sampling=false" in command_text
     assert "framework.world_model.num_frames=\"${CONTEXT_WINDOW}\"" in command_text
     assert "framework.action_model.loss_type=current_discrete_ce" in command_text
-    assert "+trainer.learning_rate.action_query_proj=1.0e-4" in command_text
+    assert "trainer.learning_rate.action_query_proj=1.0e-4" in command_text
+    assert "+trainer.learning_rate.action_query_proj=1.0e-4" not in command_text
     assert "trainer.distributed_backend=none" in command_text
     assert "launch.use_accelerate=false" in command_text
     assert "trainer.gradient_accumulation_steps=\"${GRADIENT_ACCUMULATION_STEPS}\"" in command_text
@@ -303,14 +304,14 @@ def test_launcher_auto_forwards_new_nested_config_fields(tmp_path: Path) -> None
     assert "++datasets.vla_data.synthetic_cache.enabled=true" in cmd
 
 
-def test_launcher_preserves_added_trainer_field_across_second_composition(tmp_path: Path) -> None:
+def test_launcher_preserves_declared_trainer_field_across_second_composition(tmp_path: Path) -> None:
     cfg = launch_train.compose_training_config(
         config_name="train",
         model="wan_oft",
         env="demon_attack",
         init="wan_oft_libero",
         mode="single",
-        overrides=["+trainer.learning_rate.action_query_proj=1.0e-4"],
+        overrides=["trainer.learning_rate.action_query_proj=1.0e-4"],
     )
     setup = {
         "dataset_local_dir": str(tmp_path / "datasets"),
