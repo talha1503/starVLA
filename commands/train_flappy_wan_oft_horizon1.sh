@@ -25,6 +25,7 @@ python examples/rl_games/scripts/launch_train.py \
   trainer.max_train_steps=5000 \
   trainer.save_interval=100 \
   rl_games.env_eval.enabled=true \
+  rl_games.env_eval.eval_backend=eval_core \
   rl_games.env_eval.mid_train.enabled=true \
   rl_games.env_eval.mid_train.interval_steps=100 \
   rl_games.env_eval.mid_train.latencies=[0] \
