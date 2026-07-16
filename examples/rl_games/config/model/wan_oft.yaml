@@ -57,3 +57,4 @@ trainer:
   learning_rate:
     base: 2.5e-05
     action_model: 1.0e-04
+    action_query_proj: 1.0e-04

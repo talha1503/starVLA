@@ -60,7 +60,7 @@ python examples/rl_games/scripts/launch_train.py \
   datasets.vla_data.latency_curriculum.save_at_phase_end="${SAVE_AT_PHASE_END}" \
   framework.world_model.num_frames="${CONTEXT_WINDOW}" \
   framework.action_model.loss_type=current_discrete_ce \
-  "+trainer.learning_rate.action_query_proj=1.0e-4" \
+  trainer.learning_rate.action_query_proj=1.0e-4 \
   trainer.max_train_steps="${MAX_TRAIN_STEPS}" \
   trainer.num_warmup_steps=0 \
   trainer.lr_scheduler_type=cosine_with_min_lr \

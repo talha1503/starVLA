@@ -26,7 +26,7 @@ python examples/rl_games/scripts/launch_train.py \
   datasets.vla_data.action_balance.enabled=false \
   framework.world_model.num_frames=5 \
   framework.action_model.loss_type=current_discrete_ce \
-  "+trainer.learning_rate.action_query_proj=1.0e-4" \
+  trainer.learning_rate.action_query_proj=1.0e-4 \
   trainer.max_train_steps=2000 \
   trainer.num_warmup_steps=0 \
   trainer.lr_scheduler_type=cosine_with_min_lr \
