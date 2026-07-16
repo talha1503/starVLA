@@ -60,6 +60,7 @@ python examples/rl_games/scripts/launch_train.py \
   trainer.eval_action_classification=false \
   trainer.save_interval=0 \
   rl_games.env_eval.enabled=true \
+  rl_games.env_eval.eval_backend=eval_core \
   rl_games.env_eval.image_size=224 \
   rl_games.env_eval.vectorized.enabled=false \
   rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}" \

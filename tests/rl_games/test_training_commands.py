@@ -87,6 +87,15 @@ def test_wan_oft_commands_are_valid_bash() -> None:
     subprocess.run(["bash", "-n", *[str(path) for path in command_paths]], check=True, cwd=REPO_ROOT)
 
 
+def test_wan_oft_commands_explicitly_use_eval_core() -> None:
+    command_paths = sorted((REPO_ROOT / "commands").glob("train_*wan_oft*.sh"))
+
+    assert command_paths
+    for command_path in command_paths:
+        command_text = command_path.read_text(encoding="utf-8")
+        assert "rl_games.env_eval.eval_backend=eval_core" in command_text, command_path
+
+
 def test_wan_oft_flappy_mixed_latency_command_preserves_context5_baseline() -> None:
     command_path = REPO_ROOT / "commands" / "train_flappy_wan_oft_mixed_latency.sh"
     command_text = command_path.read_text(encoding="utf-8")
