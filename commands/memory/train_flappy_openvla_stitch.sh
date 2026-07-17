@@ -3,30 +3,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-# QwenOFT on flappy with fixed-size streaming KV MEMORY (req3), trained WITH the memory
-# so train and inference match. The dataloader emits R=rollout_len frames per sample
-# (image_mode must be multiframe, not stitch); _forward_memory replays them through the
-# memory with truncated BPTT. rollout_len=8 > window=4 so training exercises eviction.
+# Four-frame mosaic full tuning. Each sample resizes the four newest
+# observations into a 2x2 grid, tokenizes the resulting 224x224 image, and
+# supervises one action vector; no persistent cache or temporal replay is used.
 #
-# At eval the memory is read from the checkpoint config automatically: only the newest
-# frame is encoded each step (past frames come from the per-slot cache), so the eval env
-# can keep frame_stack=1. The per-slot memory is reset at episode boundaries.
-
-# Full tuning (no layer freezing: freezing underperformed full FT in our sweeps).
-# To relieve full-FT optimizer/grad memory we shard across >=2 GPUs with DeepSpeed
-# ZeRO-2 (ds_config.yaml is stage 2, referenced by the default accelerate config).
-# ZeRO-2 (not ZeRO-3) is deliberate: the KV-memory rollout runs many forwards per step,
-# and ZeRO-3 would all-gather params on every one; ZeRO-2 replicates params and only
-# shards optimizer state + grads, so the multi-forward rollout pays no gather penalty.
-#
-# Effective batch = per_device_batch_size * num_processes * gradient_accumulation_steps
-#                 = 4 * 2 * 4 = 32. Tune per_device_batch_size / num_processes on the
-# real GPUs by watching memory; per-frame scheme-B holds R step-graphs until the single
-# backward, so keep per_device_batch_size modest at first.
-
-# NEW: compared wiht kv memory, needs 8 more labels
-# 32 * 8 = 128 effective batch size
-# per device: 128 / 2 = 64
+# DeepSpeed ZeRO-2 runs on two processes. Effective batch:
+# per_device_batch_size * num_processes * gradient_accumulation_steps
+# = 32 * 2 * 2 = 128 mosaics and action labels per optimizer step.
 python examples/rl_games/scripts/launch_train.py \
   model=openvla \
   env=flappy \
