@@ -45,7 +45,11 @@ from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, 
 from starVLA.training.rl_games.auth import login_training_services
 from starVLA.training.rl_games.eval_core import EvalResult
 from starVLA.training.rl_games import action_cc_f1
-from starVLA.training.train_step_events import calculate_epoch_progress, should_run_step_interval_event
+from starVLA.training.train_step_events import (
+    calculate_epoch_progress,
+    should_run_optional_step_interval_event,
+    should_run_step_interval_event,
+)
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
 
@@ -1595,7 +1599,7 @@ class VLATrainer(TrainerUtils):
                     self._save_interrupt_checkpoint()
                     break
 
-                if self._save_periodic_checkpoints_enabled() and should_run_step_interval_event(
+                if self._save_periodic_checkpoints_enabled() and should_run_optional_step_interval_event(
                     completed_steps=self.completed_steps,
                     interval=self.config.trainer.save_interval,
                     gradients_synced=gradients_synced,

@@ -711,6 +711,16 @@ def test_vla_trainer_saves_last_checkpoints_independently_from_best_model() -> N
     assert ") and not self._save_best_model_enabled:" not in trainer_text
 
 
+def test_vla_trainer_treats_non_positive_save_interval_as_disabled() -> None:
+    trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
+    checkpoint_block = trainer_text.split(
+        "if self._save_periodic_checkpoints_enabled() and ",
+        maxsplit=1,
+    )[1].split("if self.completed_steps >=", maxsplit=1)[0]
+
+    assert "should_run_optional_step_interval_event(" in checkpoint_block
+
+
 def test_vla_trainer_pt_checkpoint_file_is_optional() -> None:
     trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
 
