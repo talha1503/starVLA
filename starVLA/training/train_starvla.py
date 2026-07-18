@@ -29,7 +29,6 @@ import torch
 import torch._dynamo
 import torch.distributed as dist
 import wandb
-from accelerate import Accelerator, DeepSpeedPlugin
 from accelerate.utils import DistributedType, set_seed
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader, Dataset
@@ -51,7 +50,7 @@ from starVLA.training.train_step_events import (
     should_run_step_interval_event,
 )
 from starVLA.training.trainer_utils.config_tracker import AccessTrackedConfig, wrap_config
-from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
+from starVLA.training.trainer_utils.trainer_tools import TrainerUtils, build_accelerator, build_param_lr_groups, setup_optimizer_and_scheduler, normalize_dotlist_args
 
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -329,7 +328,7 @@ def _configure_quota_cumulative_training_steps(cfg, dataloader, accelerator) -> 
     if strategy != "quota_cumulative":
         return
 
-    grad_accum_steps = int(getattr(cfg.trainer, "gradient_accumulation_steps", 1))
+    grad_accum_steps = accelerator.gradient_accumulation_steps
     per_device_bs = int(getattr(cfg.datasets.vla_data, "per_device_batch_size"))
     effective_batch_size = per_device_bs * int(accelerator.num_processes) * grad_accum_steps
     dataset = getattr(dataloader, "dataset", None)
@@ -506,17 +505,6 @@ def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, to
     )
 
     return optimizer, lr_scheduler
-
-
-def _build_accelerator(cfg) -> Accelerator:
-    grad_accum_steps = int(getattr(cfg.trainer, "gradient_accumulation_steps", 1))
-    distributed_backend = str(getattr(cfg.trainer, "distributed_backend", "deepspeed")).lower()
-    accelerator_kwargs = {"gradient_accumulation_steps": grad_accum_steps}
-    if distributed_backend == "deepspeed":
-        accelerator_kwargs["deepspeed_plugin"] = DeepSpeedPlugin()
-    local_accelerator = Accelerator(**accelerator_kwargs)
-    local_accelerator.print(local_accelerator.state)
-    return local_accelerator
 
 
 def _pin_cuda_device_from_local_rank() -> None:
@@ -2532,7 +2520,8 @@ def main(cfg) -> None:
         vla = build_framework(cfg)
         vla = _preload_model_checkpoint_before_accelerator(cfg=cfg, model=vla)
 
-        accelerator = _build_accelerator(cfg)
+        distributed_backend = str(getattr(cfg.trainer, "distributed_backend", "deepspeed")).lower()
+        accelerator = build_accelerator(cfg, use_deepspeed=distributed_backend == "deepspeed")
 
         vla_train_dataloader, vla_eval_dataloader = prepare_data(cfg=cfg, accelerator=accelerator, output_dir=output_dir)
         _configure_quota_cumulative_training_steps(cfg=cfg, dataloader=vla_train_dataloader, accelerator=accelerator)
