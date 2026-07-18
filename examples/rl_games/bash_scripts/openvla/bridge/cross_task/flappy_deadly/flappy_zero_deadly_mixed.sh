@@ -1,7 +1,7 @@
 WORKSPACE_DIR=""
 export WORKSPACE_DIR
 
-bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh
+bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh"
 
 cd "${WORKSPACE_DIR}/starVLA"
 
@@ -20,7 +20,7 @@ python examples/rl_games/scripts/launch_train.py \
     init=bridge \
     mode=cross_task \
     cross_task_setup=flappy_zero_deadly_mixed \
-    run_id="openvla_bridge_cross_flappy_zero_deadly_024_exp3 " \
+    run_id="openvla_bridge_cross_flappy_zero_deadly_024_exp3" \
     trainer.distributed_backend=none \
     workspace_dir="$WORKSPACE_DIR" \
     wandb_entity="talha1503" \

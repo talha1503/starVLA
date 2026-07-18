@@ -20,6 +20,13 @@ OPENVLA_DEADLY_CROSS_TASK_SETUPS = (
     "deadly_zero_demon_mixed",
     "flappy_demon_deadly_024",
 )
+OPENVLA_DEADLY_CROSS_TASK_SCRIPTS = (
+    "flappy_deadly/flappy_zero_deadly_mixed",
+    "deadly_zero_flappy_mixed",
+    "demon_zero_deadly_mixed",
+    "deadly_zero_demon_mixed",
+    "flappy_demon_deadly_024",
+)
 
 
 def _command_path(model: str, env: str) -> Path:
@@ -171,7 +178,7 @@ def test_flappy_wan_oft_curriculum_pipeline_script_parameterizes_mode() -> None:
 
 def test_openvla_deadly_cross_task_scripts_are_valid_bash() -> None:
     script_dir = REPO_ROOT / "examples" / "rl_games" / "bash_scripts" / "openvla" / "bridge" / "cross_task"
-    command_paths = [str(script_dir / f"{setup}.sh") for setup in OPENVLA_DEADLY_CROSS_TASK_SETUPS]
+    command_paths = [str(script_dir / f"{script}.sh") for script in OPENVLA_DEADLY_CROSS_TASK_SCRIPTS]
 
     subprocess.run(["bash", "-n", *command_paths], check=True, cwd=REPO_ROOT)
 
