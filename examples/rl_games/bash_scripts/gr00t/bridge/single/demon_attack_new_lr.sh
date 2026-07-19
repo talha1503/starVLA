@@ -1,8 +1,15 @@
-cd starVLA
+WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
+export WORKSPACE_DIR
 
-bash examples/rl_games/install/install_stack.sh gr00t demon_attack
+bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh"
+
+cd "${WORKSPACE_DIR}/starVLA"
 
 conda activate starvla_rl_games_gr00t
+
+bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
+
+export PYTHONPATH="${WORKSPACE_DIR}/latency-sensitive-bench:${PYTHONPATH:-}"
 
 python examples/rl_games/scripts/launch_train.py \
     model=gr00t \
@@ -11,7 +18,7 @@ python examples/rl_games/scripts/launch_train.py \
     mode=single \
     run_id="gr00t_bridge_demon_attack_single_latency_clean_data_exp2_action_1e-4_backbone_1e-5" \
     trainer.distributed_backend=none \
-    workspace_dir="/workspace" \
+    workspace_dir="$WORKSPACE_DIR" \
     wandb_entity="talha1503" \
     checkpoint.hf_repo_id="talha15032/gr00t_bridge_demon_attack_single_latency_clean_data_exp2_action_1e-4_backbone_1e-5" \
     checkpoint.sync.enabled=true \
