@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+# shellcheck source=_host.sh
+source "${SCRIPT_DIR}/_host.sh"
 
 CONDA_ENV_NAME="${CONDA_ENV_NAME:-starvla_rl_games}"
 PYTHON_VERSION="3.10"
@@ -82,10 +84,10 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-${CONDA_BASE}/.uv_cache}"
 unset UV_NO_CACHE UV_LINK_MODE
 
 # Route torch + pypi through the fastest mirror. When launched via the repo install.sh
-# this is already chosen and exported; for a standalone bootstrap run, speed-test here
-# (the helper lives in the parent repo: starVLA is a submodule under it).
+# this is already chosen and exported; for a standalone bootstrap run inside the
+# latency benchmark superproject, speed-test here.
 if [[ -z "${STARVLA_TORCH_INDEX_BASE:-}" ]]; then
-  MIRRORS_HELPER="${REPO_ROOT}/../scripts/bash_scripts/_mirrors.sh"
+  MIRRORS_HELPER="${LATENCY_BENCH_ROOT}/scripts/bash_scripts/_mirrors.sh"
   if [[ -f "${MIRRORS_HELPER}" ]]; then
     # shellcheck source=/dev/null
     source "${MIRRORS_HELPER}"
