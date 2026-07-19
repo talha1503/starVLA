@@ -27,15 +27,11 @@ ensure_uv
 
 pip_install -r "$REPO_ROOT/requirements.txt"
 pip_install -e "$REPO_ROOT"
+pip_install -e "$LATENCY_BENCH_ROOT"
 
 if [[ "${INSTALL_TIER}" == "dev" ]]; then
   pip_install -r "$REPO_ROOT/requirements-dev.txt"
   pip_install -e "$REPO_ROOT[dev]"
 fi
-
-# Register the benchmark package from the enclosing superproject.
-SITE_DIR="$("$PYTHON_BIN" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
-echo "${LATENCY_BENCH_ROOT}" > "${SITE_DIR}/latency_bench_repo.pth"
-echo "[install/common] registered latency_bench root: ${LATENCY_BENCH_ROOT}"
 
 echo "[install/common] tier=${INSTALL_TIER} done"
