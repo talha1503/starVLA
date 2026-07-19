@@ -6,10 +6,17 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_pip.sh"
 
 pip_install ale-py "gymnasium[atari]" autorom
-# Only download ROMs if they aren't already importable (ale-py may bundle them,
-# and a cloned env already has them) — avoids a redundant AutoROM fetch per env.
 if ! "$PYTHON_BIN" -c "import ale_py, gymnasium as gym; gym.make('ALE/DemonAttack-v5').close()" >/dev/null 2>&1; then
-  AutoROM --accept-license
+  if [[ "${ACCEPT_ROM_LICENSE:-false}" == "true" ]]; then
+    AutoROM --accept-license
+  elif [[ -t 0 ]] \
+    && read -r -p "AutoROM license acceptance is required for Demon Attack. Accept? [y/N] " reply \
+    && [[ "${reply}" =~ ^[Yy]$ ]]; then
+    AutoROM --accept-license
+  else
+    echo "[install/env/demon_attack] ROMs are missing; rerun with --accept-rom-license" >&2
+    exit 1
+  fi
 fi
 "$PYTHON_BIN" - <<'PY'
 import gymnasium as gym

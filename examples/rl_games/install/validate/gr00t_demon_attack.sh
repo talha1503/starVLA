@@ -5,7 +5,6 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 "$PYTHON_BIN" - <<'PY'
 import ale_py  # noqa: F401
 import gymnasium as gym
-import ray  # noqa: F401
 import transformers  # noqa: F401
 
 from starVLA.model.framework.VLM4A.QwenGR00T import Qwen_GR00T  # noqa: F401

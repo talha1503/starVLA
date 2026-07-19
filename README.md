@@ -158,52 +158,25 @@ From the repo root:
 
 ```bash
 cd PATH_TO_STARVLA
-
-bash examples/rl_games/install/bootstrap.sh --split-envs
+bash examples/rl_games/install/bootstrap.sh \
+  --tier dev \
+  --model openvla \
+  --env all \
+  --accept-rom-license
 ```
 
-This creates model-specific conda environments such as `starvla_rl_games_openvla`.
-For pi-0 Flappy specifically, the direct installer form is:
+Each model family has an independent environment. Select the family explicitly:
 
 ```bash
-bash examples/rl_games/install/install_stack.sh pi0 flappy
+bash examples/rl_games/install/bootstrap.sh --tier use --model pi05 --env flappy
+bash examples/rl_games/install/bootstrap.sh --tier dev --model gr00t --env deadly_corridor
+bash examples/rl_games/install/bootstrap.sh --tier dev --model wan_oft --env flappy
 ```
 
-For pi-0.5-style Flappy through StarVLA `QwenPI_v3`, the direct installer form is:
-
-```bash
-bash examples/rl_games/install/install_stack.sh pi05 flappy
-```
-
-For pi-0 Demon Attack:
-
-```bash
-bash examples/rl_games/install/install_stack.sh pi0 demon_attack
-```
-
-For pi-0 Deadly Corridor:
-
-```bash
-bash examples/rl_games/install/install_stack.sh pi0 deadly_corridor
-```
-
-For GR00T Flappy:
-
-```bash
-bash examples/rl_games/install/install_stack.sh gr00t flappy
-```
-
-For GR00T Demon Attack:
-
-```bash
-bash examples/rl_games/install/install_stack.sh gr00t demon_attack
-```
-
-For GR00T Deadly Corridor:
-
-```bash
-bash examples/rl_games/install/install_stack.sh gr00t deadly_corridor
-```
+The default is `use`, `openvla`, and all three RL Games environments. `dev`
+adds training, data, test, and CUDA attention dependencies to the same
+model-specific environment. The legacy `install_stack.sh <model> <env>` command
+remains as a development-tier compatibility entrypoint.
 
 ### 2. Compose a training config
 
