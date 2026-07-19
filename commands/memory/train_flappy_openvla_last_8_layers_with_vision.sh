@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# launch_train.py 用相对路径调用，必须在 starVLA/ 目录下运行。
-# 这里自己 cd 到 starVLA/（脚本在 starVLA/commands/memory/ 下，../.. = starVLA/），
-# 这样无论从哪个 cwd `bash` 本脚本都不会 file-not-found。
+# launch_train.py uses paths relative to the StarVLA repository root.
 cd "$(dirname "$0")/../.."
 
-# freeze 底部 N 层：n = round(ratio * total)，冻结的是 language_model.layers 前 n 层（靠近输入的底部）。
-# Qwen3-VL-4B 文本解码层 total=36（config.json text_config.num_hidden_layers）。
-# 解冻最后 8 层 => 冻结底部 28 层 => ratio = 28/36 = 0.7778（round(0.7778*36)=28）。
+# Train the vision stack, tied embeddings/lm_head, top eight decoder layers,
+# and action head. Qwen3-VL-4B decoder layers 0-27 remain frozen.
+# The run ID remains unchanged to match the published checkpoint artifact.
 python examples/rl_games/scripts/launch_train.py \
   model=openvla \
   env=flappy \
   init=bridge \
-  run_id=flappy_fix_latency_2_200ep_full_tuning \
+  run_id=flappy_fix_latency_2_200ep_last_8_layers_corrected \
   paths.dataset_local_dir=data/flappy_fix_latency_2_200ep \
   trainer.distributed_backend=none \
-  trainer.gradient_accumulation_steps=4 \
-  datasets.vla_data.per_device_batch_size=32 \
+  trainer.gradient_accumulation_steps=2 \
+  trainer.freeze_vit=false \
+  trainer.freeze_llm_layers=[0,27] \
+  datasets.vla_data.per_device_batch_size=64 \
   datasets.vla_data.image_mode=single \
   datasets.vla_data.num_obs_frames=1 \
   trainer.max_train_steps=5000 \
