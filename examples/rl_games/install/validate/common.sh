@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 
 "$PYTHON_BIN" -c "import omegaconf, torch; print('ok-common-use')"
 "$PYTHON_BIN" -c "import starVLA; print('ok-starVLA')"
+"$PYTHON_BIN" -m latency_bench.run --help >/dev/null
 "$PYTHON_BIN" -m compileall "$REPO_ROOT/starVLA/training/rl_games" >/dev/null
 
 if [[ "${INSTALL_TIER}" == "dev" ]]; then

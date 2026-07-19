@@ -16,7 +16,7 @@ pip_install -e "${FLAPPY_FORK}"
 # force-reinstall + no-deps is load-bearing: regular pygame (not pygame-ce), not
 # pygame-ce that another dep may have pulled. pillow is needed by the fork's
 # _load_sprite PIL fallback (see below). Drop --no-cache-dir so the wheel comes from cache.
-pip_install --force-reinstall --no-deps "pygame==2.6.1" pillow
+pip_install --force-reinstall --no-deps "pygame==2.6.1" "pillow==12.1.1"
 
 # The libpng symbol-interposition fix lives IN the fork source now (the fork is our
 # own submodule): flappy_bird_gymnasium.envs.utils._load_sprite falls back to Pillow

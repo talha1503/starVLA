@@ -154,24 +154,28 @@ The RL Games training entrypoint is Hydra-driven. Use `examples/rl_games/config`
 
 ### 1. Install the RL Games environment
 
-From the repo root:
+This fork's RL Games integration depends on `latency-sensitive-bench`. The
+recommended entrypoint is the enclosing benchmark repository:
 
 ```bash
-cd PATH_TO_STARVLA
-bash examples/rl_games/install/bootstrap.sh \
+cd PATH_TO_LATENCY_SENSITIVE_BENCH
+bash install.sh \
   --tier dev \
   --model openvla \
   --env all \
   --accept-rom-license
 ```
 
-Each model family has an independent environment. Select the family explicitly:
+When developing StarVLA from a standalone checkout, point the installer at a
+separate benchmark checkout explicitly:
 
 ```bash
-bash examples/rl_games/install/bootstrap.sh --tier use --model pi05 --env flappy
-bash examples/rl_games/install/bootstrap.sh --tier dev --model gr00t --env deadly_corridor
-bash examples/rl_games/install/bootstrap.sh --tier dev --model wan_oft --env flappy
+LATENCY_BENCH_ROOT=PATH_TO_LATENCY_SENSITIVE_BENCH \
+  bash examples/rl_games/install/bootstrap.sh --tier dev --model openvla --env all
 ```
+
+Each model family has an independent environment. Change `--model` to `pi0`,
+`pi05`, `gr00t`, or `wan_oft` and select tasks with repeatable `--env` options.
 
 The default is `use`, `openvla`, and all three RL Games environments. `dev`
 adds training, data, test, and CUDA attention dependencies to the same

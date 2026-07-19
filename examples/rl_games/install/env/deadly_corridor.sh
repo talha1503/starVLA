@@ -5,7 +5,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 # shellcheck source=../_pip.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_pip.sh"
 
-pip_install vizdoom gymnasium
+pip_install "vizdoom==1.3.0" "gymnasium==0.29.1"
 "$PYTHON_BIN" - <<'PY'
 import gymnasium as gym
 import vizdoom.gymnasium_wrapper  # noqa: F401

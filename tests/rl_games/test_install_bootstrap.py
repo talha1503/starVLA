@@ -126,6 +126,82 @@ def test_env_all_cannot_hide_an_invalid_repeated_selector() -> None:
     assert "--env all cannot be combined with another --env" in result.stderr
 
 
+def test_bootstrap_creates_model_env_from_conda_forge(tmp_path: Path) -> None:
+    source_install_dir = _repo_root() / "examples" / "rl_games" / "install"
+    install_dir = tmp_path / "starvla" / "examples" / "rl_games" / "install"
+    install_dir.mkdir(parents=True)
+    for name in ("bootstrap.sh", "_host.sh", "_torch_profile.sh"):
+        shutil.copy2(source_install_dir / name, install_dir / name)
+
+    for relative_path in (
+        "common.sh",
+        "model/openvla.sh",
+        "env/flappy.sh",
+    ):
+        script = install_dir / relative_path
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text("#!/bin/bash\nexit 0\n")
+        script.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    conda_base = tmp_path / "conda"
+    profile_dir = conda_base / "etc" / "profile.d"
+    profile_dir.mkdir(parents=True)
+    conda_log = tmp_path / "conda.log"
+
+    conda = fake_bin / "conda"
+    conda.write_text(
+        f"""#!/bin/bash
+if [[ "$1 $2" == "info --base" ]]; then
+  printf '%s\\n' "{conda_base}"
+fi
+"""
+    )
+    conda.chmod(0o755)
+    python = fake_bin / "python"
+    python.write_text("#!/bin/bash\nprintf '3.10\\n'\n")
+    python.chmod(0o755)
+    (profile_dir / "conda.sh").write_text(
+        f"""conda() {{
+  printf '%s\\n' "$*" >> "{conda_log}"
+  if [[ "$1 $2" == "env list" ]]; then
+    printf '# conda environments:\\n'
+  fi
+}}
+"""
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(install_dir / "bootstrap.sh"),
+            "--model",
+            "openvla",
+            "--env",
+            "flappy",
+            "--torch-profile",
+            "cpu",
+            "--python-version",
+            "3.10",
+            "--skip-validate",
+        ],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "LATENCY_BENCH_ROOT": str(tmp_path / "latency-bench"),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "create -n starvla_rl_games_openvla -c conda-forge --override-channels "
+        "python=3.10 -y"
+    ) in conda_log.read_text()
+
+
 def test_training_dependencies_are_not_in_the_use_manifest() -> None:
     repo_root: Path = _repo_root()
     use_requirements: str = (repo_root / "requirements.txt").read_text()

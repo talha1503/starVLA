@@ -141,7 +141,7 @@ ensure_conda_env() {
     echo "[bootstrap] using existing conda env: ${env_name}"
   else
     echo "[bootstrap] creating conda env ${env_name} (python=${PYTHON_VERSION})"
-    conda create -n "${env_name}" "python=${PYTHON_VERSION}" -y
+    conda create -n "${env_name}" -c conda-forge --override-channels "python=${PYTHON_VERSION}" -y
   fi
 }
 

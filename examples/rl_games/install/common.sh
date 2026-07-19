@@ -28,6 +28,7 @@ ensure_uv
 pip_install -r "$REPO_ROOT/requirements.txt"
 pip_install -e "$REPO_ROOT"
 pip_install -e "$LATENCY_BENCH_ROOT"
+pip_install --no-deps -e "$LATENCY_BENCH_ROOT/third_party/flappy-bird-gymnasium"
 
 if [[ "${INSTALL_TIER}" == "dev" ]]; then
   pip_install -r "$REPO_ROOT/requirements-dev.txt"

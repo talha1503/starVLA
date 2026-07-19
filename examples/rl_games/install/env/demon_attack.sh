@@ -5,7 +5,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 # shellcheck source=../_pip.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_pip.sh"
 
-pip_install ale-py "gymnasium[atari]" autorom
+pip_install "ale-py==0.10.2" "gymnasium[atari]==0.29.1" "autorom==0.6.1"
 if ! "$PYTHON_BIN" -c "import ale_py, gymnasium as gym; gym.make('ALE/DemonAttack-v5').close()" >/dev/null 2>&1; then
   if [[ "${ACCEPT_ROM_LICENSE:-false}" == "true" ]]; then
     AutoROM --accept-license
