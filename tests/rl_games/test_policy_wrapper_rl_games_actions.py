@@ -146,6 +146,73 @@ def test_decode_deadly_corridor_joint_logits_to_tuple_payload():
     assert decoded["actions"].tolist() == [[[0, 1, 2, 1]]]
 
 
+def test_decode_deadly_corridor_multibinary_logits_independently():
+    from deployment.model_server.rl_games_action_decode import decode_rl_games_actions
+
+    decoded = decode_rl_games_actions(
+        normalized_actions=np.asarray(
+            [[[-0.2, 0.8, 0.7, 0.1, 0.9, -0.4, 0.6]]],
+            dtype=np.float32,
+        ),
+        env_name="deadly_corridor",
+        deadly_action_layout="multibinary_7",
+        deadly_multibinary_threshold=0.5,
+    )
+
+    assert decoded["action_output_type"] == "rl_games_deadly_corridor_multibinary"
+    assert decoded["actions"].tolist() == [[[0, 1, 1, 0, 1, 0, 1]]]
+
+
+def test_resolve_deadly_corridor_multibinary_threshold_from_model_config():
+    from deployment.model_server.rl_games_action_decode import resolve_deadly_action_decode_spec
+
+    discrete_ce_config = {
+        "framework": {"action_model": {"loss_type": "discrete_ce"}},
+        "rl_games": {
+            "env_eval": {
+                "deadly": {
+                    "action_layout": "multibinary_7",
+                    "multibinary_threshold": None,
+                }
+            }
+        },
+    }
+    bce_config = {
+        "framework": {"action_model": {"loss_type": "multibinary_bce"}},
+        "rl_games": {
+            "env_eval": {
+                "deadly": {
+                    "action_layout": "multibinary_7",
+                    "multibinary_threshold": None,
+                }
+            }
+        },
+    }
+
+    assert resolve_deadly_action_decode_spec(discrete_ce_config) == ("multibinary_7", 0.5)
+    assert resolve_deadly_action_decode_spec(bce_config) == ("multibinary_7", 0.0)
+
+
+def test_resolve_historical_deadly_corridor_action_layout_metadata():
+    from deployment.model_server.rl_games_action_decode import resolve_deadly_action_decode_spec
+
+    model_config = {
+        "framework": {
+            "action_model": {
+                "action_layout": "deadly_corridor_multibinary_7",
+                "loss_type": "discrete_ce",
+            }
+        }
+    }
+
+    assert resolve_deadly_action_decode_spec(model_config) == ("multibinary_7", 0.5)
+    assert resolve_deadly_action_decode_spec(
+        model_config,
+        action_layout="factorized_11",
+        multibinary_threshold=0.25,
+    ) == ("factorized_11", 0.25)
+
+
 def test_policy_wrapper_default_mode_keeps_unnormalized_actions():
     policy_wrapper_module = _load_policy_wrapper_module()
     processor = FakeProcessor()
@@ -179,6 +246,29 @@ def test_policy_wrapper_rl_games_mode_returns_decoded_actions_without_unapply():
     assert prediction["actions"].tolist() == [[[1]]]
     assert np.allclose(prediction["raw_action_scores"], [[[0.1, 0.9]]])
     assert prediction["action_output_type"] == "rl_games_discrete_id"
+    assert processor.calls == []
+
+
+def test_policy_wrapper_rl_games_mode_uses_deadly_multibinary_layout():
+    policy_wrapper_module = _load_policy_wrapper_module()
+    processor = FakeProcessor()
+    wrapper = policy_wrapper_module.PolicyServerWrapper.__new__(policy_wrapper_module.PolicyServerWrapper)
+    wrapper._framework = FakeFramework([[[-0.2, 0.8, 0.7, 0.1, 0.9, -0.4, 0.6]]])
+    wrapper._default_unnorm_key = "new_embodiment"
+    wrapper._available_unnorm_keys = ["new_embodiment"]
+    wrapper._action_output_mode = "rl_games"
+    wrapper._rl_games_env_name = "deadly_corridor"
+    wrapper._rl_games_action_layout = "multibinary_7"
+    wrapper._rl_games_multibinary_threshold = 0.5
+    wrapper._get_processor = lambda unnorm_key: processor
+
+    prediction = wrapper.predict_action(
+        examples=[{"image": [], "lang": ""}],
+        unnorm_key="new_embodiment",
+    )
+
+    assert prediction["actions"].tolist() == [[[0, 1, 1, 0, 1, 0, 1]]]
+    assert prediction["action_output_type"] == "rl_games_deadly_corridor_multibinary"
     assert processor.calls == []
 
 

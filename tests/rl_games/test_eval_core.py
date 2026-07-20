@@ -75,6 +75,32 @@ def test_decode_deadly_factorized_11():
     assert decode_deadly_factorized_11(values) == [1, 2, 1, 1]
 
 
+def test_task_evaluator_uses_shared_deadly_multibinary_decode():
+    cfg = OmegaConf.create(
+        {
+            "rl_games": {
+                "env_eval": {
+                    "deadly": {
+                        "action_layout": "multibinary_7",
+                        "multibinary_threshold": None,
+                    }
+                }
+            },
+            "framework": {"action_model": {"loss_type": "discrete_ce"}},
+        }
+    )
+    evaluator = object.__new__(_TaskEvaluator)
+    evaluator.task = "deadly_corridor"
+    evaluator.cfg = cfg
+    evaluator.env_eval_cfg = cfg.rl_games.env_eval
+
+    action = evaluator._decode_action(
+        np.asarray([0.8, 0.2, 0.7, 0.1, 0.9, 0.3, 0.6], dtype=np.float32)
+    )
+
+    assert action == [1, 0, 1, 0, 1, 0, 1]
+
+
 def test_action_latency_queue():
     queue = ActionLatencyQueue(latency=2, default_action=0)
     queue.reset()
