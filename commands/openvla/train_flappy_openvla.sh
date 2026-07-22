@@ -18,6 +18,7 @@ GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-4}"
 SAVE_INTERVAL="${SAVE_INTERVAL:-100}"
 DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/flappy_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"
 RUN_ID="${RUN_ID:-flappy_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"
+PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/flappy_latency_prompt_map.json}"
 
 # export WANDB_MODE=offline
 export HF_DATASETS_OFFLINE=1
@@ -35,6 +36,7 @@ python examples/rl_games/scripts/launch_train.py \
   datasets.vla_data.per_device_batch_size="${PER_DEVICE_BATCH_SIZE}" \
   trainer.max_train_steps="${MAX_TRAIN_STEPS}" \
   trainer.save_interval="${SAVE_INTERVAL}" \
+  rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}" \
   rl_games.env_eval.mid_train.enabled=false \
   rl_games.env_eval.post_train.enabled=false \
   checkpoint.save_pt_file=false \

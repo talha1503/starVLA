@@ -46,6 +46,24 @@ def _read_archived_openvla_command(env: str) -> str:
     return archived_path.read_text(encoding="utf-8")
 
 
+def _read_archived_pi05_command(env: str) -> str:
+    command_name = f"train_{env}_pi05.sh"
+    archived_path = REPO_ROOT / "commands" / "pi05" / command_name
+
+    assert archived_path.exists()
+    assert not (REPO_ROOT / "commands" / command_name).exists()
+    return archived_path.read_text(encoding="utf-8")
+
+
+def _read_archived_pi0_command(env: str) -> str:
+    command_name = f"train_{env}_pi0.sh"
+    archived_path = REPO_ROOT / "commands" / "pi0" / command_name
+
+    assert archived_path.exists()
+    assert not (REPO_ROOT / "commands" / command_name).exists()
+    return archived_path.read_text(encoding="utf-8")
+
+
 def test_flappy_openvla_command_preserves_release_defaults() -> None:
     command_text = _read_archived_openvla_command("flappy")
 
@@ -57,12 +75,116 @@ def test_flappy_openvla_command_preserves_release_defaults() -> None:
     assert 'SAVE_INTERVAL="${SAVE_INTERVAL:-100}"' in command_text
     assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/flappy_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
     assert 'RUN_ID="${RUN_ID:-flappy_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert 'PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/flappy_latency_prompt_map.json}"' in command_text
+    assert 'rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}"' in command_text
     assert "rl_games.env_eval.mid_train.enabled=false" in command_text
     assert "rl_games.env_eval.post_train.enabled=false" in command_text
     assert "checkpoint.save_pt_file=false" in command_text
     assert "checkpoint.save_best_model=false" in command_text
     assert "checkpoint.local.keep_last_n=1" in command_text
     assert "checkpoint.load=none" in command_text
+
+
+def test_flappy_pi05_command_matches_openvla_data_and_training_defaults() -> None:
+    command_text = _read_archived_pi05_command("flappy")
+
+    assert 'LATENCY="${1:-${LATENCY:-0}}"' in command_text
+    assert 'MAX_EPISODES="${MAX_EPISODES:-200}"' in command_text
+    assert 'MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-5000}"' in command_text
+    assert 'PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-32}"' in command_text
+    assert 'GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-4}"' in command_text
+    assert 'SAVE_INTERVAL="${SAVE_INTERVAL:-100}"' in command_text
+    assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/flappy_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert 'RUN_ID="${RUN_ID:-pi05_flappy_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert 'PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/flappy_latency_prompt_map.json}"' in command_text
+    assert "model=pi05" in command_text
+    assert "env=flappy" in command_text
+    assert "init=bridge" in command_text
+    assert 'rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}"' in command_text
+    assert "rl_games.env_eval.mid_train.enabled=false" in command_text
+    assert "rl_games.env_eval.post_train.enabled=false" in command_text
+    assert "checkpoint.save_pt_file=false" in command_text
+    assert "checkpoint.save_best_model=false" in command_text
+    assert "checkpoint.local.keep_last_n=1" in command_text
+    assert "checkpoint.load=none" in command_text
+
+
+def test_demon_attack_pi05_command_matches_openvla_data_and_training_defaults() -> None:
+    command_text = _read_archived_pi05_command("demon_attack")
+
+    assert 'LATENCY="${1:-${LATENCY:-0}}"' in command_text
+    assert 'MAX_EPISODES="${MAX_EPISODES:-200}"' in command_text
+    assert 'MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-7000}"' in command_text
+    assert 'PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-32}"' in command_text
+    assert 'GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-4}"' in command_text
+    assert 'SAVE_INTERVAL="${SAVE_INTERVAL:-100}"' in command_text
+    assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert 'RUN_ID="${RUN_ID:-pi05_demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert 'PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/demon_attack_latency_prompt_map.json}"' in command_text
+    assert "model=pi05" in command_text
+    assert "env=demon_attack" in command_text
+    assert "init=bridge" in command_text
+    assert 'rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}"' in command_text
+    assert "rl_games.env_eval.mid_train.enabled=false" in command_text
+    assert "rl_games.env_eval.post_train.enabled=false" in command_text
+
+
+def test_deadly_corridor_pi05_command_preserves_pi05_loss_and_matches_openvla_training_defaults() -> None:
+    command_text = _read_archived_pi05_command("deadly_corridor")
+
+    assert 'LATENCY="${LATENCY:-0}"' in command_text
+    assert 'MAX_EPISODES="${MAX_EPISODES:-1000}"' in command_text
+    assert 'MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-500}"' in command_text
+    assert 'PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-32}"' in command_text
+    assert 'GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-4}"' in command_text
+    assert 'SAVE_INTERVAL="${SAVE_INTERVAL:-100}"' in command_text
+    assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/deadly_corridor_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert 'RUN_ID="${RUN_ID:-pi05_deadly_corridor_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert 'PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/deadly_corridor_latency_prompt_map.json}"' in command_text
+    assert "model=pi05" in command_text
+    assert "env=deadly_corridor" in command_text
+    assert "init=bridge" in command_text
+    assert "rl_games.env_eval.deadly.action_layout=multibinary_7" in command_text
+    assert "rl_games.deadly_corridor_loss_type=" not in command_text
+    assert 'rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}"' in command_text
+    assert "rl_games.env_eval.mid_train.enabled=false" in command_text
+    assert "rl_games.env_eval.post_train.enabled=false" in command_text
+    assert '"$@"' in command_text
+
+
+def test_pi0_commands_match_openvla_data_and_training_defaults() -> None:
+    env_specs = {
+        "flappy": (200, 5000, "flappy"),
+        "demon_attack": (200, 7000, "demon_attack"),
+        "deadly_corridor": (1000, 500, "deadly_corridor"),
+    }
+
+    for env, (max_episodes, max_train_steps, prompt_name) in env_specs.items():
+        command_text = _read_archived_pi0_command(env)
+
+        assert f'MAX_EPISODES="${{MAX_EPISODES:-{max_episodes}}}"' in command_text
+        assert f'MAX_TRAIN_STEPS="${{MAX_TRAIN_STEPS:-{max_train_steps}}}"' in command_text
+        assert 'PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-32}"' in command_text
+        assert 'GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-4}"' in command_text
+        assert 'SAVE_INTERVAL="${SAVE_INTERVAL:-100}"' in command_text
+        assert f'DATASET_LOCAL_DIR="${{DATASET_LOCAL_DIR:-data/{env}_fix_latency_${{LATENCY}}_${{MAX_EPISODES}}ep}}"' in command_text
+        assert f'RUN_ID="${{RUN_ID:-pi0_{env}_fix_latency_${{LATENCY}}_${{MAX_EPISODES}}ep}}"' in command_text
+        assert f'PROMPT_MAP_PATH="${{PROMPT_MAP_PATH:-prompt/{prompt_name}_latency_prompt_map.json}}"' in command_text
+        assert "model=pi0" in command_text
+        assert f"env={env}" in command_text
+        assert "init=bridge" in command_text
+        assert 'rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}"' in command_text
+        assert "rl_games.env_eval.mid_train.enabled=false" in command_text
+        assert "rl_games.env_eval.post_train.enabled=false" in command_text
+        assert "checkpoint.save_pt_file=false" in command_text
+        assert "checkpoint.save_best_model=false" in command_text
+        assert "checkpoint.local.keep_last_n=1" in command_text
+        assert "checkpoint.load=none" in command_text
+
+    deadly_command_text = _read_archived_pi0_command("deadly_corridor")
+    assert "rl_games.env_eval.deadly.action_layout=multibinary_7" in deadly_command_text
+    assert "rl_games.deadly_corridor_loss_type=" not in deadly_command_text
+    assert '"$@"' in deadly_command_text
 
 
 def test_demon_attack_openvla_command_preserves_release_defaults() -> None:
@@ -78,6 +200,8 @@ def test_demon_attack_openvla_command_preserves_release_defaults() -> None:
     assert 'MID_TRAIN_LATENCIES="${MID_TRAIN_LATENCIES:-[${LATENCY}]}"' in command_text
     assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
     assert 'RUN_ID="${RUN_ID:-demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert 'PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/demon_attack_latency_prompt_map.json}"' in command_text
+    assert 'rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}"' in command_text
     assert "rl_games.env_eval.mid_train.enabled=true" in command_text
     assert 'rl_games.env_eval.mid_train.interval_steps="${MID_TRAIN_INTERVAL}"' in command_text
     assert '"rl_games.env_eval.mid_train.latencies=${MID_TRAIN_LATENCIES}"' in command_text
@@ -99,8 +223,10 @@ def test_deadly_corridor_openvla_command_preserves_release_defaults() -> None:
     assert 'SAVE_INTERVAL="${SAVE_INTERVAL:-100}"' in command_text
     assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/deadly_corridor_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
     assert 'RUN_ID="${RUN_ID:-deadly_corridor_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert 'PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/deadly_corridor_latency_prompt_map.json}"' in command_text
     assert "rl_games.deadly_corridor_loss_type=multibinary_bce" in command_text
     assert "rl_games.env_eval.deadly.action_layout=multibinary_7" in command_text
+    assert 'rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}"' in command_text
     assert "rl_games.env_eval.mid_train.enabled=false" in command_text
     assert "rl_games.env_eval.post_train.enabled=false" in command_text
     assert "checkpoint.save_pt_file=false" in command_text
@@ -121,9 +247,11 @@ def test_flappy_openvla_curriculum_commands_preserve_release_defaults() -> None:
         assert 'SAVE_INTERVAL="${SAVE_INTERVAL:-100}"' in command_text
         assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/flappy_mixed_latency_${EPISODES_PER_LATENCY}ep_per_lat}"' in command_text
         assert f'RUN_ID="${{RUN_ID:-flappy_curriculum_{strategy}_${{EPISODES_PER_LATENCY}}ep_per_latency}}"' in command_text
+        assert 'PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/flappy_latency_prompt_map.json}"' in command_text
         assert f"mode=curriculum_{strategy}" in command_text
         assert '"dataset.latency_filter=${LATENCY_FILTER}"' in command_text
         assert 'dataset.episodes_per_latency="${EPISODES_PER_LATENCY}"' in command_text
+        assert 'rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}"' in command_text
         assert "rl_games.env_eval.mid_train.enabled=false" in command_text
         assert "rl_games.env_eval.post_train.enabled=false" in command_text
         assert "checkpoint.save_pt_file=false" in command_text
@@ -181,20 +309,18 @@ def test_memory_training_commands_save_bf16_safetensors_model_file() -> None:
 
 def test_wan_oft_commands_are_valid_bash() -> None:
     command_paths = [
-        REPO_ROOT / "commands" / "train_flappy_wan_oft.sh",
-        REPO_ROOT / "commands" / "train_flappy_wan_oft_mixed_latency.sh",
-        REPO_ROOT / "commands" / "train_flappy_wan_oft_curriculum_cumulative.sh",
-        REPO_ROOT / "commands" / "train_flappy_wan_oft_curriculum_exclusive.sh",
-        REPO_ROOT / "commands" / "train_flappy_wan_oft_horizon1.sh",
-        REPO_ROOT / "commands" / "train_flappy_wan_oft_multigpu.sh",
-        REPO_ROOT / "commands" / "train_demon_attack_wan_oft.sh",
+        REPO_ROOT / "commands" / "wanoft" / "train_flappy_wan_oft.sh",
+        REPO_ROOT / "commands" / "wanoft" / "train_flappy_wan_oft_mixed_latency.sh",
+        REPO_ROOT / "commands" / "wanoft" / "train_flappy_wan_oft_curriculum_cumulative.sh",
+        REPO_ROOT / "commands" / "wanoft" / "train_flappy_wan_oft_curriculum_exclusive.sh",
+        REPO_ROOT / "commands" / "wanoft" / "train_demon_attack_wan_oft.sh",
     ]
 
     subprocess.run(["bash", "-n", *[str(path) for path in command_paths]], check=True, cwd=REPO_ROOT)
 
 
 def test_wan_oft_commands_explicitly_use_eval_core() -> None:
-    command_paths = sorted((REPO_ROOT / "commands").glob("train_*wan_oft*.sh"))
+    command_paths = sorted((REPO_ROOT / "commands").rglob("train_*wan_oft*.sh"))
 
     assert command_paths
     for command_path in command_paths:
@@ -202,8 +328,76 @@ def test_wan_oft_commands_explicitly_use_eval_core() -> None:
         assert "rl_games.env_eval.eval_backend=eval_core" in command_text, command_path
 
 
+def test_archived_release_commands_share_shell_structure() -> None:
+    command_paths = sorted((REPO_ROOT / "commands" / "openvla").glob("*.sh"))
+    command_paths += sorted((REPO_ROOT / "commands" / "pi0").glob("*.sh"))
+    command_paths += sorted((REPO_ROOT / "commands" / "pi05").glob("*.sh"))
+    command_paths += sorted((REPO_ROOT / "commands" / "wanoft").glob("*.sh"))
+
+    for command_path in command_paths:
+        command_text = command_path.read_text(encoding="utf-8")
+        assert command_text.startswith("#!/usr/bin/env bash\n\nset -euo pipefail\n\n# Usage:\n"), command_path
+
+
+def test_archived_wan_oft_commands_only_run_post_train_eval() -> None:
+    script_names = (
+        "train_demon_attack_wan_oft.sh",
+        "train_flappy_wan_oft.sh",
+        "train_flappy_wan_oft_mixed_latency.sh",
+        "train_flappy_wan_oft_curriculum_cumulative.sh",
+        "train_flappy_wan_oft_curriculum_exclusive.sh",
+    )
+
+    for script_name in script_names:
+        command_path = REPO_ROOT / "commands" / "wanoft" / script_name
+        assert command_path.exists()
+        assert not (REPO_ROOT / "commands" / script_name).exists()
+        command_text = command_path.read_text(encoding="utf-8")
+
+        assert "datasets.vla_data.eval_data_mix=" not in command_text
+        assert "trainer.eval_interval=" not in command_text
+        assert "trainer.eval_num_batches=" not in command_text
+        assert "rl_games.env_eval.mid_train.enabled=false" in command_text
+        assert "rl_games.env_eval.mid_train.interval_steps=" not in command_text
+        assert "rl_games.env_eval.mid_train.latencies=" not in command_text
+        assert "rl_games.env_eval.mid_train.num_episodes=" not in command_text
+        assert "rl_games.env_eval.post_train.enabled=true" in command_text
+        assert "rl_games.env_eval.post_train.latencies=" in command_text
+        assert "rl_games.env_eval.post_train.num_episodes=" in command_text
+
+
+def test_demon_attack_wan_oft_command_preserves_parameterized_post_train_eval() -> None:
+    command_text = (
+        REPO_ROOT / "commands" / "wanoft" / "train_demon_attack_wan_oft.sh"
+    ).read_text(encoding="utf-8")
+
+    assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
+    assert 'rl_games.env_eval.post_train.num_episodes="${POST_TRAIN_NUM_EPISODES}"' in command_text
+
+
+def test_flappy_wan_oft_command_preserves_parameterized_fix_latency_defaults() -> None:
+    command_text = (
+        REPO_ROOT / "commands" / "wanoft" / "train_flappy_wan_oft.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'LATENCY="${1:-${LATENCY:-0}}"' in command_text
+    assert 'CONTEXT_WINDOW="${CONTEXT_WINDOW:-5}"' in command_text
+    assert 'MAX_EPISODES="${MAX_EPISODES:-200}"' in command_text
+    assert 'MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-2000}"' in command_text
+    assert 'PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-4}"' in command_text
+    assert 'GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-32}"' in command_text
+    assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"' in command_text
+    assert 'MAX_STEPS_PER_EPISODE="${MAX_STEPS_PER_EPISODE:-3600}"' in command_text
+    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[${LATENCY}]}"' in command_text
+    assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/flappy_fix_latency_${LATENCY}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}}"' in command_text
+    assert 'run_id="${RUN_ID}"' in command_text
+    assert 'paths.dataset_local_dir="${DATASET_LOCAL_DIR}"' in command_text
+    assert 'rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}"' in command_text
+    assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
+
+
 def test_wan_oft_flappy_mixed_latency_command_preserves_context5_baseline() -> None:
-    command_path = REPO_ROOT / "commands" / "train_flappy_wan_oft_mixed_latency.sh"
+    command_path = REPO_ROOT / "commands" / "wanoft" / "train_flappy_wan_oft_mixed_latency.sh"
     command_text = command_path.read_text(encoding="utf-8")
 
     assert "model=wan_oft" in command_text
@@ -216,7 +410,7 @@ def test_wan_oft_flappy_mixed_latency_command_preserves_context5_baseline() -> N
     assert '"dataset.latency_filter=${LATENCY_FILTER}"' in command_text
     assert "dataset.episodes_per_latency=\"${EPISODES_PER_LATENCY}\"" in command_text
     assert "datasets.vla_data.data_mix=flappy_mixed_latency_train__bridge" in command_text
-    assert "datasets.vla_data.eval_data_mix=flappy_mixed_latency_train__bridge__val" in command_text
+    assert "datasets.vla_data.eval_data_mix=" not in command_text
     assert "datasets.vla_data.obs_image_size=[224,224]" in command_text
     assert "datasets.vla_data.image_sequence_length=\"${CONTEXT_WINDOW}\"" in command_text
     assert "datasets.vla_data.observation_indices=[-4,-3,-2,-1,0]" in command_text
@@ -230,7 +424,7 @@ def test_wan_oft_flappy_mixed_latency_command_preserves_context5_baseline() -> N
     assert "trainer.gradient_accumulation_steps=\"${GRADIENT_ACCUMULATION_STEPS}\"" in command_text
     assert "datasets.vla_data.per_device_batch_size=\"${PER_DEVICE_BATCH_SIZE}\"" in command_text
     assert "rl_games.env_eval.latency.prompt_map_path=\"${PROMPT_MAP_PATH}\"" in command_text
-    assert '"rl_games.env_eval.mid_train.latencies=${MID_TRAIN_LATENCIES}"' in command_text
+    assert "rl_games.env_eval.mid_train.enabled=false" in command_text
     assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
     assert "checkpoint.save_training_state=false" in command_text
 
@@ -240,7 +434,7 @@ def test_wan_oft_flappy_curriculum_commands_enable_sequential_sampling() -> None
         ("train_flappy_wan_oft_curriculum_cumulative.sh", "curriculum_cumulative", "cumulative"),
         ("train_flappy_wan_oft_curriculum_exclusive.sh", "curriculum_exclusive", "exclusive"),
     ):
-        command_text = (REPO_ROOT / "commands" / script_name).read_text(encoding="utf-8")
+        command_text = (REPO_ROOT / "commands" / "wanoft" / script_name).read_text(encoding="utf-8")
 
         assert "model=wan_oft" in command_text
         assert "env=flappy" in command_text
@@ -252,6 +446,7 @@ def test_wan_oft_flappy_curriculum_commands_enable_sequential_sampling() -> None
         assert "datasets.vla_data.action_balance.enabled=false" in command_text
         assert "dataset.converted_name=flappy_mixed_latency_train__bridge" in command_text
         assert "datasets.vla_data.data_mix=flappy_mixed_latency_train__bridge" in command_text
+        assert "datasets.vla_data.latency_curriculum.eval_at_phase_end=false" in command_text
 
 
 def test_flappy_wan_oft_curriculum_pipeline_script_parameterizes_mode() -> None:

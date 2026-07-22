@@ -3,17 +3,22 @@
 set -euo pipefail
 
 # Usage:
-#   bash commands/openvla/train_flappy_curriculum_cumulative_openvla.sh
+#   bash commands/pi0/train_demon_attack_pi0.sh 2
+#   LATENCY=2 bash commands/pi0/train_demon_attack_pi0.sh
+LATENCY="${1:-${LATENCY:-0}}"
+if ! [[ "${LATENCY}" =~ ^[0-9]+$ ]]; then
+  echo "LATENCY must be a non-negative integer, got: ${LATENCY}" >&2
+  exit 2
+fi
 
-LATENCY_FILTER="${LATENCY_FILTER:-[0,1,2,3,4]}"
-EPISODES_PER_LATENCY="${EPISODES_PER_LATENCY:-40}"
-MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-5000}"
+MAX_EPISODES="${MAX_EPISODES:-200}"
+MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-7000}"
 PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-32}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-4}"
 SAVE_INTERVAL="${SAVE_INTERVAL:-100}"
-DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/flappy_mixed_latency_${EPISODES_PER_LATENCY}ep_per_lat}"
-RUN_ID="${RUN_ID:-flappy_curriculum_cumulative_${EPISODES_PER_LATENCY}ep_per_latency}"
-PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/flappy_latency_prompt_map.json}"
+DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"
+RUN_ID="${RUN_ID:-pi0_demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"
+PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/demon_attack_latency_prompt_map.json}"
 
 # export WANDB_MODE=offline
 export HF_DATASETS_OFFLINE=1
@@ -21,14 +26,11 @@ export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 
 python examples/rl_games/scripts/launch_train.py \
-  model=openvla \
-  env=flappy \
+  model=pi0 \
+  env=demon_attack \
   init=bridge \
-  mode=curriculum_cumulative \
   run_id="${RUN_ID}" \
   paths.dataset_local_dir="${DATASET_LOCAL_DIR}" \
-  "dataset.latency_filter=${LATENCY_FILTER}" \
-  dataset.episodes_per_latency="${EPISODES_PER_LATENCY}" \
   trainer.distributed_backend=none \
   trainer.gradient_accumulation_steps="${GRADIENT_ACCUMULATION_STEPS}" \
   datasets.vla_data.per_device_batch_size="${PER_DEVICE_BATCH_SIZE}" \

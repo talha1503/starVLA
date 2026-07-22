@@ -25,6 +25,7 @@ GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-4}"
 SAVE_INTERVAL="${SAVE_INTERVAL:-100}"
 DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/deadly_corridor_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"
 RUN_ID="${RUN_ID:-deadly_corridor_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"
+PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/deadly_corridor_latency_prompt_map.json}"
 
 # export WANDB_MODE=offline
 export HF_DATASETS_OFFLINE=1
@@ -44,6 +45,7 @@ python examples/rl_games/scripts/launch_train.py \
   trainer.save_interval="${SAVE_INTERVAL}" \
   rl_games.deadly_corridor_loss_type=multibinary_bce \
   rl_games.env_eval.deadly.action_layout=multibinary_7 \
+  rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}" \
   rl_games.env_eval.mid_train.enabled=false \
   rl_games.env_eval.post_train.enabled=false \
   checkpoint.save_pt_file=false \
