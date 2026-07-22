@@ -20,6 +20,13 @@ OPENVLA_DEADLY_CROSS_TASK_SETUPS = (
     "deadly_zero_demon_mixed",
     "flappy_demon_deadly_024",
 )
+OPENVLA_DEADLY_CROSS_TASK_SCRIPTS = (
+    "flappy_deadly/flappy_zero_deadly_mixed",
+    "deadly_zero_flappy_mixed",
+    "demon_zero_deadly_mixed",
+    "deadly_zero_demon_mixed",
+    "flappy_demon_deadly_024",
+)
 
 
 def _command_path(model: str, env: str) -> Path:
@@ -171,7 +178,7 @@ def test_flappy_wan_oft_curriculum_pipeline_script_parameterizes_mode() -> None:
 
 def test_openvla_deadly_cross_task_scripts_are_valid_bash() -> None:
     script_dir = REPO_ROOT / "examples" / "rl_games" / "bash_scripts" / "openvla" / "bridge" / "cross_task"
-    command_paths = [str(script_dir / f"{setup}.sh") for setup in OPENVLA_DEADLY_CROSS_TASK_SETUPS]
+    command_paths = [str(script_dir / f"{script}.sh") for script in OPENVLA_DEADLY_CROSS_TASK_SCRIPTS]
 
     subprocess.run(["bash", "-n", *command_paths], check=True, cwd=REPO_ROOT)
 
@@ -709,6 +716,16 @@ def test_vla_trainer_saves_last_checkpoints_independently_from_best_model() -> N
     trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
 
     assert ") and not self._save_best_model_enabled:" not in trainer_text
+
+
+def test_vla_trainer_treats_non_positive_save_interval_as_disabled() -> None:
+    trainer_text = (REPO_ROOT / "starVLA" / "training" / "train_starvla.py").read_text(encoding="utf-8")
+    checkpoint_block = trainer_text.split(
+        "if self._save_periodic_checkpoints_enabled() and ",
+        maxsplit=1,
+    )[1].split("if self.completed_steps >=", maxsplit=1)[0]
+
+    assert "should_run_optional_step_interval_event(" in checkpoint_block
 
 
 def test_vla_trainer_pt_checkpoint_file_is_optional() -> None:

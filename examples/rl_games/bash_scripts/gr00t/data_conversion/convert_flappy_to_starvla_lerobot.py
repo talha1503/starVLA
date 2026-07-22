@@ -806,6 +806,7 @@ def _convert_local_parquet_split(
                 "timestamp": float(frame_idx) / FPS,
                 "episode_index": new_episode_idx,
                 "frame_index": frame_idx,
+                "decision_step": int(row[flappy_columns.frame]),
                 "task_index": prompt_to_task_index[prompt],
                 "latency": int(latency) if latency is not None else int(default_latency or 0),
                 "done": _row_done(
@@ -1003,6 +1004,7 @@ def _write_metadata(
             "timestamp": {"dtype": "float64", "shape": [1]},
             "episode_index": {"dtype": "int64", "shape": [1]},
             "frame_index": {"dtype": "int64", "shape": [1]},
+            "decision_step": {"dtype": "int64", "shape": [1]},
             "task_index": {"dtype": "int64", "shape": [1]},
             "latency": {"dtype": "int64", "shape": [1]},
         },
@@ -1052,6 +1054,7 @@ def _write_episode(
         "timestamp": pa.array([row["timestamp"] for row in rows], type=pa.float64()),
         "episode_index": pa.array([row["episode_index"] for row in rows], type=pa.int64()),
         "frame_index": pa.array([row["frame_index"] for row in rows], type=pa.int64()),
+        "decision_step": pa.array([row["decision_step"] for row in rows], type=pa.int64()),
         "task_index": pa.array([row["task_index"] for row in rows], type=pa.int64()),
         "latency": pa.array([row["latency"] for row in rows], type=pa.int64()),
         "done": pa.array([row["done"] for row in rows], type=pa.bool_()),
@@ -1258,6 +1261,7 @@ def convert_dataset(
                     "timestamp": float(frame_idx) / FPS,
                     "episode_index": new_episode_idx,
                     "frame_index": frame_idx,
+                    "decision_step": int(row[flappy_columns.frame]),
                     "task_index": prompt_to_task_index[prompt],
                     "latency": int(latency) if latency is not None else int(default_latency or 0),
                     "done": _row_done(
