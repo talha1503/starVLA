@@ -30,7 +30,106 @@ OPENVLA_DEADLY_CROSS_TASK_SCRIPTS = (
 
 
 def _command_path(model: str, env: str) -> Path:
-    return REPO_ROOT / "commands" / f"train_{env}_{model}.sh"
+    command_name = f"train_{env}_{model}.sh"
+    archived_path = REPO_ROOT / "commands" / model / command_name
+    if archived_path.exists():
+        return archived_path
+    return REPO_ROOT / "commands" / command_name
+
+
+def _read_archived_openvla_command(env: str) -> str:
+    command_name = f"train_{env}_openvla.sh"
+    archived_path = REPO_ROOT / "commands" / "openvla" / command_name
+
+    assert archived_path.exists()
+    assert not (REPO_ROOT / "commands" / command_name).exists()
+    return archived_path.read_text(encoding="utf-8")
+
+
+def test_flappy_openvla_command_preserves_release_defaults() -> None:
+    command_text = _read_archived_openvla_command("flappy")
+
+    assert 'LATENCY="${1:-${LATENCY:-0}}"' in command_text
+    assert 'MAX_EPISODES="${MAX_EPISODES:-200}"' in command_text
+    assert 'MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-5000}"' in command_text
+    assert 'PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-32}"' in command_text
+    assert 'GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-4}"' in command_text
+    assert 'SAVE_INTERVAL="${SAVE_INTERVAL:-100}"' in command_text
+    assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/flappy_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert 'RUN_ID="${RUN_ID:-flappy_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert "rl_games.env_eval.mid_train.enabled=false" in command_text
+    assert "rl_games.env_eval.post_train.enabled=false" in command_text
+    assert "checkpoint.save_pt_file=false" in command_text
+    assert "checkpoint.save_best_model=false" in command_text
+    assert "checkpoint.local.keep_last_n=1" in command_text
+    assert "checkpoint.load=none" in command_text
+
+
+def test_demon_attack_openvla_command_preserves_release_defaults() -> None:
+    command_text = _read_archived_openvla_command("demon_attack")
+
+    assert 'LATENCY="${1:-${LATENCY:-0}}"' in command_text
+    assert 'MAX_EPISODES="${MAX_EPISODES:-200}"' in command_text
+    assert 'MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-7000}"' in command_text
+    assert 'PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-32}"' in command_text
+    assert 'GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-4}"' in command_text
+    assert 'SAVE_INTERVAL="${SAVE_INTERVAL:-100}"' in command_text
+    assert 'MID_TRAIN_INTERVAL="${MID_TRAIN_INTERVAL:-500}"' in command_text
+    assert 'MID_TRAIN_LATENCIES="${MID_TRAIN_LATENCIES:-[${LATENCY}]}"' in command_text
+    assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert 'RUN_ID="${RUN_ID:-demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert "rl_games.env_eval.mid_train.enabled=true" in command_text
+    assert 'rl_games.env_eval.mid_train.interval_steps="${MID_TRAIN_INTERVAL}"' in command_text
+    assert '"rl_games.env_eval.mid_train.latencies=${MID_TRAIN_LATENCIES}"' in command_text
+    assert "rl_games.env_eval.post_train.enabled=false" in command_text
+    assert "checkpoint.save_pt_file=false" in command_text
+    assert "checkpoint.save_best_model=false" in command_text
+    assert "checkpoint.local.keep_last_n=1" in command_text
+    assert "checkpoint.load=none" in command_text
+
+
+def test_deadly_corridor_openvla_command_preserves_release_defaults() -> None:
+    command_text = _read_archived_openvla_command("deadly_corridor")
+
+    assert 'LATENCY="${LATENCY:-0}"' in command_text
+    assert 'MAX_EPISODES="${MAX_EPISODES:-1000}"' in command_text
+    assert 'MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-500}"' in command_text
+    assert 'PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-32}"' in command_text
+    assert 'GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-4}"' in command_text
+    assert 'SAVE_INTERVAL="${SAVE_INTERVAL:-100}"' in command_text
+    assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/deadly_corridor_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert 'RUN_ID="${RUN_ID:-deadly_corridor_fix_latency_${LATENCY}_${MAX_EPISODES}ep}"' in command_text
+    assert "rl_games.deadly_corridor_loss_type=multibinary_bce" in command_text
+    assert "rl_games.env_eval.deadly.action_layout=multibinary_7" in command_text
+    assert "rl_games.env_eval.mid_train.enabled=false" in command_text
+    assert "rl_games.env_eval.post_train.enabled=false" in command_text
+    assert "checkpoint.save_pt_file=false" in command_text
+    assert "checkpoint.save_best_model=false" in command_text
+    assert "checkpoint.local.keep_last_n=1" in command_text
+    assert "checkpoint.load=none" in command_text
+
+
+def test_flappy_openvla_curriculum_commands_preserve_release_defaults() -> None:
+    for strategy in ("cumulative", "exclusive"):
+        command_text = _read_archived_openvla_command(f"flappy_curriculum_{strategy}")
+
+        assert 'LATENCY_FILTER="${LATENCY_FILTER:-[0,1,2,3,4]}"' in command_text
+        assert 'EPISODES_PER_LATENCY="${EPISODES_PER_LATENCY:-40}"' in command_text
+        assert 'MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-5000}"' in command_text
+        assert 'PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-32}"' in command_text
+        assert 'GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-4}"' in command_text
+        assert 'SAVE_INTERVAL="${SAVE_INTERVAL:-100}"' in command_text
+        assert 'DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/flappy_mixed_latency_${EPISODES_PER_LATENCY}ep_per_lat}"' in command_text
+        assert f'RUN_ID="${{RUN_ID:-flappy_curriculum_{strategy}_${{EPISODES_PER_LATENCY}}ep_per_latency}}"' in command_text
+        assert f"mode=curriculum_{strategy}" in command_text
+        assert '"dataset.latency_filter=${LATENCY_FILTER}"' in command_text
+        assert 'dataset.episodes_per_latency="${EPISODES_PER_LATENCY}"' in command_text
+        assert "rl_games.env_eval.mid_train.enabled=false" in command_text
+        assert "rl_games.env_eval.post_train.enabled=false" in command_text
+        assert "checkpoint.save_pt_file=false" in command_text
+        assert "checkpoint.save_best_model=false" in command_text
+        assert "checkpoint.local.keep_last_n=1" in command_text
+        assert "checkpoint.load=none" in command_text
 
 
 def test_training_command_matrix_targets_hydra_launcher() -> None:
