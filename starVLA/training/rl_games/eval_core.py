@@ -7,11 +7,21 @@ from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
+
+from starVLA.training.rl_games.action_decode import (
+    DEADLY_CORRIDOR_SEMANTIC_BUTTON_ORDER,
+    deadly_tuple_to_semantic_buttons,
+    decode_deadly_factorized_11,
+    decode_deadly_multibinary_7,
+    decode_discrete_argmax,
+    decode_rl_games_actions,
+    resolve_deadly_action_decode_spec,
+)
 
 TASK_SEED_INDEX = {
     "flappy": 0,
@@ -87,56 +97,6 @@ class EvalResult:
     per_latency: Dict[str, Dict]
     aggregate: Dict
     path: str | None = None
-
-
-def decode_discrete_argmax(action_values: Iterable[float], n_actions: int) -> int:
-    arr = np.asarray(action_values, dtype=np.float32)
-    return int(np.argmax(arr[:n_actions]))
-
-
-def decode_deadly_multibinary_7(action_values: Iterable[float], threshold: float = 0.5) -> List[int]:
-    arr = np.asarray(action_values, dtype=np.float32)
-    return [int(x >= threshold) for x in arr[:7]]
-
-
-def decode_deadly_factorized_11(action_values: Iterable[float]) -> List[int]:
-    arr = np.asarray(action_values, dtype=np.float32)
-    if arr.shape[0] < 11:
-        raise ValueError(f"Expected at least 11 action dims for factorized decode, got {arr.shape[0]}")
-    turn = int(np.argmax(arr[0:3]))
-    move = int(np.argmax(arr[3:6]))
-    strafe = int(np.argmax(arr[6:9]))
-    attack = int(np.argmax(arr[9:11]))
-    return [turn, move, strafe, attack]
-
-
-def _factorized_to_semantic_buttons(action_tuple: List[int]) -> List[int]:
-    turn, move, strafe, attack = action_tuple
-    active = set()
-    if turn == 1:
-        active.add("TURN_LEFT")
-    elif turn == 2:
-        active.add("TURN_RIGHT")
-    if move == 1:
-        active.add("MOVE_FORWARD")
-    elif move == 2:
-        active.add("MOVE_BACKWARD")
-    if strafe == 1:
-        active.add("MOVE_LEFT")
-    elif strafe == 2:
-        active.add("MOVE_RIGHT")
-    if attack == 1:
-        active.add("ATTACK")
-    semantic_order = [
-        "MOVE_FORWARD",
-        "MOVE_BACKWARD",
-        "MOVE_LEFT",
-        "MOVE_RIGHT",
-        "TURN_LEFT",
-        "TURN_RIGHT",
-        "ATTACK",
-    ]
-    return [1 if name in active else 0 for name in semantic_order]
 
 
 def _extract_image_observation(obs: Any) -> Any:
@@ -251,12 +211,14 @@ def _get_available_button_names(env) -> List[str]:
             names = [_button_name(button) for button in buttons]
             if names:
                 return names
-    return ["MOVE_FORWARD", "MOVE_BACKWARD", "MOVE_LEFT", "MOVE_RIGHT", "TURN_LEFT", "TURN_RIGHT", "ATTACK"]
+    return list(DEADLY_CORRIDOR_SEMANTIC_BUTTON_ORDER)
 
 
 def _semantic_to_runtime_multibinary(semantic_values: List[int], runtime_order: List[str]) -> List[int]:
-    semantic_order = ["MOVE_FORWARD", "MOVE_BACKWARD", "MOVE_LEFT", "MOVE_RIGHT", "TURN_LEFT", "TURN_RIGHT", "ATTACK"]
-    semantic_map = {name: int(semantic_values[idx]) for idx, name in enumerate(semantic_order)}
+    semantic_map = {
+        name: int(semantic_values[idx])
+        for idx, name in enumerate(DEADLY_CORRIDOR_SEMANTIC_BUTTON_ORDER)
+    }
     return [semantic_map.get(name, 0) for name in runtime_order]
 
 
@@ -449,7 +411,6 @@ class _TaskEvaluator:
                 f"action_chunk_execution.chunk_size must be positive when enabled, "
                 f"got {self.action_chunk_execution_size}"
             )
-        self.deadly_multibinary_threshold = self._resolve_deadly_multibinary_threshold()
         self.fixed_episode_seeds = _as_bool(getattr(self.env_eval_cfg, "fixed_episode_seeds", True), default=True)
         self.eval_seed = _as_int(getattr(self.env_eval_cfg, "seed", getattr(cfg, "seed", 42)), 42)
         self.latency_seed_stride = _as_int(getattr(self.env_eval_cfg, "latency_seed_stride", None), 0)
@@ -490,20 +451,6 @@ class _TaskEvaluator:
 
     def _make_image_transform(self) -> _LiveImageTransform:
         return _LiveImageTransform(task=self.task, config=self.image_transform_config)
-
-    def _resolve_deadly_multibinary_threshold(self) -> float:
-        deadly_cfg = getattr(self.env_eval_cfg, "deadly", None)
-        explicit = getattr(deadly_cfg, "multibinary_threshold", None) if deadly_cfg is not None else None
-        if explicit is not None:
-            return float(explicit)
-
-        action_cfg = getattr(getattr(self.cfg, "framework", None), "action_model", None)
-        loss_type = str(getattr(action_cfg, "loss_type", "") or "").lower()
-        if loss_type in {"multibinary_bce", "multibinary_ce", "bce", "binary_cross_entropy"}:
-            # BCE-with-logits outputs are thresholded at the zero logit, not at
-            # probability-space 0.5. Flow/regression models keep the 0.5 target threshold.
-            return 0.0
-        return 0.5
 
     def _make_env(self):
         if self.task == "flappy":
@@ -590,16 +537,25 @@ class _TaskEvaluator:
         if self.task == "demon_attack":
             return decode_discrete_argmax(raw_action, 6)
         if self.task == "deadly_corridor":
-            layout = str(getattr(self.env_eval_cfg.deadly, "action_layout", "multibinary_7"))
-            if layout == "multibinary_7":
-                semantic = decode_deadly_multibinary_7(raw_action, threshold=self.deadly_multibinary_threshold)
-            elif layout == "factorized_11":
-                semantic = _factorized_to_semantic_buttons(decode_deadly_factorized_11(raw_action))
-            else:
-                raise ValueError(f"Unknown deadly action layout: {layout}")
+            deadly_cfg = self.env_eval_cfg.deadly
+            action_layout, multibinary_threshold = resolve_deadly_action_decode_spec(
+                self.cfg,
+                action_layout=str(getattr(deadly_cfg, "action_layout", "multibinary_7")),
+                multibinary_threshold=getattr(deadly_cfg, "multibinary_threshold", None),
+            )
+            decoded = decode_rl_games_actions(
+                normalized_actions=raw_action,
+                env_name=self.task,
+                deadly_action_layout=action_layout,
+                deadly_multibinary_threshold=multibinary_threshold,
+            )
+            semantic = np.asarray(decoded["actions"])
+            if decoded["action_output_type"] == "rl_games_deadly_corridor_tuple":
+                semantic = deadly_tuple_to_semantic_buttons(semantic)
+            semantic_values = semantic.tolist()
             if runtime_button_order is None:
-                return semantic
-            return _semantic_to_runtime_multibinary(semantic, runtime_button_order)
+                return semantic_values
+            return _semantic_to_runtime_multibinary(semantic_values, runtime_button_order)
         return decode_discrete_argmax(raw_action, raw_action.shape[-1])
 
     def _episode_seed(self, latency: int, episode: int) -> int | None:

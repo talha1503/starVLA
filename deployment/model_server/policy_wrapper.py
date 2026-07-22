@@ -34,7 +34,10 @@ from starVLA.model.framework.share_tools import read_mode_config
 from starVLA.model.profiling import stage_timer as _stage
 
 from deployment.model_server.policy_norm_processor import PolicyNormProcessor
-from deployment.model_server.rl_games_action_decode import decode_rl_games_actions
+from deployment.model_server.rl_games_action_decode import (
+    decode_rl_games_actions,
+    resolve_deadly_action_decode_spec,
+)
 
 
 class PolicyServerWrapper:
@@ -48,6 +51,8 @@ class PolicyServerWrapper:
         unnorm_key: Optional[str] = None,
         action_output_mode: str = "deployment",
         rl_games_env_name: Optional[str] = None,
+        rl_games_action_layout: Optional[str] = None,
+        rl_games_multibinary_threshold: Optional[float] = None,
     ) -> None:
         self._ckpt_path = str(ckpt_path)
         self._action_output_mode = action_output_mode
@@ -63,6 +68,15 @@ class PolicyServerWrapper:
         # Co-located metadata.
         model_cfg, _ = read_mode_config(self._ckpt_path)
         self._model_cfg = model_cfg
+        if self._rl_games_env_name == "deadly_corridor":
+            (
+                self._rl_games_action_layout,
+                self._rl_games_multibinary_threshold,
+            ) = resolve_deadly_action_decode_spec(
+                model_cfg,
+                action_layout=rl_games_action_layout,
+                multibinary_threshold=rl_games_multibinary_threshold,
+            )
 
         # action_chunk_size = future_action_window_size + 1 (matches old client).
         action_model_cfg = model_cfg["framework"]["action_model"]
@@ -183,6 +197,16 @@ class PolicyServerWrapper:
                 return decode_rl_games_actions(
                     normalized_actions=normalized,
                     env_name=self._rl_games_env_name,
+                    deadly_action_layout=(
+                        self._rl_games_action_layout
+                        if self._rl_games_env_name == "deadly_corridor"
+                        else None
+                    ),
+                    deadly_multibinary_threshold=(
+                        self._rl_games_multibinary_threshold
+                        if self._rl_games_env_name == "deadly_corridor"
+                        else None
+                    ),
                 )
 
         with _stage(profiler, "starvla_wrapper_unnormalize_ms"):

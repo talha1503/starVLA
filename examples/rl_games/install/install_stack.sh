@@ -1,21 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-MODEL=""
-ENV_NAME=""
+INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONDA_ENV_NAME=""
 PYTHON_VERSION="3.10"
+TORCH_PROFILE="${STARVLA_TORCH_PROFILE:-auto}"
 USE_CONDA="true"
+ACCEPT_ROM_LICENSE="false"
+POSITIONAL=()
 
 usage() {
   cat <<EOF
 Usage: bash examples/rl_games/install/install_stack.sh [options] <model> <env>
 
-Examples:
-  bash examples/rl_games/install/install_stack.sh openvla flappy
-  bash examples/rl_games/install/install_stack.sh --conda-env my_openvla openvla flappy
+Compatibility entrypoint for a full development/training environment.
 
 Arguments:
   <model>                  openvla|pi0|pi05|gr00t|wan_oft
@@ -23,165 +21,75 @@ Arguments:
 
 Options:
   --conda-env <name>       Conda env name (default: starvla_rl_games_<model>)
-  --python-version <ver>   Python version for new conda env (default: ${PYTHON_VERSION})
-  --no-conda               Use the current python instead of creating/activating conda
+  --python-version <ver>   Python version for a new env (default: ${PYTHON_VERSION})
+  --torch-profile <name>   auto|cpu|cu126|cu128|cu130
+  --no-conda               Install into the active Python environment
+  --accept-rom-license     Permit AutoROM to accept and download Atari ROMs
   -h, --help               Show this help
 EOF
 }
 
-parse_args() {
-  local args=()
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --conda-env)
-        CONDA_ENV_NAME="$2"
-        shift 2
-        ;;
-      --python-version)
-        PYTHON_VERSION="$2"
-        shift 2
-        ;;
-      --no-conda)
-        USE_CONDA="false"
-        shift
-        ;;
-      -h|--help)
-        usage
-        exit 0
-        ;;
-      -*)
-        echo "[install_stack] Unknown option: $1" >&2
-        usage
-        exit 1
-        ;;
-      *)
-        args+=("$1")
-        shift
-        ;;
-    esac
-  done
-
-  if [[ ${#args[@]} -ne 2 ]]; then
-    usage
-    exit 1
-  fi
-
-  MODEL="${args[0]}"
-  ENV_NAME="${args[1]}"
-}
-
-validate_targets() {
-  case "${MODEL}" in
-    openvla|pi0|pi05|gr00t|wan_oft) ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --conda-env)
+      CONDA_ENV_NAME="$2"
+      shift 2
+      ;;
+    --python-version)
+      PYTHON_VERSION="$2"
+      shift 2
+      ;;
+    --torch-profile)
+      TORCH_PROFILE="$2"
+      shift 2
+      ;;
+    --no-conda)
+      USE_CONDA="false"
+      shift
+      ;;
+    --accept-rom-license)
+      ACCEPT_ROM_LICENSE="true"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
     *)
-      echo "[install_stack] Invalid model '${MODEL}'. Expected openvla|pi0|pi05|gr00t|wan_oft." >&2
-      exit 1
+      POSITIONAL+=("$1")
+      shift
       ;;
   esac
+done
 
-  case "${ENV_NAME}" in
-    flappy|demon_attack|deadly_corridor|cross_task) ;;
-    *)
-      echo "[install_stack] Invalid env '${ENV_NAME}'. Expected flappy|demon_attack|deadly_corridor|cross_task." >&2
-      exit 1
-      ;;
-  esac
-}
-
-target_validator_name() {
-  local model="$1"
-  local env_name="$2"
-  case "${model}:${env_name}" in
-    pi0:demon_attack) echo "pi0_demon.sh" ;;
-    gr00t:deadly_corridor) echo "gr00t_deadly.sh" ;;
-    *) echo "${model}_${env_name}.sh" ;;
-  esac
-}
-
-setup_conda_env() {
-  if [[ "${USE_CONDA}" != "true" ]]; then
-    return
-  fi
-
-  if ! command -v conda >/dev/null 2>&1; then
-    echo "[install_stack] conda is required. Use --no-conda only if your current python env is already correct." >&2
-    exit 1
-  fi
-
-  if [[ -z "${CONDA_ENV_NAME}" ]]; then
-    CONDA_ENV_NAME="starvla_rl_games_${MODEL}"
-  fi
-
-  local conda_base
-  conda_base="$(conda info --base)"
-  source "${conda_base}/etc/profile.d/conda.sh"
-
-  if conda env list | awk '{print $1}' | grep -qx "${CONDA_ENV_NAME}"; then
-    echo "[install_stack] Using existing conda env: ${CONDA_ENV_NAME}"
-  else
-    echo "[install_stack] Creating conda env ${CONDA_ENV_NAME} with python=${PYTHON_VERSION}"
-    conda create -n "${CONDA_ENV_NAME}" "python=${PYTHON_VERSION}" -y
-  fi
-
-  conda activate "${CONDA_ENV_NAME}"
-  assert_python_version "${CONDA_ENV_NAME}"
-}
-
-assert_python_version() {
-  local env_label="$1"
-  local active_py requested_py
-
-  active_py="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-  requested_py="$(echo "${PYTHON_VERSION}" | awk -F. '{if (NF>=2) print $1"."$2; else print $1}')"
-
-  if [[ "${active_py}" != "${requested_py}" ]]; then
-    echo "[install_stack] Python mismatch in '${env_label}': got ${active_py}, expected ${requested_py}." >&2
-    echo "[install_stack] Use a new --conda-env name, or remove and recreate the existing env." >&2
-    exit 1
-  fi
-}
-
-install_stack() {
-  echo "[install_stack] Installing starVLA base dependencies"
-  "${BASE_DIR}/common.sh"
-
-  echo "[install_stack] Installing model dependencies: ${MODEL}"
-  "${BASE_DIR}/model/${MODEL}.sh"
-
-  local env_targets=("${ENV_NAME}")
-  if [[ "${ENV_NAME}" == "cross_task" ]]; then
-    env_targets=("flappy" "demon_attack")
-  fi
-
-  local env_target
-  for env_target in "${env_targets[@]}"; do
-    echo "[install_stack] Installing environment dependencies: ${env_target}"
-    "${BASE_DIR}/env/${env_target}.sh"
-  done
-
-  echo "[install_stack] Running validation"
-  "${BASE_DIR}/validate/common.sh"
-  for env_target in "${env_targets[@]}"; do
-    local validator_name
-    validator_name="$(target_validator_name "${MODEL}" "${env_target}")"
-    local target_validator="${BASE_DIR}/validate/${validator_name}"
-    if [[ -x "${target_validator}" ]]; then
-      "${target_validator}"
-    elif [[ -f "${target_validator}" ]]; then
-      bash "${target_validator}"
-    else
-      echo "[install_stack] No target-specific validator found for ${MODEL}/${env_target}; common validation passed."
-    fi
-  done
-}
-
-parse_args "$@"
-validate_targets
-setup_conda_env
-install_stack
-
-echo "[install_stack] Complete: model=${MODEL} env=${ENV_NAME}"
-if [[ "${USE_CONDA}" == "true" ]]; then
-  echo "[install_stack] Activate later with: conda activate ${CONDA_ENV_NAME}"
+if [[ ${#POSITIONAL[@]} -ne 2 ]]; then
+  usage
+  exit 1
 fi
+
+MODEL="${POSITIONAL[0]}"
+ENV_NAME="${POSITIONAL[1]}"
+ARGS=(
+  --tier dev
+  --model "${MODEL}"
+  --python-version "${PYTHON_VERSION}"
+  --torch-profile "${TORCH_PROFILE}"
+)
+
+if [[ -n "${CONDA_ENV_NAME}" ]]; then
+  ARGS+=(--conda-env "${CONDA_ENV_NAME}")
+fi
+if [[ "${USE_CONDA}" == "false" ]]; then
+  ARGS+=(--current-env)
+fi
+if [[ "${ACCEPT_ROM_LICENSE}" == "true" ]]; then
+  ARGS+=(--accept-rom-license)
+fi
+
+if [[ "${ENV_NAME}" == "cross_task" ]]; then
+  ARGS+=(--env flappy --env demon_attack)
+else
+  ARGS+=(--env "${ENV_NAME}")
+fi
+
+exec "${INSTALL_DIR}/bootstrap.sh" "${ARGS[@]}"

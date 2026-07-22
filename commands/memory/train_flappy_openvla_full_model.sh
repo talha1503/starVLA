@@ -1,31 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# launch_train.py 用相对路径调用，必须在 starVLA/ 目录下运行。
-# 这里自己 cd 到 starVLA/（脚本在 starVLA/commands/memory/ 下，../.. = starVLA/），
-# 这样无论从哪个 cwd `bash` 本脚本都不会 file-not-found。
+# launch_train.py uses paths relative to the StarVLA repository root.
 cd "$(dirname "$0")/../.."
 
-# v2: freeze ViT/connector, tied embedding/lm_head, and LLM bottom layers.
-# OpenVLA action head uses hidden states, not lm_head logits.
+# Train all model parameters.
+# The run ID remains unchanged to match the published checkpoint artifact.
 python examples/rl_games/scripts/launch_train.py \
   model=openvla \
   env=flappy \
   init=bridge \
-  run_id=flappy_fix_latency_2_200ep_last_8_layers_corrected \
+  run_id=flappy_fix_latency_2_200ep_full_tuning_corrected \
   paths.dataset_local_dir=data/flappy_fix_latency_2_200ep \
   trainer.distributed_backend=none \
-  trainer.gradient_accumulation_steps=2 \
-  trainer.freeze_vit=true \
-  trainer.freeze_tied_embedding=true \
-  trainer.freeze_llm_layers=[0,27] \
-  datasets.vla_data.per_device_batch_size=64 \
+  trainer.gradient_accumulation_steps=4 \
+  datasets.vla_data.per_device_batch_size=32 \
   datasets.vla_data.image_mode=single \
   datasets.vla_data.num_obs_frames=1 \
   trainer.max_train_steps=5000 \
   trainer.save_interval=500 \
-  trainer.profile_timing.enabled=true \
-  trainer.profile_timing.log_interval=10 \
   rl_games.env_eval.mid_train.enabled=true \
   rl_games.env_eval.mid_train.latencies=[2] \
   rl_games.env_eval.mid_train.interval_steps=250 \
