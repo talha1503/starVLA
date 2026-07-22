@@ -105,12 +105,23 @@ def _restore_signal_handlers(previous_handlers: dict[int, Any]) -> None:
         signal.signal(signum, handler)
 
 
+def _distributed_barrier() -> None:
+    if not dist.is_initialized():
+        return
+    backend = str(dist.get_backend()).lower()
+    if backend == "nccl" and torch.cuda.is_available():
+        device_idx = int(torch.cuda.current_device())
+        dist.barrier(device_ids=[device_idx])
+        return
+    dist.barrier()
+
+
 def _destroy_distributed_process_group(*, use_barrier: bool) -> None:
     if not dist.is_initialized():
         return
     if use_barrier:
         try:
-            dist.barrier()
+            _distributed_barrier()
         except Exception as exc:
             logger.warning("Distributed barrier failed during shutdown: %s", exc)
     try:
@@ -472,8 +483,7 @@ def prepare_data(cfg, accelerator, output_dir) -> tuple[DataLoader, DataLoader |
         )
 
     accelerator.dataloader_config.dispatch_batches = False
-    if dist.is_initialized():
-        dist.barrier()
+    _distributed_barrier()
     return vla_train_dataloader, vla_eval_dataloader
 
 
@@ -1832,8 +1842,7 @@ class VLATrainer(TrainerUtils):
                         task_latency_loss_sums[(task_name, latency)] / count.clamp_min(1.0)
                     ).item()
 
-        if dist.is_initialized():
-            dist.barrier()
+        _distributed_barrier()
         return step_metrics
 
     def eval_action_model(self, step_metrics: dict = None) -> dict:
@@ -2198,8 +2207,7 @@ class VLATrainer(TrainerUtils):
             step_metrics["eval/action_classification/predict_seconds"] = predict_t.item()
             step_metrics["eval/action_classification/frames"] = frames_t.item()
 
-        if dist.is_initialized():
-            dist.barrier()
+        _distributed_barrier()
         return step_metrics
 
     def _log_training_config(self):
