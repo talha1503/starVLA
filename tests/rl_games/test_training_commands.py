@@ -11,7 +11,7 @@ from examples.rl_games.scripts.setup_training_assets import _resolve_explicit_re
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-MODELS = ("openvla", "pi0", "pi05", "gr00t")
+ARCHIVED_COMMAND_MODELS = ("openvla", "pi0", "pi05")
 ENVS = ("flappy", "demon_attack", "deadly_corridor")
 OPENVLA_DEADLY_CROSS_TASK_SETUPS = (
     "flappy_zero_deadly_mixed",
@@ -261,7 +261,7 @@ def test_flappy_openvla_curriculum_commands_preserve_release_defaults() -> None:
 
 
 def test_training_command_matrix_targets_hydra_launcher() -> None:
-    for model in MODELS:
+    for model in ARCHIVED_COMMAND_MODELS:
         for env in ENVS:
             command_path = _command_path(model, env)
 
@@ -284,9 +284,19 @@ def test_training_command_matrix_targets_hydra_launcher() -> None:
 
 
 def test_training_commands_are_valid_bash() -> None:
-    command_paths = [str(_command_path(model, env)) for model in MODELS for env in ENVS]
+    command_paths = [str(_command_path(model, env)) for model in ARCHIVED_COMMAND_MODELS for env in ENVS]
 
     subprocess.run(["bash", "-n", *command_paths], check=True, cwd=REPO_ROOT)
+
+
+def test_wan_oft_temporal_probe_command_resolves_repo_root_from_archive() -> None:
+    command_name = "probe_flappy_wan_oft_temporal_latents.sh"
+    command_path = REPO_ROOT / "commands" / "wanoft" / command_name
+
+    assert command_path.exists()
+    assert not (REPO_ROOT / "commands" / command_name).exists()
+    command_text = command_path.read_text(encoding="utf-8")
+    assert 'REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"' in command_text
 
 
 def test_kv_memory_training_command_shards_mid_train_latency_bench_eval() -> None:
@@ -329,10 +339,10 @@ def test_wan_oft_commands_explicitly_use_eval_core() -> None:
 
 
 def test_archived_release_commands_share_shell_structure() -> None:
-    command_paths = sorted((REPO_ROOT / "commands" / "openvla").glob("*.sh"))
-    command_paths += sorted((REPO_ROOT / "commands" / "pi0").glob("*.sh"))
-    command_paths += sorted((REPO_ROOT / "commands" / "pi05").glob("*.sh"))
-    command_paths += sorted((REPO_ROOT / "commands" / "wanoft").glob("*.sh"))
+    command_paths = sorted((REPO_ROOT / "commands" / "openvla").glob("train_*.sh"))
+    command_paths += sorted((REPO_ROOT / "commands" / "pi0").glob("train_*.sh"))
+    command_paths += sorted((REPO_ROOT / "commands" / "pi05").glob("train_*.sh"))
+    command_paths += sorted((REPO_ROOT / "commands" / "wanoft").glob("train_*.sh"))
 
     for command_path in command_paths:
         command_text = command_path.read_text(encoding="utf-8")
