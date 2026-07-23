@@ -29,7 +29,7 @@ python examples/rl_games/scripts/launch_train.py \
   launch.num_processes=2 \
   paths.accelerate_config=starVLA/config/deepseeds/deepspeed_zero2.yaml \
   trainer.gradient_accumulation_steps=4 \
-  datasets.vla_data.per_device_batch_size=16 \
+  datasets.vla_data.per_device_batch_size=32 \
   trainer.max_train_steps=4000 \
   trainer.save_interval=500 \
   rl_games.env_eval.eval_parallel_envs=5 \
