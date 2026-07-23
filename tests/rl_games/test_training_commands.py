@@ -381,6 +381,8 @@ def test_demon_attack_wan_oft_command_preserves_parameterized_post_train_eval() 
         REPO_ROOT / "commands" / "wanoft" / "train_demon_attack_wan_oft.sh"
     ).read_text(encoding="utf-8")
 
+    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[${LATENCY}]}"' in command_text
+    assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"' in command_text
     assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
     assert 'rl_games.env_eval.post_train.num_episodes="${POST_TRAIN_NUM_EPISODES}"' in command_text
 
@@ -478,6 +480,21 @@ def test_flappy_wan_oft_curriculum_pipeline_script_parameterizes_mode() -> None:
     assert "mode=\"${TRAIN_MODE}\"" in script_text
     assert "checkpoint.sync.enabled=false" in script_text
     assert "hf upload \"${UPLOAD_REPO}\" \"${RUN_DIR}\" \"${UPLOAD_PATH_IN_REPO}\"" in script_text
+
+
+def test_demon_attack_wan_oft_pipeline_uses_archived_training_command() -> None:
+    script_path = REPO_ROOT / "scripts" / "run_demon_attack_wan_oft_pipeline.sh"
+    training_command_path = REPO_ROOT / "commands" / "wanoft" / "train_demon_attack_wan_oft.sh"
+    script_text = script_path.read_text(encoding="utf-8")
+
+    assert training_command_path.exists()
+    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[0,2,4,6,8]}"' in script_text
+    assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"' in script_text
+    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES}" \\' in script_text
+    assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES}" \\' in script_text
+    assert 'bash commands/wanoft/train_demon_attack_wan_oft.sh "${LATENCY}"' in script_text
+    assert 'bash commands/train_demon_attack_wan_oft.sh "${LATENCY}"' not in script_text
+    subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
 
 
 def test_openvla_deadly_cross_task_scripts_are_valid_bash() -> None:

@@ -11,7 +11,8 @@ Runs the Demon Attack context-window WanOFT pipeline:
   3. download raw context-image rollout data for the selected latency
   4. convert raw data into StarVLA LeRobot format
   5. train WanOFT
-  6. upload the checkpoint directory to Hugging Face
+  6. evaluate latencies 0,2,4,6,8 with 20 episodes each
+  7. upload the checkpoint directory to Hugging Face
 
 Options:
   --latency <N>             Required fixed latency id, e.g. 0, 2, 6
@@ -42,6 +43,8 @@ MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-2000}"
 PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-4}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-32}"
 EFFECTIVE_BATCH_SIZE="${EFFECTIVE_BATCH_SIZE:-$((PER_DEVICE_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS))}"
+POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[0,2,4,6,8]}"
+POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"
 WANDB_ENTITY_VALUE="${WANDB_ENTITY:-dongqianyu99-zhejiang-university}"
 WANDB_PROJECT_VALUE="${WANDB_PROJECT:-starVLA_rl_games}"
 RAW_DATASET_REPO="${RAW_DATASET_REPO:-}"
@@ -227,9 +230,11 @@ if [[ "${SKIP_TRAIN}" != "true" ]]; then
   MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS}" \
   PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE}" \
   GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS}" \
+  POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES}" \
+  POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES}" \
   DATASET_LOCAL_DIR="${CONVERTED_DATA_ROOT}" \
   RUN_ID="${RUN_ID}" \
-    bash commands/train_demon_attack_wan_oft.sh "${LATENCY}"
+    bash commands/wanoft/train_demon_attack_wan_oft.sh "${LATENCY}"
 fi
 
 if [[ "${SKIP_UPLOAD}" != "true" ]]; then
