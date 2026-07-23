@@ -154,56 +154,33 @@ The RL Games training entrypoint is Hydra-driven. Use `examples/rl_games/config`
 
 ### 1. Install the RL Games environment
 
-From the repo root:
+This fork's RL Games integration depends on `latency-sensitive-bench`. The
+recommended entrypoint is the enclosing benchmark repository:
 
 ```bash
-cd PATH_TO_STARVLA
-
-bash examples/rl_games/install/bootstrap.sh --split-envs
+cd PATH_TO_LATENCY_SENSITIVE_BENCH
+bash install.sh \
+  --tier dev \
+  --model openvla \
+  --env all \
+  --accept-rom-license
 ```
 
-This creates model-specific conda environments such as `starvla_rl_games_openvla`.
-For pi-0 Flappy specifically, the direct installer form is:
+When developing StarVLA from a standalone checkout, point the installer at a
+separate benchmark checkout explicitly:
 
 ```bash
-bash examples/rl_games/install/install_stack.sh pi0 flappy
+LATENCY_BENCH_ROOT=PATH_TO_LATENCY_SENSITIVE_BENCH \
+  bash examples/rl_games/install/bootstrap.sh --tier dev --model openvla --env all
 ```
 
-For pi-0.5-style Flappy through StarVLA `QwenPI_v3`, the direct installer form is:
+Each model family has an independent environment. Change `--model` to `pi0`,
+`pi05`, `gr00t`, or `wan_oft` and select tasks with repeatable `--env` options.
 
-```bash
-bash examples/rl_games/install/install_stack.sh pi05 flappy
-```
-
-For pi-0 Demon Attack:
-
-```bash
-bash examples/rl_games/install/install_stack.sh pi0 demon_attack
-```
-
-For pi-0 Deadly Corridor:
-
-```bash
-bash examples/rl_games/install/install_stack.sh pi0 deadly_corridor
-```
-
-For GR00T Flappy:
-
-```bash
-bash examples/rl_games/install/install_stack.sh gr00t flappy
-```
-
-For GR00T Demon Attack:
-
-```bash
-bash examples/rl_games/install/install_stack.sh gr00t demon_attack
-```
-
-For GR00T Deadly Corridor:
-
-```bash
-bash examples/rl_games/install/install_stack.sh gr00t deadly_corridor
-```
+The default is `use`, `openvla`, and all three RL Games environments. `dev`
+adds training, data, test, and CUDA attention dependencies to the same
+model-specific environment. The legacy `install_stack.sh <model> <env>` command
+remains as a development-tier compatibility entrypoint.
 
 ### 2. Compose a training config
 

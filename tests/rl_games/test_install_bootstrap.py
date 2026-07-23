@@ -1,4 +1,6 @@
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 
@@ -15,15 +17,231 @@ def test_bootstrap_does_not_install_latency_bench_eval_extra_dependencies() -> N
     assert "eval_extra.sh" not in bootstrap_source
 
 
-def test_bootstrap_and_install_stack_accept_world_model_targets() -> None:
+def _help_output(script: Path) -> str:
+    return subprocess.run(
+        ["bash", str(script), "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def test_bootstrap_exposes_tiered_single_model_install() -> None:
     repo_root: Path = _repo_root()
     install_dir: Path = repo_root / "examples" / "rl_games" / "install"
-    bootstrap_source: str = (install_dir / "bootstrap.sh").read_text()
-    install_stack_source: str = (install_dir / "install_stack.sh").read_text()
+    bootstrap_help: str = _help_output(install_dir / "bootstrap.sh")
 
-    assert "openvla|pi0|pi05|gr00t|wan_oft|all" in bootstrap_source
-    assert "MODELS=(openvla pi0 pi05 gr00t wan_oft)" in bootstrap_source
-    assert "openvla|pi0|pi05|gr00t|wan_oft" in install_stack_source
+    assert "--tier <use|dev>" in bootstrap_help
+    assert "openvla|pi0|pi05|gr00t|wan_oft" in bootstrap_help
+    assert "default: openvla" in bootstrap_help
+    assert "--split-envs" not in bootstrap_help
+
+    rejected_all = subprocess.run(
+        [
+            "bash",
+            str(install_dir / "bootstrap.sh"),
+            "--model",
+            "all",
+            "--current-env",
+            "--torch-profile",
+            "cpu",
+            "--skip-validate",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert rejected_all.returncode != 0
+    assert "invalid model 'all'" in rejected_all.stderr
+
+
+def test_install_stack_remains_a_training_compatibility_entrypoint(tmp_path: Path) -> None:
+    repo_root: Path = _repo_root()
+    source_install_stack: Path = repo_root / "examples" / "rl_games" / "install" / "install_stack.sh"
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    install_stack = install_dir / "install_stack.sh"
+    shutil.copy2(source_install_stack, install_stack)
+    fake_bootstrap = install_dir / "bootstrap.sh"
+    fake_bootstrap.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
+    fake_bootstrap.chmod(0o755)
+
+    install_stack_help: str = _help_output(install_stack)
+    result = subprocess.run(
+        [
+            "bash",
+            str(install_stack),
+            "--no-conda",
+            "--accept-rom-license",
+            "--torch-profile",
+            "cpu",
+            "gr00t",
+            "cross_task",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Compatibility entrypoint for a full development/training environment" in install_stack_help
+    assert "openvla|pi0|pi05|gr00t|wan_oft" in install_stack_help
+    assert result.stdout.splitlines() == [
+        "--tier",
+        "dev",
+        "--model",
+        "gr00t",
+        "--python-version",
+        "3.10",
+        "--torch-profile",
+        "cpu",
+        "--current-env",
+        "--accept-rom-license",
+        "--env",
+        "flappy",
+        "--env",
+        "demon_attack",
+    ]
+
+
+def test_env_all_cannot_hide_an_invalid_repeated_selector() -> None:
+    repo_root: Path = _repo_root()
+    bootstrap: Path = repo_root / "examples" / "rl_games" / "install" / "bootstrap.sh"
+    result = subprocess.run(
+        [
+            "bash",
+            str(bootstrap),
+            "--env",
+            "all",
+            "--env",
+            "typo",
+            "--current-env",
+            "--torch-profile",
+            "cpu",
+            "--skip-validate",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "--env all cannot be combined with another --env" in result.stderr
+
+
+def test_bootstrap_creates_model_env_from_conda_forge(tmp_path: Path) -> None:
+    source_install_dir = _repo_root() / "examples" / "rl_games" / "install"
+    install_dir = tmp_path / "starvla" / "examples" / "rl_games" / "install"
+    install_dir.mkdir(parents=True)
+    for name in ("bootstrap.sh", "_host.sh", "_torch_profile.sh"):
+        shutil.copy2(source_install_dir / name, install_dir / name)
+
+    for relative_path in (
+        "common.sh",
+        "model/openvla.sh",
+        "env/flappy.sh",
+    ):
+        script = install_dir / relative_path
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text("#!/bin/bash\nexit 0\n")
+        script.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    conda_base = tmp_path / "conda"
+    profile_dir = conda_base / "etc" / "profile.d"
+    profile_dir.mkdir(parents=True)
+    conda_log = tmp_path / "conda.log"
+
+    conda = fake_bin / "conda"
+    conda.write_text(
+        f"""#!/bin/bash
+if [[ "$1 $2" == "info --base" ]]; then
+  printf '%s\\n' "{conda_base}"
+fi
+"""
+    )
+    conda.chmod(0o755)
+    python = fake_bin / "python"
+    python.write_text("#!/bin/bash\nprintf '3.10\\n'\n")
+    python.chmod(0o755)
+    (profile_dir / "conda.sh").write_text(
+        f"""conda() {{
+  printf '%s\\n' "$*" >> "{conda_log}"
+  if [[ "$1 $2" == "env list" ]]; then
+    printf '# conda environments:\\n'
+  fi
+}}
+"""
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(install_dir / "bootstrap.sh"),
+            "--model",
+            "openvla",
+            "--env",
+            "flappy",
+            "--torch-profile",
+            "cpu",
+            "--python-version",
+            "3.10",
+            "--skip-validate",
+        ],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "LATENCY_BENCH_ROOT": str(tmp_path / "latency-bench"),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "create -n starvla_rl_games_openvla -c conda-forge --override-channels "
+        "python=3.10 -y"
+    ) in conda_log.read_text()
+
+
+def test_training_dependencies_are_not_in_the_use_manifest() -> None:
+    repo_root: Path = _repo_root()
+    use_requirements: str = (repo_root / "requirements.txt").read_text()
+    dev_requirements: str = (repo_root / "requirements-dev.txt").read_text()
+
+    for dependency in ("datasets", "deepspeed", "hydra-core", "wandb"):
+        assert dependency not in use_requirements
+        assert dependency in dev_requirements
+
+
+def test_torch_auto_profile_uses_cpu_without_nvidia_smi() -> None:
+    repo_root: Path = _repo_root()
+    resolver: Path = repo_root / "examples" / "rl_games" / "install" / "_torch_profile.sh"
+    result = subprocess.run(
+        ["/bin/bash", "-c", f'source "{resolver}"; resolve_torch_profile auto'],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={"PATH": "/nonexistent"},
+    )
+
+    assert result.stdout.strip() == "cpu"
+
+
+def test_torch_auto_profile_does_not_guess_after_query_failure(tmp_path: Path) -> None:
+    repo_root: Path = _repo_root()
+    resolver: Path = repo_root / "examples" / "rl_games" / "install" / "_torch_profile.sh"
+    fake_nvidia_smi = tmp_path / "nvidia-smi"
+    fake_nvidia_smi.write_text("#!/bin/sh\nexit 1\n")
+    fake_nvidia_smi.chmod(0o755)
+
+    result = subprocess.run(
+        ["/bin/bash", "-c", f'source "{resolver}"; resolve_torch_profile auto'],
+        capture_output=True,
+        text=True,
+        env={"PATH": f"{tmp_path}:/usr/bin:/bin"},
+    )
+
+    assert result.returncode != 0
+    assert "unable to query GPU compute capability" in result.stderr
 
 
 def test_wan_oft_install_assets_are_registered() -> None:

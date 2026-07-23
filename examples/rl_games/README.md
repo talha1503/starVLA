@@ -4,55 +4,37 @@ Detailed guide: `examples/rl_games/USAGE.md`
 
 ## Installation
 
-One-command bootstrap (recommended):
+Install one model family at a time. The default is the OpenVLA use tier with
+Flappy, Demon Attack, and Deadly Corridor:
 
 ```bash
-bash examples/rl_games/install/bootstrap.sh --split-envs
+bash examples/rl_games/install/bootstrap.sh --accept-rom-license
 ```
 
-This command will:
-- create one conda env per model
-- install the repo-standard `starVLA` stack plus all RL-games env deps in each model env
-- run a validation smoke check
-
-Shared-env bootstrap:
+Choose another family or add its development/training dependencies explicitly:
 
 ```bash
-bash examples/rl_games/install/bootstrap.sh
+bash examples/rl_games/install/bootstrap.sh --tier use --model pi05 --env flappy
+bash examples/rl_games/install/bootstrap.sh --tier dev --model gr00t --env all --accept-rom-license
+bash examples/rl_games/install/bootstrap.sh --tier dev --model wan_oft --env flappy
 ```
 
-Split bootstrap creates one env per model:
+Each family uses an independent environment:
 - `starvla_rl_games_openvla`
 - `starvla_rl_games_pi0`
 - `starvla_rl_games_pi05`
 - `starvla_rl_games_gr00t`
+- `starvla_rl_games_wan_oft`
 
-Each split env installs the repo-standard `starVLA` stack plus the requested RL-games env dependencies. With the default `--env all`, every model env gets `flappy`, `demon_attack`, and `deadly_corridor` dependencies.
-
-PyTorch is selected automatically during install. Blackwell GPUs (`compute_cap=12.0` / `sm_120`) get the CUDA 12.8 PyTorch stack; other CUDA GPUs use the repo-compatible CUDA 12.4 stack. Override with `STARVLA_TORCH_PROFILE=cu128|cu126|cu124|cpu`.
-
-Layered installer (manual control):
-
-```bash
-bash examples/rl_games/install/install_stack.sh openvla flappy
-bash examples/rl_games/install/install_stack.sh pi0 demon_attack
-bash examples/rl_games/install/install_stack.sh pi05 flappy
-bash examples/rl_games/install/install_stack.sh gr00t flappy
-bash examples/rl_games/install/install_stack.sh gr00t demon_attack
-bash examples/rl_games/install/install_stack.sh gr00t deadly_corridor
-```
-
-By default, layered install uses one conda env per model:
-- `openvla` -> `starvla_rl_games_openvla`
-- `pi0` -> `starvla_rl_games_pi0`
-- `pi05` -> `starvla_rl_games_pi05`
-- `gr00t` -> `starvla_rl_games_gr00t`
-
-You can override with `--conda-env <name>`, or skip conda handling with `--no-conda`.
+Torch is detected automatically. Override it with
+`--torch-profile cpu|cu126|cu128|cu130`. The use tier contains checkpoint
+inference dependencies; dev adds training/data packages and installs flash-attn
+for CUDA profiles. `install_stack.sh <model> <env>` remains as a dev-tier
+compatibility wrapper for existing training scripts.
 
 Available scripts:
 - `examples/rl_games/install/common.sh`
-- `examples/rl_games/install/model/{openvla,pi0,pi05,gr00t}.sh`
+- `examples/rl_games/install/model/{openvla,pi0,pi05,gr00t,wan_oft}.sh`
 - `examples/rl_games/install/env/{flappy,demon_attack,deadly_corridor}.sh`
 - `examples/rl_games/install/validate/*.sh`
 
