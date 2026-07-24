@@ -159,34 +159,73 @@ def _load_train_split(
 def latency_id_from_row(
     row: dict[str, Any],
     *,
-    frameskip: int = 1,
-    latency_column: str | None = None,
+    latency_column: str | None,
+    target_latency_unit: str,
+    obs_stride_raw_frames: int,
     default_latency: int | None = None,
 ) -> int | None:
-    columns = (latency_column,) if latency_column else ("latency", "latency_raw_frames")
-    for column in columns:
-        if not column or column not in row or row.get(column) is None:
-            continue
-        value = int(row[column])
-        if column == "latency_raw_frames":
-            frameskip = int(frameskip)
-            if frameskip <= 0:
-                raise ValueError(f"frameskip must be positive, got {frameskip}")
-            if value % frameskip != 0:
-                raise ValueError(f"latency_raw_frames={value} is not divisible by frameskip={frameskip}")
-            return value // frameskip
+    if target_latency_unit not in {"raw_frames", "observation_steps"}:
+        raise ValueError(f"unsupported target_latency_unit={target_latency_unit!r}")
+    if latency_column is None:
+        return default_latency
+    value = row[latency_column]
+    if value is None:
+        return default_latency
+    if latency_column != "latency_raw_frames" or target_latency_unit == "raw_frames":
         return value
-    return default_latency
+    if value % obs_stride_raw_frames != 0:
+        raise ValueError(
+            f"latency_raw_frames={value} is not divisible by "
+            f"obs_stride_raw_frames={obs_stride_raw_frames}"
+        )
+    return value // obs_stride_raw_frames
 
 
-def build_latency_prompt_map(rows: Iterable[dict[str, Any]], *, frameskip: int = 1) -> dict[str, dict[str, Any]]:
+def source_timing_from_args(
+    *,
+    source_metadata: str | None,
+    source_fps: float | None,
+    obs_stride_raw_frames: int | None,
+) -> tuple[float, int, str]:
+    if source_metadata is not None:
+        if source_fps is not None or obs_stride_raw_frames is not None:
+            raise ValueError("source_metadata cannot be combined with explicit source timing")
+        metadata = json.loads(Path(source_metadata).read_text(encoding="utf-8"))
+        if metadata["rows_unit"] != "decision_step":
+            raise ValueError(
+                f"source metadata rows_unit must be decision_step, got {metadata['rows_unit']!r}"
+            )
+        return (
+            metadata["obs_fps"],
+            metadata["obs_stride_raw_frames"],
+            metadata["rows_unit"],
+        )
+    if source_fps is None or obs_stride_raw_frames is None:
+        raise ValueError(
+            "pass --source-metadata or both --source-fps and --obs-stride-raw-frames"
+        )
+    return source_fps, obs_stride_raw_frames, "decision_step"
+
+
+def build_latency_prompt_map(
+    rows: Iterable[dict[str, Any]],
+    *,
+    latency_column: str,
+    target_latency_unit: str,
+    obs_stride_raw_frames: int,
+) -> dict[str, dict[str, Any]]:
     by_latency: dict[int, dict[str, Any]] = {}
     for row in rows:
         if "split" in row and str(row["split"]).lower() != "train":
             continue
         if "prompt" not in row:
             raise KeyError(f"row is missing latency/prompt columns; available columns: {sorted(row.keys())}")
-        latency = latency_id_from_row(row, frameskip=frameskip)
+        latency = latency_id_from_row(
+            row,
+            latency_column=latency_column,
+            target_latency_unit=target_latency_unit,
+            obs_stride_raw_frames=obs_stride_raw_frames,
+        )
         if latency is None:
             raise KeyError(f"row is missing latency/prompt columns; available columns: {sorted(row.keys())}")
         prompt = str(row["prompt"])
@@ -214,11 +253,13 @@ def verify_dataset(
     strict: bool = False,
     allow_mixed_latency_prompts: bool = False,
     latencies: list[int] | None = None,
+    source_latency_column: str,
+    target_latency_unit: str,
+    obs_stride_raw_frames: int,
 ) -> bool:
     try:
         for columns in (
-            ["prompt", "action_id", "action_text", "latency", "latency_ms"],
-            ["prompt", "action_id", "action_text", "latency_raw_frames", "latency_ms"],
+            ["prompt", "action_id", "action_text", source_latency_column, "latency_ms"],
             ["prompt", "action_id", "action_text"],
             ["prompt", "action_id"],
             None,
@@ -257,7 +298,12 @@ def verify_dataset(
         ok = False
     if allow_mixed_latency_prompts:
         try:
-            mapping = build_latency_prompt_map(ds)
+            mapping = build_latency_prompt_map(
+                ds,
+                latency_column=source_latency_column,
+                target_latency_unit=target_latency_unit,
+                obs_stride_raw_frames=obs_stride_raw_frames,
+            )
             if latencies and len({int(v) for v in latencies}) > 1 and len(mapping) <= 1:
                 raise ValueError(f"expected more than one latency prompt, got {len(mapping)}")
             print("Latency prompt map:")
@@ -302,6 +348,9 @@ def main() -> int:
     parser.add_argument("--cache-dir", "--cache_dir", default=None)
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--allow-mixed-latency-prompts", "--allow_mixed_latency_prompts", action="store_true")
+    parser.add_argument("--source-latency-column", choices=["latency", "latency_raw_frames"], required=True)
+    parser.add_argument("--target-latency-unit", choices=["raw_frames", "observation_steps"], required=True)
+    parser.add_argument("--obs-stride-raw-frames", type=int, required=True)
     args = parser.parse_args()
 
     try:
@@ -313,6 +362,9 @@ def main() -> int:
             dataset_source_subdir=args.dataset_source_subdir,
             strict=args.strict,
             allow_mixed_latency_prompts=args.allow_mixed_latency_prompts,
+            source_latency_column=args.source_latency_column,
+            target_latency_unit=args.target_latency_unit,
+            obs_stride_raw_frames=args.obs_stride_raw_frames,
         )
     except Exception:
         if args.strict:

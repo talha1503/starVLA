@@ -268,6 +268,9 @@ if [[ "${SKIP_CONVERT}" != "true" ]]; then
   python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_flappy_to_starvla_lerobot.py \
     --dataset-name "${RAW_DATA_ROOT}" \
     --dataset-source-subdir "${RAW_TEMPLATE_SUBDIR}" \
+    --source-metadata "${RAW_DATA_ROOT}/${RAW_TEMPLATE_SUBDIR}/metadata.json" \
+    --source-latency-column latency_raw_frames \
+    --target-latency-unit observation_steps \
     --output-dir "${CONVERTED_DATA_DIR}" \
     --action-carrier bridge \
     --latency-filter "${LATENCY_FILTER_CSV}" \

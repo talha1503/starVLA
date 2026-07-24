@@ -474,6 +474,9 @@ def test_flappy_wan_oft_curriculum_pipeline_script_parameterizes_mode() -> None:
     assert "UPLOAD_PATH_IN_REPO=\"${UPLOAD_PATH_IN_REPO:-${RUN_ID}}\"" in script_text
     assert "--latency-filter \"${LATENCY_FILTER_CSV}\"" in script_text
     assert "--episodes-per-latency \"${EPISODES_PER_LATENCY}\"" in script_text
+    assert "--source-metadata \"${RAW_DATA_ROOT}/${RAW_TEMPLATE_SUBDIR}/metadata.json\"" in script_text
+    assert "--source-latency-column latency_raw_frames" in script_text
+    assert "--target-latency-unit observation_steps" in script_text
     assert "--context-images-column context_images" in script_text
     assert "--image-sequence-length \"${CONTEXT_WINDOW}\"" in script_text
     assert "python examples/rl_games/scripts/launch_train.py" in script_text
@@ -495,6 +498,16 @@ def test_demon_attack_wan_oft_pipeline_uses_archived_training_command() -> None:
     assert 'bash commands/wanoft/train_demon_attack_wan_oft.sh "${LATENCY}"' in script_text
     assert 'bash commands/train_demon_attack_wan_oft.sh "${LATENCY}"' not in script_text
     subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
+
+
+def test_demon_attack_wan_oft_pipeline_uses_explicit_latency_conversion_contract() -> None:
+    script_text = (REPO_ROOT / "scripts" / "run_demon_attack_wan_oft_pipeline.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "--source-metadata \"${RAW_DATA_DIR}/metadata.json\"" in script_text
+    assert "--source-latency-column latency_raw_frames" in script_text
+    assert "--target-latency-unit observation_steps" in script_text
 
 
 def test_openvla_deadly_cross_task_scripts_are_valid_bash() -> None:
@@ -741,6 +754,29 @@ def test_run_experiment_auto_forwards_canonical_nested_fields(tmp_path: Path) ->
     assert [item for item in cmd if "framework.qwenvl.base_vlm=" in item][-1] == (
         f"++framework.qwenvl.base_vlm={tmp_path / 'resolved_base_model'}"
     )
+
+
+def test_legacy_run_experiment_setup_namespace_forwards_latency_unit(tmp_path: Path) -> None:
+    cfg = {
+        "run_id": "legacy_setup",
+        "model": "openvla",
+        "env": "demon_attack",
+        "mode": "single",
+        "paths": {
+            "dataset_local_dir": "datasets",
+            "base_model_dir": "base_model",
+        },
+        "dataset": {
+            "converted_name": "demon_attack_train",
+        },
+    }
+
+    setup_args = run_experiment._setup_namespace(cfg, tmp_path, "results/Checkpoints")
+    assert setup_args.target_latency_unit == "observation_steps"
+
+    cfg["dataset"]["target_latency_unit"] = "raw_frames"
+    setup_args = run_experiment._setup_namespace(cfg, tmp_path, "results/Checkpoints")
+    assert setup_args.target_latency_unit == "raw_frames"
 
 
 def test_launcher_forwards_vit_and_llm_freeze_overrides(tmp_path: Path, monkeypatch) -> None:

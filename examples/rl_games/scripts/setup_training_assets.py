@@ -91,7 +91,9 @@ def _load_source_latency_prompt_map(
     cache_dir: str | None = None,
     dataset_config_name: str | None = None,
     dataset_source_subdir: str | None = None,
-    frameskip: int = 1,
+    source_latency_column: str,
+    target_latency_unit: str,
+    obs_stride_raw_frames: int,
     latencies: list[int] | None = None,
 ) -> dict[str, dict[str, Any]]:
     from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import (
@@ -99,12 +101,9 @@ def _load_source_latency_prompt_map(
         build_latency_prompt_map,
     )
 
-    column_variants: tuple[list[str] | None, ...] = (
-        ["prompt", "latency", "latency_ms", "split"],
-        ["prompt", "latency_raw_frames", "latency_ms", "split"],
-        ["prompt", "latency", "latency_ms"],
-        ["prompt", "latency_raw_frames", "latency_ms"],
-        None,
+    column_variants: tuple[list[str], ...] = (
+        ["prompt", source_latency_column, "latency_ms", "split"],
+        ["prompt", source_latency_column, "latency_ms"],
     )
     last_exc: Exception | None = None
     ds = None
@@ -118,11 +117,6 @@ def _load_source_latency_prompt_map(
                 dataset_source_subdir=dataset_source_subdir,
                 latencies=latencies,
             )
-            if columns is None and ("prompt" not in ds.column_names or not ({"latency", "latency_raw_frames"} & set(ds.column_names))):
-                raise ValueError(
-                    f"prompt source dataset {dataset_name} is missing columns required for a latency prompt map; "
-                    f"available columns: {ds.column_names}"
-                )
             break
         except Exception as exc:
             last_exc = exc
@@ -133,11 +127,12 @@ def _load_source_latency_prompt_map(
             f"(dataset={dataset_name!r}, config={dataset_config_name!r}, "
             f"source_subdir={dataset_source_subdir!r}, latencies={latencies!r})"
         ) from last_exc
-    return build_latency_prompt_map(ds, frameskip=frameskip)
-
-
-def _task_latency_frameskip(task_name: str) -> int:
-    return 1 if str(task_name) == "flappy" else 4
+    return build_latency_prompt_map(
+        ds,
+        latency_column=source_latency_column,
+        target_latency_unit=target_latency_unit,
+        obs_stride_raw_frames=obs_stride_raw_frames,
+    )
 
 
 def _write_prompt_map(path: Path, prompt_map: dict[str, dict[str, Any]], *, latency_filter: list[int] | None = None) -> Path:
@@ -524,9 +519,9 @@ def _ensure_rl_games_lerobot_dataset(
     *,
     convert_dataset,
     verify_dataset,
-    env_name: str = "",
-    env_fps: float = 0.0,
-    obs_fps: float = 0.0,
+    env_name: str,
+    env_fps: float,
+    obs_fps: float,
 ) -> dict[str, Any]:
     data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
     action_carrier = _action_carrier(args)
@@ -541,6 +536,9 @@ def _ensure_rl_games_lerobot_dataset(
     eval_dataset_dir = data_root_dir / eval_data_mix
     force = _str2bool(args.setup_force) or _str2bool(args.dataset_force_download)
     mixed_latency = args.mode == "mixed_latency" or str(args.latency_mode or "").lower() == "mixed"
+    source_latency_column = "latency_raw_frames"
+    target_latency_unit = args.target_latency_unit
+    obs_stride_raw_frames = round(env_fps / obs_fps)
     prompt_map = dataset_dir / "latency_prompt_map.json"
 
     def _manifest_matches(dataset_path: Path) -> bool:
@@ -562,6 +560,14 @@ def _ensure_rl_games_lerobot_dataset(
         if action_layout and ("action_layout" not in manifest or str(manifest["action_layout"]) != action_layout):
             return False
         if mixed_latency and manifest.get("latency_metadata") is not True:
+            return False
+        if manifest.get("fps") != obs_fps:
+            return False
+        if manifest.get("obs_stride_raw_frames") != obs_stride_raw_frames:
+            return False
+        if manifest.get("target_latency_unit") != target_latency_unit:
+            return False
+        if manifest.get("source_latency_column") != source_latency_column:
             return False
         expected_latency_filter = getattr(args, "latency_filter", None)
         if expected_latency_filter is not None:
@@ -612,6 +618,9 @@ def _ensure_rl_games_lerobot_dataset(
                 "cache_dir": args.dataset_cache_dir,
                 "strict": True,
                 "allow_mixed_latency_prompts": mixed_latency,
+                "source_latency_column": source_latency_column,
+                "target_latency_unit": target_latency_unit,
+                "obs_stride_raw_frames": obs_stride_raw_frames,
             }
             if "dataset_config_name" in inspect.signature(verify_dataset).parameters:
                 verify_kwargs["dataset_config_name"] = source_config_name
@@ -627,6 +636,11 @@ def _ensure_rl_games_lerobot_dataset(
             "max_episodes": args.max_episodes,
             "force": rebuild,
             "require_latency_prompt_map": mixed_latency,
+            "fps": obs_fps,
+            "obs_stride_raw_frames": obs_stride_raw_frames,
+            "source_latency_column": source_latency_column,
+            "target_latency_unit": target_latency_unit,
+            "source_rows_unit": "decision_step",
         }
         if "dataset_config_name" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["dataset_config_name"] = source_config_name
@@ -664,12 +678,11 @@ def _ensure_rl_games_lerobot_dataset(
         *(int(v) for v in (eval_latencies or [])),
     })
     if all_needed and source_dataset:
-        existing_map: dict = {}
-        if prompt_map.exists():
-            try:
-                existing_map = json.loads(prompt_map.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+        existing_map = (
+            json.loads(prompt_map.read_text(encoding="utf-8"))
+            if prompt_map.exists()
+            else {}
+        )
         missing = [lat for lat in all_needed if str(lat) not in existing_map]
         if missing:
             full_map = _load_source_latency_prompt_map(
@@ -678,7 +691,9 @@ def _ensure_rl_games_lerobot_dataset(
                 dataset_config_name=source_config_name,
                 dataset_source_subdir=source_subdir,
                 latencies=all_needed,
-                frameskip=round(env_fps / obs_fps) if env_fps and obs_fps else 1,
+                source_latency_column="latency_raw_frames",
+                target_latency_unit=target_latency_unit,
+                obs_stride_raw_frames=obs_stride_raw_frames,
             )
             merged = {**existing_map, **full_map}
             prompt_map.write_text(
@@ -818,6 +833,12 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
         weight = float(_get_task_value(task_cfg, "weight", default=1.0))
         action_layout = _get_task_value(task_cfg, "action_layout", default=None)
         action_layout = None if action_layout in (None, "") else str(action_layout)
+        task_timing = {
+            "flappy": (30.0, 1),
+            "demon_attack": (15.0, 4),
+            "deadly_corridor": (8.75, 4),
+        }[task_name]
+        task_fps, task_obs_stride_raw_frames = task_timing
 
         base_converted_name = str(_get_task_value(task_cfg, "converted_name", default=f"{task_name}_cross_task_train"))
         converted_base = _derived_dataset_name(
@@ -836,7 +857,9 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
             cache_dir=args.dataset_cache_dir,
             dataset_config_name=prompt_config_name,
             dataset_source_subdir=prompt_subdir,
-            frameskip=_task_latency_frameskip(task_name),
+            source_latency_column="latency_raw_frames",
+            target_latency_unit="observation_steps",
+            obs_stride_raw_frames=task_obs_stride_raw_frames,
             latencies=required_latencies,
         )
         prompt_dir = data_root_dir / "_prompt_maps" / data_mix
@@ -876,6 +899,10 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 and manifest.get("latency_filter") == expected_latency_filter
                 and manifest.get("episodes_per_latency") == expected_episodes_per_latency
                 and manifest.get("max_episodes") == max_episodes
+                and manifest.get("fps") == task_fps
+                and manifest.get("obs_stride_raw_frames") == task_obs_stride_raw_frames
+                and manifest.get("target_latency_unit") == "observation_steps"
+                and manifest.get("source_latency_column") == "latency_raw_frames"
             )
 
         rebuild = (
@@ -902,6 +929,9 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 "dataset_source_subdir": train_subdir,
                 "strict": True,
                 "allow_mixed_latency_prompts": allow_mixed,
+                "source_latency_column": "latency_raw_frames",
+                "target_latency_unit": "observation_steps",
+                "obs_stride_raw_frames": task_obs_stride_raw_frames,
             }
             if action_layout and "action_layout" in inspect.signature(verify_dataset).parameters:
                 verify_kwargs["action_layout"] = action_layout
@@ -925,6 +955,11 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 "prompt_map_override": prompt_map,
                 "default_latency": 0,
                 "action_carrier": action_carrier,
+                "fps": task_fps,
+                "obs_stride_raw_frames": task_obs_stride_raw_frames,
+                "source_latency_column": "latency_raw_frames",
+                "target_latency_unit": "observation_steps",
+                "source_rows_unit": "decision_step",
             }
             if action_layout:
                 convert_kwargs["action_layout"] = action_layout
@@ -1224,6 +1259,11 @@ def main() -> int:
     parser.add_argument("--dataset-force-download", default="false")
     parser.add_argument("--setup-force", default="false")
     parser.add_argument("--skip-verification", default="false")
+    parser.add_argument(
+        "--target-latency-unit",
+        choices=["raw_frames", "observation_steps"],
+        default="observation_steps",
+    )
     parser.add_argument("--verify-rows", type=int, default=200)
     parser.add_argument("--max-episodes", type=int, default=None)
     parser.add_argument("--episodes-per-latency", type=int, default=None)

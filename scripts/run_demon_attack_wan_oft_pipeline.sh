@@ -214,6 +214,9 @@ if [[ "${SKIP_CONVERT}" != "true" ]]; then
   echo "[demon-wanoft] Converting raw data into ${CONVERTED_DATA_DIR}"
   python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_demon_attack_to_starvla_lerobot.py \
     --dataset-name "${RAW_DATA_DIR}" \
+    --source-metadata "${RAW_DATA_DIR}/metadata.json" \
+    --source-latency-column latency_raw_frames \
+    --target-latency-unit observation_steps \
     --output-dir "${CONVERTED_DATA_DIR}" \
     --action-carrier bridge \
     --context-images-column context_images \

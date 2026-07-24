@@ -39,7 +39,6 @@ FACTORIZED_11_ACTIONS = [
 ACTION_LAYOUT_MULTIBINARY_7 = "multibinary_7"
 ACTION_LAYOUT_FACTORIZED_11 = "factorized_11"
 REQUIRED_PROMPT_PARTS = ["Deadly Corridor", *EXPECTED_ACTIONS]
-LATENCY_FRAMESKIP = 4
 
 
 def _load_first_available(
@@ -129,6 +128,9 @@ def verify_dataset(
     allow_mixed_latency_prompts: bool = False,
     action_layout: str = ACTION_LAYOUT_MULTIBINARY_7,
     latencies: list[int] | None = None,
+    source_latency_column: str,
+    target_latency_unit: str,
+    obs_stride_raw_frames: int,
 ) -> bool:
     action_layout = _normalize_action_layout(action_layout)
     if action_layout == ACTION_LAYOUT_FACTORIZED_11:
@@ -191,17 +193,20 @@ def verify_dataset(
                 dataset_name,
                 cache_dir,
                 (
-                    ["split", "prompt", "latency", "latency_ms"],
-                    ["split", "prompt", "latency_raw_frames", "latency_ms"],
-                    ["prompt", "latency", "latency_ms"],
-                    ["prompt", "latency_raw_frames", "latency_ms"],
+                    ["split", "prompt", source_latency_column, "latency_ms"],
+                    ["prompt", source_latency_column, "latency_ms"],
                     None,
                 ),
                 dataset_config_name=dataset_config_name,
                 dataset_source_subdir=dataset_source_subdir,
                 latencies=latencies,
             )
-            mapping = build_latency_prompt_map(prompt_ds, frameskip=LATENCY_FRAMESKIP)
+            mapping = build_latency_prompt_map(
+                prompt_ds,
+                latency_column=source_latency_column,
+                target_latency_unit=target_latency_unit,
+                obs_stride_raw_frames=obs_stride_raw_frames,
+            )
             if len(mapping) <= 1:
                 raise ValueError(f"expected more than one latency prompt, got {len(mapping)}")
             print("Latency prompt map:")
@@ -239,6 +244,9 @@ def main() -> int:
     parser.add_argument("--cache-dir", "--cache_dir", default=None)
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--allow-mixed-latency-prompts", "--allow_mixed_latency_prompts", action="store_true")
+    parser.add_argument("--source-latency-column", choices=["latency", "latency_raw_frames"], required=True)
+    parser.add_argument("--target-latency-unit", choices=["raw_frames", "observation_steps"], required=True)
+    parser.add_argument("--obs-stride-raw-frames", type=int, required=True)
     parser.add_argument(
         "--action-layout",
         "--action_layout",
@@ -257,6 +265,9 @@ def main() -> int:
             strict=args.strict,
             allow_mixed_latency_prompts=args.allow_mixed_latency_prompts,
             action_layout=args.action_layout,
+            source_latency_column=args.source_latency_column,
+            target_latency_unit=args.target_latency_unit,
+            obs_stride_raw_frames=args.obs_stride_raw_frames,
         )
     except Exception:
         if args.strict:

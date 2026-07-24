@@ -25,6 +25,7 @@ from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset 
     concatenate_latency_parts,
     latency_id_from_row,
     resolve_latency_subdirs,
+    source_timing_from_args,
 )
 
 
@@ -57,8 +58,6 @@ ACTION_LAYOUT_FACTORIZED_11 = "factorized_11"
 BRIDGE_ACTION_DIM = 7
 STATE_DIM = 1
 BRIDGE_STATE_DIM = 7
-FPS = 35
-LATENCY_FRAMESKIP = 4
 EpisodeKey = int | tuple[int, int]
 
 
@@ -308,16 +307,31 @@ def _normalize_prompt_map(prompt_map: dict[str, Any] | dict[int, Any] | None) ->
     return normalized
 
 
-def _row_latency(row: dict[str, Any], latency_column: str | None, default_latency: int | None = None) -> int | None:
+def _row_latency(
+    row: dict[str, Any],
+    latency_column: str | None,
+    target_latency_unit: str,
+    obs_stride_raw_frames: int,
+    default_latency: int | None = None,
+) -> int | None:
     return latency_id_from_row(
         row,
-        frameskip=LATENCY_FRAMESKIP,
         latency_column=latency_column,
+        target_latency_unit=target_latency_unit,
+        obs_stride_raw_frames=obs_stride_raw_frames,
         default_latency=default_latency,
     )
 
 
-def _filter_latency(ds, latency_filter: list[int] | None, *, latency_column: str | None, default_latency: int | None = None):
+def _filter_latency(
+    ds,
+    latency_filter: list[int] | None,
+    *,
+    latency_column: str | None,
+    target_latency_unit: str,
+    obs_stride_raw_frames: int,
+    default_latency: int | None = None,
+):
     if not latency_filter:
         return ds
     allowed = {int(value) for value in latency_filter}
@@ -325,7 +339,16 @@ def _filter_latency(ds, latency_filter: list[int] | None, *, latency_column: str
         if default_latency is not None and int(default_latency) in allowed:
             return ds
         raise ValueError("latency_filter was requested, but the dataset has no latency column")
-    return ds.filter(lambda row: _row_latency(row, latency_column, default_latency=default_latency) in allowed)
+    return ds.filter(
+        lambda row: _row_latency(
+            row,
+            latency_column,
+            target_latency_unit,
+            obs_stride_raw_frames,
+            default_latency=default_latency,
+        )
+        in allowed
+    )
 
 
 def _episode_key(episode_idx: int, latency: int | None) -> EpisodeKey:
@@ -344,6 +367,7 @@ def _load_index_split(
     cache_dir: str | None,
     *,
     want_latency: bool,
+    source_latency_column: str | None = None,
     dataset_config_name: str | None = None,
     dataset_source_subdir: str | None = None,
     latencies: list[int] | None = None,
@@ -354,6 +378,11 @@ def _load_index_split(
         want_latency=want_latency,
         dataset_source_subdir=dataset_source_subdir,
     )
+    if source_latency_column is not None:
+        candidate_columns = [
+            columns._replace(latency=source_latency_column)
+            for columns in candidate_columns
+        ]
     last_error: Exception | None = None
     for deadly_corridor_columns in candidate_columns:
         columns = ["episode_idx", deadly_corridor_columns.frame, "prompt"]
@@ -399,7 +428,7 @@ def _load_index_split(
             frame=_resolve_required_column(available, ("t", "decision_step", "frame_index", "frame_idx", "step"), "frame index"),
             reward=_resolve_required_column(available, ("reward", "raw_reward", "rewards"), "reward"),
             done=_resolve_optional_column(available, ("done", "terminal", "terminated")),
-            latency=_resolve_optional_column(available, ("latency", "latency_raw_frames")) if want_latency else None,
+            latency=source_latency_column if want_latency else None,
             latency_ms=_resolve_optional_column(available, ("latency_ms",)) if want_latency else None,
         ),
     )
@@ -562,6 +591,7 @@ def _write_metadata(
     action_labels: list[str],
     state_dim: int,
     state_labels: list[str],
+    fps: float,
 ) -> None:
     meta_dir = dataset_dir / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
@@ -600,7 +630,7 @@ def _write_metadata(
 
     info = {
         "codebase_version": "v2.0",
-        "fps": FPS,
+        "fps": fps,
         "chunks_size": 1000,
         "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
         "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
@@ -609,7 +639,7 @@ def _write_metadata(
                 "dtype": "image",
                 "shape": [84, 84, 3],
                 "names": ["height", "width", "channel"],
-                "video_info": {"video.fps": FPS},
+                "video_info": {"video.fps": fps},
             },
             "observation.state": {
                 "dtype": "float32",
@@ -683,7 +713,14 @@ def convert_dataset(
     default_latency: int | None = None,
     action_carrier: str = "native",
     action_layout: str = ACTION_LAYOUT_MULTIBINARY_7,
+    fps: float,
+    obs_stride_raw_frames: int,
+    source_latency_column: str | None,
+    target_latency_unit: str,
+    source_rows_unit: str,
 ) -> dict[str, Any]:
+    if source_rows_unit != "decision_step":
+        raise ValueError(f"source_rows_unit must be decision_step, got {source_rows_unit!r}")
     action_carrier = _normalize_action_carrier(action_carrier)
     action_layout = _normalize_action_layout(action_layout)
     action_dim = _action_dim(action_carrier, action_layout)
@@ -715,7 +752,8 @@ def convert_dataset(
     ) -> dict[str, Any]:
         split_output_dir.mkdir(parents=True, exist_ok=True)
         want_latency = bool(
-            require_latency_prompt_map
+            source_latency_column is not None
+            or require_latency_prompt_map
             or split_latency_filter
             or prompt_map_override
             or split_episodes_per_latency is not None
@@ -727,12 +765,15 @@ def convert_dataset(
             dataset_config_name=dataset_config_name,
             dataset_source_subdir=dataset_source_subdir,
             want_latency=want_latency,
+            source_latency_column=source_latency_column,
             latencies=split_latency_filter,
         )
         ds_meta = _filter_latency(
             ds_meta,
             split_latency_filter,
             latency_column=deadly_corridor_columns.latency,
+            target_latency_unit=target_latency_unit,
+            obs_stride_raw_frames=obs_stride_raw_frames,
             default_latency=default_latency,
         )
         if len(ds_meta) == 0:
@@ -748,7 +789,10 @@ def convert_dataset(
         for row_idx, row in enumerate(tqdm(ds_meta, desc=f"Indexing Deadly Corridor {split} rows")):
             episode_idx = int(_row_get(row, ("episode_idx", "episode_index", "episode")))
             timestep = int(row[deadly_corridor_columns.frame])
-            latency = _row_latency(row, deadly_corridor_columns.latency, default_latency=default_latency)
+            latency = _row_latency(
+                row, deadly_corridor_columns.latency, target_latency_unit, obs_stride_raw_frames,
+                default_latency=default_latency,
+            )
             episode_key = _episode_key(episode_idx, latency)
             episode_indices.setdefault(episode_key, []).append((timestep, row_idx))
             if require_latency_prompt_map and latency is not None:
@@ -780,6 +824,8 @@ def convert_dataset(
             ),
             split_latency_filter,
             latency_column=deadly_corridor_columns.latency,
+            target_latency_unit=target_latency_unit,
+            obs_stride_raw_frames=obs_stride_raw_frames,
             default_latency=default_latency,
         )
         episode_lengths: list[int] = []
@@ -792,7 +838,10 @@ def convert_dataset(
             out_rows = []
             for frame_idx, row in enumerate(episode):
                 prompt = str(row["prompt"])
-                latency = _row_latency(row, deadly_corridor_columns.latency, default_latency=default_latency)
+                latency = _row_latency(
+                    row, deadly_corridor_columns.latency, target_latency_unit, obs_stride_raw_frames,
+                    default_latency=default_latency,
+                )
                 latency_prompt = prompt_map_override.get(int(latency)) if latency is not None else None
                 if latency_prompt is not None:
                     prompt = str(latency_prompt["prompt"])
@@ -813,7 +862,7 @@ def convert_dataset(
                     {
                         "image_bytes": _png_bytes(_row_get(row, ("image", "observation.image", "obs"))),
                         "action": _action_vector(row, action_layout),
-                        "timestamp": float(frame_idx) / FPS,
+                        "timestamp": frame_idx / fps,
                         "episode_index": new_episode_idx,
                         "frame_index": frame_idx,
                         "task_index": prompt_to_task_index[prompt],
@@ -844,18 +893,20 @@ def convert_dataset(
             action_labels=action_labels,
             state_dim=state_dim,
             state_labels=state_labels,
+            fps=fps,
         )
 
         if latency_rows:
-            try:
-                latency_prompt_map = build_latency_prompt_map(latency_rows)
-                (split_output_dir / "latency_prompt_map.json").write_text(
-                    json.dumps(latency_prompt_map, indent=2),
-                    encoding="utf-8",
-                )
-            except ValueError:
-                if require_latency_prompt_map:
-                    raise
+            latency_prompt_map = build_latency_prompt_map(
+                latency_rows,
+                latency_column="latency",
+                target_latency_unit=target_latency_unit,
+                obs_stride_raw_frames=obs_stride_raw_frames,
+            )
+            (split_output_dir / "latency_prompt_map.json").write_text(
+                json.dumps(latency_prompt_map, indent=2),
+                encoding="utf-8",
+            )
         elif require_latency_prompt_map:
             raise ValueError(f"{dataset_name} {split} split has no latency rows; cannot build latency_prompt_map.json")
 
@@ -877,6 +928,16 @@ def convert_dataset(
             "active_state_dim": STATE_DIM,
             "state_carrier": action_carrier,
             "latency_metadata": True,
+            "source_latency_column": deadly_corridor_columns.latency,
+            "source_latency_unit": (
+                "raw_frames" if deadly_corridor_columns.latency == "latency_raw_frames"
+                else "observation_steps" if deadly_corridor_columns.latency == "latency"
+                else None
+            ),
+            "target_latency_unit": target_latency_unit,
+            "obs_stride_raw_frames": obs_stride_raw_frames,
+            "source_rows_unit": source_rows_unit,
+            "fps": fps,
             "latency_filter": [int(value) for value in split_latency_filter] if split_latency_filter else None,
             "episodes_per_latency": int(split_episodes_per_latency) if split_episodes_per_latency is not None else None,
             "max_episodes": int(max_episodes) if max_episodes is not None else None,
@@ -927,7 +988,19 @@ def main() -> int:
         choices=[ACTION_LAYOUT_MULTIBINARY_7, ACTION_LAYOUT_FACTORIZED_11],
         default=ACTION_LAYOUT_MULTIBINARY_7,
     )
+    parser.add_argument("--source-metadata")
+    parser.add_argument("--source-fps", type=float)
+    parser.add_argument("--obs-stride-raw-frames", type=int)
+    parser.add_argument("--source-latency-column", choices=["latency", "latency_raw_frames"])
+    parser.add_argument(
+        "--target-latency-unit", choices=["raw_frames", "observation_steps"], required=True
+    )
     args = parser.parse_args()
+    fps, obs_stride_raw_frames, source_rows_unit = source_timing_from_args(
+        source_metadata=args.source_metadata,
+        source_fps=args.source_fps,
+        obs_stride_raw_frames=args.obs_stride_raw_frames,
+    )
 
     latency_filter = None
     if args.latency_filter:
@@ -946,6 +1019,11 @@ def main() -> int:
         episodes_per_latency=args.episodes_per_latency,
         action_carrier=args.action_carrier,
         action_layout=args.action_layout,
+        fps=fps,
+        obs_stride_raw_frames=obs_stride_raw_frames,
+        source_latency_column=args.source_latency_column,
+        target_latency_unit=args.target_latency_unit,
+        source_rows_unit=source_rows_unit,
     )
     print(json.dumps(manifest, indent=2))
     return 0

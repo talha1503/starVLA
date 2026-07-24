@@ -62,6 +62,7 @@ def _setup_args(tmp_path: Path, model: str, env: str) -> SimpleNamespace:
         hf_repo_id="",
         checkpoint_sync_repo_id="",
         checkpoint_sync_enabled="false",
+        target_latency_unit="observation_steps",
     )
 
 
@@ -253,7 +254,7 @@ def test_pi05_setup_assets_routes_all_rl_games_environments(
     assert "pi05:flappy:flappy" in calls
 
 
-def test_ready_local_dataset_ignores_manifest_source_mismatch(
+def test_ready_local_raw_frame_dataset_ignores_manifest_source_mismatch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -269,11 +270,15 @@ def test_ready_local_dataset_ignores_manifest_source_mismatch(
             (dataset_dir / "meta" / metadata_name).write_text("{}\n", encoding="utf-8")
         (dataset_dir / "data" / "chunk-000" / "episode_000000.parquet").write_bytes(b"PAR1")
         (dataset_dir / "manifest.json").write_text(
-            json.dumps({
-                "source": "previous/raw-source",
-                "action_carrier": "bridge",
-                "latency_filter": None,
-            }),
+                json.dumps({
+                    "source": "previous/raw-source",
+                    "action_carrier": "bridge",
+                    "latency_filter": None,
+                    "fps": 30.0,
+                    "obs_stride_raw_frames": 1,
+                    "source_latency_column": "latency_raw_frames",
+                    "target_latency_unit": "raw_frames",
+                }),
             encoding="utf-8",
         )
 
@@ -307,12 +312,16 @@ def test_ready_local_dataset_ignores_manifest_source_mismatch(
         dataset_cache_dir=None,
         max_episodes=None,
         latency_filter=None,
+        target_latency_unit="raw_frames",
     )
 
     result = setup_training_assets._ensure_rl_games_lerobot_dataset(
         args,
         convert_dataset=reject_convert_dataset,
         verify_dataset=reject_verify_dataset,
+        env_name="flappy",
+        env_fps=30.0,
+        obs_fps=30.0,
     )
 
     assert result["dataset_converted"] is False
@@ -411,12 +420,16 @@ def test_conversion_path_materializes_train_and_eval_runtime_caches_once(
         max_episodes=None,
         latency_filter=None,
         episodes_per_latency=None,
+        target_latency_unit="observation_steps",
     )
 
     result = setup_training_assets._ensure_rl_games_lerobot_dataset(
         args,
         convert_dataset=fake_convert_dataset,
         verify_dataset=fake_verify_dataset,
+        env_name="flappy",
+        env_fps=30.0,
+        obs_fps=30.0,
     )
 
     assert materialized == ["flappy_train__bridge", "flappy_train__bridge__val"]
@@ -559,7 +572,23 @@ def test_launch_train_setup_namespace_uses_composed_hydra_config(tmp_path: Path)
     assert setup_args.action_carrier == "bridge"
     assert setup_args.dataset_local_dir == str(tmp_path / "playground" / "Datasets" / "rl_games")
     assert setup_args.converted_dataset_name == "flappy_train"
+    assert setup_args.target_latency_unit == "observation_steps"
     assert setup_args.initialization_checkpoint_filename == "checkpoints/steps_50000_pytorch_model.pt"
+
+
+def test_launch_train_setup_namespace_forwards_raw_frame_latency_unit(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="demon_attack",
+        init="bridge",
+        mode="single",
+        overrides=["dataset.target_latency_unit=raw_frames"],
+    )
+
+    setup_args = launch_train.setup_namespace_from_cfg(cfg, tmp_path, "results/Checkpoints")
+
+    assert setup_args.target_latency_unit == "raw_frames"
 
 
 def test_launch_train_setup_namespace_forwards_deadly_factorized_layout(tmp_path: Path) -> None:
