@@ -91,6 +91,46 @@ def test_wan_oft_demon_attack_config_uses_bridge_dataset_and_six_active_actions(
     assert cfg.datasets.vla_data.context_images_column == "observation.context_images"
 
 
+def test_wan_oft_deadly_corridor_context_config_composes_and_forwards(tmp_path: Path) -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="wan_oft",
+        env="deadly_corridor",
+        init="wan_oft_libero",
+        mode="single",
+        overrides=[
+            "dataset.converted_name=deadly_corridor_train__bridge",
+            "datasets.vla_data.data_mix=deadly_corridor_train__bridge",
+            "datasets.vla_data.image_sequence_length=5",
+            "datasets.vla_data.observation_indices=[-4,-3,-2,-1,0]",
+            "framework.world_model.num_frames=5",
+            "rl_games.deadly_corridor_loss_type=current_multibinary_bce",
+            "rl_games.env_eval.deadly.action_layout=multibinary_7",
+            "rl_games.env_eval.deadly.multibinary_threshold=0.0",
+        ],
+    )
+    setup = {
+        "dataset_local_dir": str(tmp_path / "datasets"),
+        "base_model_dir": str(tmp_path / "wan_base"),
+        "resume_found": False,
+    }
+
+    cmd = launch_train.build_trainer_command(cfg, setup, tmp_path, "results/Checkpoints")
+
+    assert cfg.framework.name == "WanOFT"
+    assert cfg.framework.action_model.action_dim == 7
+    assert cfg.framework.action_model.action_env_dim == 7
+    assert cfg.framework.action_model.loss_type == "current_multibinary_bce"
+    assert list(cfg.datasets.vla_data.observation_indices) == [-4, -3, -2, -1, 0]
+    assert cfg.datasets.vla_data.image_sequence_length == 5
+    assert cfg.framework.world_model.num_frames == 5
+    assert cfg.rl_games.env_eval.deadly.multibinary_threshold == 0.0
+    assert "++framework.action_model.loss_type=current_multibinary_bce" in cmd
+    assert "++datasets.vla_data.observation_indices=[-4,-3,-2,-1,0]" in cmd
+    assert "++framework.world_model.num_frames=5" in cmd
+    assert "++rl_games.env_eval.deadly.multibinary_threshold=0.0" in cmd
+
+
 def test_launch_train_forwards_world_model_path_only_for_wan_oft(tmp_path: Path) -> None:
     cfg = launch_train.compose_training_config(
         config_name="train",
@@ -271,6 +311,26 @@ def test_wan_oft_current_plus_future_ce_adds_weighted_future_supervision() -> No
         torch.tensor([1, 1]),
     )
     expected = current_loss + 0.25 * future_loss
+    assert torch.allclose(loss, expected)
+
+
+def test_wan_oft_current_multibinary_bce_supervises_only_current_action() -> None:
+    torch = pytest.importorskip("torch")
+    wan_oft_module = importlib.import_module("starVLA.model.framework.WM4A.WanOFT")
+    model = object.__new__(wan_oft_module.Wan_OFT)
+    model.action_horizon = 2
+    model.action_env_dim = 3
+    model.action_loss_type = "current_multibinary_bce"
+
+    pred_actions = torch.tensor([[[1.0, -1.0, 0.5], [20.0, 20.0, 20.0]]])
+    actions_target = torch.tensor([[[1.0, 0.0, 1.0], [0.0, 0.0, 0.0]]])
+
+    loss = model._compute_action_loss(pred_actions, actions_target)
+
+    expected = torch.nn.functional.binary_cross_entropy_with_logits(
+        pred_actions[:, 0, :],
+        actions_target[:, 0, :],
+    )
     assert torch.allclose(loss, expected)
 
 

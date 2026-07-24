@@ -12,6 +12,7 @@ from typing import Any, NamedTuple
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+import datasets
 from datasets import load_dataset
 from PIL import Image
 from tqdm import tqdm
@@ -54,11 +55,13 @@ FACTORIZED_11_ACTION_LABELS = [
 FACTORIZED_11_ACTION_DIM = len(FACTORIZED_11_ACTION_LABELS)
 ACTION_LAYOUT_MULTIBINARY_7 = "multibinary_7"
 ACTION_LAYOUT_FACTORIZED_11 = "factorized_11"
+SOURCE_ACTION_LAYOUT_DEADLY_CORRIDOR_JOINT_54 = "deadly_corridor_joint_54"
 BRIDGE_ACTION_DIM = 7
 STATE_DIM = 1
 BRIDGE_STATE_DIM = 7
 FPS = 35
 LATENCY_FRAMESKIP = 4
+DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN = "observation.context_images"
 EpisodeKey = int | tuple[int, int]
 
 
@@ -412,12 +415,55 @@ def _row_done(row: dict[str, Any], done_column: str | None, *, frame_idx: int, e
 
 
 def _png_bytes(image: Any) -> bytes:
+    if isinstance(image, dict):
+        image_bytes = image.get("bytes")
+        image_path = image.get("path")
+        if image_bytes is not None:
+            return bytes(image_bytes)
+        if image_path is not None:
+            return Path(str(image_path)).read_bytes()
+        raise ValueError("Image dict must contain `bytes` or `path`")
+    if isinstance(image, (bytes, bytearray, memoryview)):
+        return bytes(image)
     if not isinstance(image, Image.Image):
         image = Image.fromarray(np.asarray(image))
     image = image.convert("RGB")
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _image_struct(image: Any) -> dict[str, bytes | str | None]:
+    return {"bytes": _png_bytes(image), "path": None}
+
+
+def _png_image_shape(image_bytes: bytes) -> list[int]:
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        width, height = image.size
+    return [height, width, 3]
+
+
+def _context_images_from_context(
+    row: dict[str, Any],
+    *,
+    context_images_column: str,
+    image_sequence_length: int,
+) -> list[dict[str, bytes | str | None]]:
+    if image_sequence_length < 2:
+        raise ValueError(f"image_sequence_length must be at least 2 for context image conversion, got {image_sequence_length}")
+    if context_images_column not in row:
+        raise ValueError(f"Row is missing context_images_column={context_images_column!r}")
+    context_images = row[context_images_column]
+    if context_images is None:
+        raise ValueError(f"Row has null context_images_column={context_images_column!r}")
+    context_image_list = list(context_images)
+    expected_context_images = image_sequence_length - 1
+    if len(context_image_list) != expected_context_images:
+        raise ValueError(
+            f"Expected {expected_context_images} context image(s), got {len(context_image_list)} "
+            f"from column {context_images_column!r}"
+        )
+    return [_image_struct(image) for image in context_image_list]
 
 
 def _normalize_action_carrier(action_carrier: str) -> str:
@@ -432,6 +478,20 @@ def _normalize_action_layout(action_layout: str) -> str:
     if layout in {ACTION_LAYOUT_MULTIBINARY_7, ACTION_LAYOUT_FACTORIZED_11}:
         return layout
     raise ValueError(f"Unsupported action_layout={action_layout!r}; expected multibinary_7 or factorized_11")
+
+
+def _normalize_source_action_layout(source_action_layout: str | None) -> str | None:
+    if source_action_layout is None:
+        return None
+    normalized = str(source_action_layout).strip().lower()
+    aliases = {
+        "joint_54": SOURCE_ACTION_LAYOUT_DEADLY_CORRIDOR_JOINT_54,
+        SOURCE_ACTION_LAYOUT_DEADLY_CORRIDOR_JOINT_54: SOURCE_ACTION_LAYOUT_DEADLY_CORRIDOR_JOINT_54,
+    }
+    if normalized not in aliases:
+        supported = "|".join(sorted(aliases))
+        raise ValueError(f"Unsupported source_action_layout={source_action_layout!r}; expected one of: {supported}")
+    return aliases[normalized]
 
 
 def _active_action_dim(action_layout: str) -> int:
@@ -476,6 +536,46 @@ def _factorized_one_hot(action_tuple: Any) -> list[float]:
     values[6 + strafe] = 1.0
     values[9 + attack] = 1.0
     return values
+
+
+def _joint_54_action_tuple(action_id: int) -> list[int]:
+    if not 0 <= action_id < 54:
+        raise ValueError(f"Deadly Corridor joint-54 action_id must be in [0, 53], got {action_id}")
+    return [
+        action_id // 18,
+        (action_id // 6) % 3,
+        (action_id // 2) % 3,
+        action_id % 2,
+    ]
+
+
+def _multibinary_action(action_tuple: list[int]) -> list[float]:
+    turn, move, strafe, attack = action_tuple
+    return [
+        float(move == 1),
+        float(move == 2),
+        float(strafe == 1),
+        float(strafe == 2),
+        float(turn == 1),
+        float(turn == 2),
+        float(attack == 1),
+    ]
+
+
+def _source_action_vector(
+    row: dict[str, Any],
+    *,
+    action_layout: str,
+    source_action_layout: str | None,
+) -> list[float]:
+    if source_action_layout == SOURCE_ACTION_LAYOUT_DEADLY_CORRIDOR_JOINT_54:
+        if row.get("action_id") is None:
+            raise ValueError("Deadly Corridor joint-54 source row is missing action_id")
+        action_tuple = _joint_54_action_tuple(int(row["action_id"]))
+        if action_layout == ACTION_LAYOUT_FACTORIZED_11:
+            return _factorized_one_hot(action_tuple)
+        return _multibinary_action(action_tuple)
+    return _action_vector(row, action_layout)
 
 
 def _action_vector(row: dict[str, Any], action_layout: str = ACTION_LAYOUT_MULTIBINARY_7) -> list[float]:
@@ -562,6 +662,9 @@ def _write_metadata(
     action_labels: list[str],
     state_dim: int,
     state_labels: list[str],
+    image_shape: list[int],
+    context_images_output_column: str | None,
+    image_sequence_length: int | None,
 ) -> None:
     meta_dir = dataset_dir / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
@@ -607,7 +710,7 @@ def _write_metadata(
         "features": {
             "observation.image": {
                 "dtype": "image",
-                "shape": [84, 84, 3],
+                "shape": image_shape,
                 "names": ["height", "width", "channel"],
                 "video_info": {"video.fps": FPS},
             },
@@ -628,6 +731,13 @@ def _write_metadata(
             "latency": {"dtype": "int64", "shape": [1]},
         },
     }
+    if context_images_output_column is not None:
+        info["features"][context_images_output_column] = {
+            "dtype": "image_sequence",
+            "shape": [int(image_sequence_length or 1) - 1, *image_shape],
+            "names": ["time", "height", "width", "channel"],
+            "video_info": {"video.fps": FPS},
+        }
     (meta_dir / "info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
 
     episodes = [{"episode_index": idx, "length": int(length)} for idx, length in enumerate(episode_lengths)]
@@ -635,31 +745,43 @@ def _write_metadata(
     _write_jsonl(meta_dir / "tasks.jsonl", [{"task_index": idx, "task": prompt} for idx, prompt in enumerate(task_prompts)])
 
 
-def _write_episode(path: Path, rows: list[dict[str, Any]], *, action_dim: int, state_dim: int) -> None:
+def _write_episode(
+    path: Path,
+    rows: list[dict[str, Any]],
+    *,
+    action_dim: int,
+    state_dim: int,
+    context_images_output_column: str | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    table = pa.table(
-        {
-            "observation.image": pa.array(
-                [{"bytes": row["image_bytes"], "path": None} for row in rows],
-                type=pa.struct([("bytes", pa.binary()), ("path", pa.string())]),
-            ),
-            "observation.state": pa.array(
-                [[0.0] * state_dim for _ in rows],
-                type=pa.list_(pa.float32(), state_dim),
-            ),
-            "action": pa.array(
-                [row["action"] for row in rows],
-                type=pa.list_(pa.float32(), action_dim),
-            ),
-            "timestamp": pa.array([row["timestamp"] for row in rows], type=pa.float64()),
-            "episode_index": pa.array([row["episode_index"] for row in rows], type=pa.int64()),
-            "frame_index": pa.array([row["frame_index"] for row in rows], type=pa.int64()),
-            "task_index": pa.array([row["task_index"] for row in rows], type=pa.int64()),
-            "latency": pa.array([row["latency"] for row in rows], type=pa.int64()),
-            "done": pa.array([row["done"] for row in rows], type=pa.bool_()),
-            "reward": pa.array([row["reward"] for row in rows], type=pa.float32()),
-        }
-    )
+    columns = {
+        "observation.image": pa.array(
+            [{"bytes": row["image_bytes"], "path": None} for row in rows],
+            type=pa.struct([("bytes", pa.binary()), ("path", pa.string())]),
+        ),
+        "observation.state": pa.array(
+            [[0.0] * state_dim for _ in rows],
+            type=pa.list_(pa.float32(), state_dim),
+        ),
+        "action": pa.array(
+            [row["action"] for row in rows],
+            type=pa.list_(pa.float32(), action_dim),
+        ),
+        "timestamp": pa.array([row["timestamp"] for row in rows], type=pa.float64()),
+        "episode_index": pa.array([row["episode_index"] for row in rows], type=pa.int64()),
+        "frame_index": pa.array([row["frame_index"] for row in rows], type=pa.int64()),
+        "task_index": pa.array([row["task_index"] for row in rows], type=pa.int64()),
+        "latency": pa.array([row["latency"] for row in rows], type=pa.int64()),
+        "done": pa.array([row["done"] for row in rows], type=pa.bool_()),
+        "reward": pa.array([row["reward"] for row in rows], type=pa.float32()),
+    }
+    if context_images_output_column is not None:
+        image_struct_type = pa.struct([("bytes", pa.binary()), ("path", pa.string())])
+        columns[context_images_output_column] = pa.array(
+            [row["context_images"] for row in rows],
+            type=pa.list_(image_struct_type),
+        )
+    table = pa.table(columns)
     pq.write_table(table, path)
 
 
@@ -683,9 +805,14 @@ def convert_dataset(
     default_latency: int | None = None,
     action_carrier: str = "native",
     action_layout: str = ACTION_LAYOUT_MULTIBINARY_7,
+    source_action_layout: str | None = None,
+    context_images_column: str | None = None,
+    context_images_output_column: str | None = DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN,
+    image_sequence_length: int = 4,
 ) -> dict[str, Any]:
     action_carrier = _normalize_action_carrier(action_carrier)
     action_layout = _normalize_action_layout(action_layout)
+    source_action_layout = _normalize_source_action_layout(source_action_layout)
     action_dim = _action_dim(action_carrier, action_layout)
     action_labels = _action_labels(action_carrier, action_layout)
     active_action_dim = _active_action_dim(action_layout)
@@ -782,7 +909,12 @@ def convert_dataset(
             latency_column=deadly_corridor_columns.latency,
             default_latency=default_latency,
         )
+        if context_images_column is not None:
+            if context_images_column not in ds_full.column_names:
+                raise ValueError(f"Configured context_images_column={context_images_column!r} is missing from {dataset_name}")
+            ds_full = ds_full.cast_column(context_images_column, datasets.Sequence(datasets.Image(decode=False)))
         episode_lengths: list[int] = []
+        image_shape: list[int] | None = None
 
         for new_episode_idx, original_episode_idx in enumerate(
             tqdm(original_episode_ids, desc=f"Writing Deadly Corridor {split} LeRobot episodes")
@@ -809,33 +941,56 @@ def convert_dataset(
                             "prompt": prompt,
                         }
                     )
-                out_rows.append(
-                    {
-                        "image_bytes": _png_bytes(_row_get(row, ("image", "observation.image", "obs"))),
-                        "action": _action_vector(row, action_layout),
-                        "timestamp": float(frame_idx) / FPS,
-                        "episode_index": new_episode_idx,
-                        "frame_index": frame_idx,
-                        "task_index": prompt_to_task_index[prompt],
-                        "latency": int(latency) if latency is not None else 0,
-                        "done": _row_done(
-                            row,
-                            deadly_corridor_columns.done,
-                            frame_idx=frame_idx,
-                            episode_length=len(episode),
-                        ),
-                        "reward": float(row[deadly_corridor_columns.reward]),
-                    }
-                )
+                image_bytes = _png_bytes(_row_get(row, ("image", "observation.image", "obs")))
+                if image_shape is None:
+                    image_shape = _png_image_shape(image_bytes)
+                out_row = {
+                    "image_bytes": image_bytes,
+                    "action": _source_action_vector(
+                        row,
+                        action_layout=action_layout,
+                        source_action_layout=source_action_layout,
+                    ),
+                    "timestamp": float(frame_idx) / FPS,
+                    "episode_index": new_episode_idx,
+                    "frame_index": frame_idx,
+                    "task_index": prompt_to_task_index[prompt],
+                    "latency": int(latency) if latency is not None else 0,
+                    "done": _row_done(
+                        row,
+                        deadly_corridor_columns.done,
+                        frame_idx=frame_idx,
+                        episode_length=len(episode),
+                    ),
+                    "reward": float(row[deadly_corridor_columns.reward]),
+                }
+                if context_images_column is not None:
+                    out_row["context_images"] = _context_images_from_context(
+                        row,
+                        context_images_column=context_images_column,
+                        image_sequence_length=image_sequence_length,
+                    )
+                out_rows.append(out_row)
             episode_lengths.append(len(out_rows))
             episode_chunk = new_episode_idx // 1000
-            _write_episode(
-                split_output_dir / f"data/chunk-{episode_chunk:03d}/episode_{new_episode_idx:06d}.parquet",
-                out_rows,
-                action_dim=action_dim,
-                state_dim=state_dim,
-            )
+            if context_images_column is not None:
+                _write_episode(
+                    split_output_dir / f"data/chunk-{episode_chunk:03d}/episode_{new_episode_idx:06d}.parquet",
+                    out_rows,
+                    action_dim=action_dim,
+                    state_dim=state_dim,
+                    context_images_output_column=context_images_output_column,
+                )
+            else:
+                _write_episode(
+                    split_output_dir / f"data/chunk-{episode_chunk:03d}/episode_{new_episode_idx:06d}.parquet",
+                    out_rows,
+                    action_dim=action_dim,
+                    state_dim=state_dim,
+                )
 
+        if image_shape is None:
+            raise ValueError(f"{dataset_name} has no selected {split} images")
         _write_metadata(
             split_output_dir,
             episode_lengths=episode_lengths,
@@ -844,6 +999,9 @@ def convert_dataset(
             action_labels=action_labels,
             state_dim=state_dim,
             state_labels=state_labels,
+            image_shape=image_shape,
+            context_images_output_column=context_images_output_column if context_images_column is not None else None,
+            image_sequence_length=image_sequence_length if context_images_column is not None else None,
         )
 
         if latency_rows:
@@ -872,10 +1030,14 @@ def convert_dataset(
             "active_action_dim": active_action_dim,
             "action_carrier": action_carrier,
             "action_layout": action_layout,
+            "source_action_layout": source_action_layout,
             "bridge_action_dim": BRIDGE_ACTION_DIM if action_carrier == "bridge" else None,
             "state_dim": state_dim,
             "active_state_dim": STATE_DIM,
             "state_carrier": action_carrier,
+            "context_images_column": context_images_column,
+            "context_images_output_column": context_images_output_column if context_images_column is not None else None,
+            "image_sequence_length": int(image_sequence_length) if context_images_column is not None else None,
             "latency_metadata": True,
             "latency_filter": [int(value) for value in split_latency_filter] if split_latency_filter else None,
             "episodes_per_latency": int(split_episodes_per_latency) if split_episodes_per_latency is not None else None,
@@ -927,6 +1089,19 @@ def main() -> int:
         choices=[ACTION_LAYOUT_MULTIBINARY_7, ACTION_LAYOUT_FACTORIZED_11],
         default=ACTION_LAYOUT_MULTIBINARY_7,
     )
+    parser.add_argument(
+        "--source-action-layout",
+        "--source_action_layout",
+        choices=[SOURCE_ACTION_LAYOUT_DEADLY_CORRIDOR_JOINT_54, "joint_54"],
+        default=None,
+    )
+    parser.add_argument("--context-images-column", "--context_images_column", default=None)
+    parser.add_argument(
+        "--context-images-output-column",
+        "--context_images_output_column",
+        default=DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN,
+    )
+    parser.add_argument("--image-sequence-length", "--image_sequence_length", type=int, default=4)
     args = parser.parse_args()
 
     latency_filter = None
@@ -946,6 +1121,10 @@ def main() -> int:
         episodes_per_latency=args.episodes_per_latency,
         action_carrier=args.action_carrier,
         action_layout=args.action_layout,
+        source_action_layout=args.source_action_layout,
+        context_images_column=args.context_images_column,
+        context_images_output_column=args.context_images_output_column,
+        image_sequence_length=args.image_sequence_length,
     )
     print(json.dumps(manifest, indent=2))
     return 0

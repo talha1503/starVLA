@@ -77,6 +77,21 @@ python examples/rl_games/scripts/launch_train.py \
   mode=single
 ```
 
+Deadly Corridor context-5 training with WanOFT uses the released 7D Bridge
+carrier. The raw teacher export stores `deadly_corridor_joint_54` action IDs;
+the pipeline decodes those IDs into the equivalent 7D semantic multi-hot
+buttons and trains the current action with binary cross-entropy:
+
+```bash
+bash scripts/run_deadly_corridor_wan_oft_pipeline.sh --latency 2
+```
+
+The standalone training boundary is:
+
+```bash
+bash commands/wanoft/train_deadly_corridor_wan_oft.sh 2
+```
+
 Single-latency Deadly Corridor with the pi-0.5 VLA backbone initialized from
 Bridge/RT-1, but with a fresh native factorized 11D action head:
 
