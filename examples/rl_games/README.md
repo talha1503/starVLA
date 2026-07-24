@@ -67,6 +67,21 @@ python examples/rl_games/scripts/launch_train.py \
   mode=mixed_latency
 ```
 
+The `memory-rollouts` Flappy config stores one image per row instead of an
+explicit context-image column. Convert it directly into the existing WanOFT
+LeRobot interface by deriving each row's history inside its episode:
+
+```bash
+python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_flappy_history_to_starvla_lerobot.py \
+  --image-sequence-length 5
+
+bash commands/wanoft/train_flappy_wan_oft.sh 3
+```
+
+The converter writes the final `flappy_train__bridge` and validation datasets
+directly. It uses the Hugging Face cache for source parquet shards but does not
+materialize an intermediate dataset with duplicated context images.
+
 Single-latency Deadly Corridor with bridge initialization:
 
 ```bash
