@@ -324,6 +324,7 @@ def test_wan_oft_commands_are_valid_bash() -> None:
         REPO_ROOT / "commands" / "wanoft" / "train_flappy_wan_oft_curriculum_cumulative.sh",
         REPO_ROOT / "commands" / "wanoft" / "train_flappy_wan_oft_curriculum_exclusive.sh",
         REPO_ROOT / "commands" / "wanoft" / "train_demon_attack_wan_oft.sh",
+        REPO_ROOT / "commands" / "wanoft" / "train_deadly_corridor_wan_oft.sh",
     ]
 
     subprocess.run(["bash", "-n", *[str(path) for path in command_paths]], check=True, cwd=REPO_ROOT)
@@ -351,6 +352,7 @@ def test_archived_release_commands_share_shell_structure() -> None:
 
 def test_archived_wan_oft_commands_only_run_post_train_eval() -> None:
     script_names = (
+        "train_deadly_corridor_wan_oft.sh",
         "train_demon_attack_wan_oft.sh",
         "train_flappy_wan_oft.sh",
         "train_flappy_wan_oft_mixed_latency.sh",
@@ -385,6 +387,27 @@ def test_demon_attack_wan_oft_command_preserves_parameterized_post_train_eval() 
     assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"' in command_text
     assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
     assert 'rl_games.env_eval.post_train.num_episodes="${POST_TRAIN_NUM_EPISODES}"' in command_text
+
+
+def test_deadly_corridor_wan_oft_command_preserves_context_and_action_contract() -> None:
+    command_text = (
+        REPO_ROOT / "commands" / "wanoft" / "train_deadly_corridor_wan_oft.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'LATENCY="${1:-${LATENCY:-2}}"' in command_text
+    assert 'CONTEXT_WINDOW="${CONTEXT_WINDOW:-5}"' in command_text
+    assert "model=wan_oft" in command_text
+    assert "env=deadly_corridor" in command_text
+    assert "init=wan_oft_libero" in command_text
+    assert "dataset.converted_name=deadly_corridor_train__bridge" in command_text
+    assert "datasets.vla_data.data_mix=deadly_corridor_train__bridge" in command_text
+    assert 'datasets.vla_data.image_sequence_length="${CONTEXT_WINDOW}"' in command_text
+    assert '"datasets.vla_data.observation_indices=${OBSERVATION_INDICES}"' in command_text
+    assert 'framework.world_model.num_frames="${CONTEXT_WINDOW}"' in command_text
+    assert "rl_games.deadly_corridor_loss_type=current_multibinary_bce" in command_text
+    assert "rl_games.env_eval.deadly.action_layout=multibinary_7" in command_text
+    assert "rl_games.env_eval.deadly.multibinary_threshold=0.0" in command_text
+    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[${LATENCY}]}"' in command_text
 
 
 def test_flappy_wan_oft_command_preserves_parameterized_fix_latency_defaults() -> None:
@@ -494,6 +517,22 @@ def test_demon_attack_wan_oft_pipeline_uses_archived_training_command() -> None:
     assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES}" \\' in script_text
     assert 'bash commands/wanoft/train_demon_attack_wan_oft.sh "${LATENCY}"' in script_text
     assert 'bash commands/train_demon_attack_wan_oft.sh "${LATENCY}"' not in script_text
+    subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
+
+
+def test_deadly_corridor_wan_oft_pipeline_covers_conversion_training_and_eval() -> None:
+    script_path = REPO_ROOT / "scripts" / "run_deadly_corridor_wan_oft_pipeline.sh"
+    training_command_path = REPO_ROOT / "commands" / "wanoft" / "train_deadly_corridor_wan_oft.sh"
+    script_text = script_path.read_text(encoding="utf-8")
+
+    assert training_command_path.exists()
+    assert '--source-action-layout deadly_corridor_joint_54' in script_text
+    assert '--action-layout multibinary_7' in script_text
+    assert '--context-images-column context_images' in script_text
+    assert '--image-sequence-length "${CONTEXT_WINDOW}"' in script_text
+    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[0,2,4,6,8]}"' in script_text
+    assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"' in script_text
+    assert 'bash commands/wanoft/train_deadly_corridor_wan_oft.sh "${LATENCY}"' in script_text
     subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
 
 

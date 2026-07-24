@@ -74,6 +74,23 @@ def test_pi0_bridge_forces_model_7d_carrier_and_masks_deadly_to_7d():
     assert cfg.framework.action_model.action_env_dim == 7
 
 
+def test_wan_oft_deadly_corridor_applies_current_multibinary_loss():
+    cfg = _cfg(
+        "deadly_corridor",
+        model_alias="wan_oft",
+        init_mode="bridge",
+        action_carrier="bridge",
+        action_dim=7,
+    )
+    cfg.rl_games.deadly_corridor_loss_type = "current_multibinary_bce"
+
+    apply_action_spec(cfg)
+
+    assert cfg.framework.action_model.action_dim == 7
+    assert cfg.framework.action_model.action_env_dim == 7
+    assert cfg.framework.action_model.loss_type == "current_multibinary_bce"
+
+
 def test_bridge_rejects_deadly_factorized_11_layout():
     cfg = _cfg("deadly_corridor", init_mode="bridge", action_carrier="bridge", action_dim=11)
     cfg.rl_games.env_eval.deadly.action_layout = "factorized_11"

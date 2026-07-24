@@ -283,6 +283,21 @@ class Wan_OFT(baseframework):
             )
             return current_loss + float(future_loss_weight) * future_loss
 
+        if self.action_loss_type in {"current_multibinary_bce", "current_bce"}:
+            logits = pred_actions[:, 0, :effective_dim]
+            targets = (actions_target[:, 0, :effective_dim] > 0).to(dtype=logits.dtype)
+            return F.binary_cross_entropy_with_logits(logits, targets)
+
+        if self.action_loss_type in {
+            "multibinary_bce",
+            "multibinary_ce",
+            "bce",
+            "binary_cross_entropy",
+        }:
+            logits = pred_actions[..., :effective_dim]
+            targets = (actions_target[..., :effective_dim] > 0).to(dtype=logits.dtype)
+            return F.binary_cross_entropy_with_logits(logits, targets)
+
         if self.action_loss_type in {"discrete_ce", "ce", "cross_entropy"}:
             if effective_dim < 2:
                 raise ValueError(
@@ -301,7 +316,8 @@ class Wan_OFT(baseframework):
         if self.action_loss_type not in {"l1", "mae"}:
             raise ValueError(
                 f"Unsupported action_model.loss_type={self.action_loss_type!r}; "
-                "expected one of: l1, discrete_ce, current_discrete_ce, current_plus_future_discrete_ce"
+                "expected one of: l1, discrete_ce, current_discrete_ce, "
+                "current_plus_future_discrete_ce, multibinary_bce, current_multibinary_bce"
             )
 
         return self.l1_loss(pred_actions[..., :effective_dim], actions_target[..., :effective_dim])

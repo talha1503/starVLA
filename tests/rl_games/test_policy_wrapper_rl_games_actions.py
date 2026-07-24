@@ -188,9 +188,21 @@ def test_resolve_deadly_corridor_multibinary_threshold_from_model_config():
             }
         },
     }
+    current_bce_config = {
+        "framework": {"action_model": {"loss_type": "current_multibinary_bce"}},
+        "rl_games": {
+            "env_eval": {
+                "deadly": {
+                    "action_layout": "multibinary_7",
+                    "multibinary_threshold": None,
+                }
+            }
+        },
+    }
 
     assert resolve_deadly_action_decode_spec(discrete_ce_config) == ("multibinary_7", 0.5)
     assert resolve_deadly_action_decode_spec(bce_config) == ("multibinary_7", 0.0)
+    assert resolve_deadly_action_decode_spec(current_bce_config) == ("multibinary_7", 0.0)
 
 
 def test_resolve_historical_deadly_corridor_action_layout_metadata():
