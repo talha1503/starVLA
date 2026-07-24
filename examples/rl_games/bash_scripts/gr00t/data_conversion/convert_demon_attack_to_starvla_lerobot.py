@@ -276,6 +276,12 @@ def _image_struct(image: Any) -> dict[str, bytes | str | None]:
     return {"bytes": _png_bytes(image), "path": None}
 
 
+def _image_shape(image_bytes: bytes) -> list[int]:
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        width, height = image.size
+    return [height, width, 3]
+
+
 def _context_images_from_context(
     row: dict[str, Any],
     *,
@@ -532,6 +538,8 @@ def _write_metadata(
     state_labels: list[str],
     context_images_output_column: str | None,
     image_sequence_length: int | None,
+    image_shape: list[int],
+    fps: int,
 ) -> None:
     meta_dir = dataset_dir / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
@@ -570,16 +578,16 @@ def _write_metadata(
 
     info = {
         "codebase_version": "v2.0",
-        "fps": FPS,
+        "fps": fps,
         "chunks_size": 1000,
         "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
         "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
         "features": {
             "observation.image": {
                 "dtype": "image",
-                "shape": [84, 84, 3],
+                "shape": image_shape,
                 "names": ["height", "width", "channel"],
-                "video_info": {"video.fps": FPS},
+                "video_info": {"video.fps": fps},
             },
             "observation.state": {
                 "dtype": "float32",
@@ -601,9 +609,9 @@ def _write_metadata(
     if context_images_output_column is not None:
         info["features"][context_images_output_column] = {
             "dtype": "image_sequence",
-            "shape": [int(image_sequence_length or 1) - 1, 84, 84, 3],
+            "shape": [int(image_sequence_length or 1) - 1, *image_shape],
             "names": ["time", "height", "width", "channel"],
-            "video_info": {"video.fps": FPS},
+            "video_info": {"video.fps": fps},
         }
     (meta_dir / "info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
 
@@ -851,6 +859,8 @@ def convert_dataset(
             state_labels=state_labels,
             context_images_output_column=context_images_output_column if context_images_column is not None else None,
             image_sequence_length=image_sequence_length if context_images_column is not None else None,
+            image_shape=[84, 84, 3],
+            fps=FPS,
         )
 
         if latency_rows:

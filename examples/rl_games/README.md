@@ -82,6 +82,21 @@ The converter writes the final `flappy_train__bridge` and validation datasets
 directly. It uses the Hugging Face cache for source parquet shards but does not
 materialize an intermediate dataset with duplicated context images.
 
+The corresponding Demon Attack config can be converted in the same way:
+
+```bash
+python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_demon_attack_history_to_starvla_lerobot.py \
+  --image-sequence-length 5
+```
+
+This writes `demon_attack_train__bridge` and its validation dataset under
+`data/demon_attack_fix_latency_6_200ep_context5`. The source latency is recorded
+faithfully as 6 raw ALE frames (100 ms), with observations at 15 FPS. It must
+not be interpreted as six environment decision steps: with Demon Attack's
+frameskip of four, the existing step-based eval queue would turn that into 24
+raw frames. Exact online evaluation for this dataset therefore requires a
+raw-frame latency evaluator instead of relabeling the converted data.
+
 Single-latency Deadly Corridor with bridge initialization:
 
 ```bash
