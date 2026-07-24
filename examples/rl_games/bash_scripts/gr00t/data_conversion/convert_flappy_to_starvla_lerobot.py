@@ -346,6 +346,12 @@ def _image_struct(image: Any) -> dict[str, bytes | str | None]:
     return {"bytes": _png_bytes(image), "path": None}
 
 
+def _png_image_shape(image_bytes: bytes) -> list[int]:
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        width, height = image.size
+    return [height, width, 3]
+
+
 def _context_images_from_context(
     row: dict[str, Any],
     *,
@@ -869,7 +875,6 @@ def _convert_local_parquet_split(
     missing_episode_ids = selected_episode_set - written_episode_ids
     if missing_episode_ids:
         raise ValueError(f"Selected episodes were not found during local parquet write pass: {sorted(missing_episode_ids, key=_episode_sort_key)[:10]}")
-
     _write_metadata(
         split_output_dir,
         episode_lengths=episode_lengths,
@@ -878,6 +883,7 @@ def _convert_local_parquet_split(
         action_labels=action_labels,
         state_dim=state_dim,
         state_labels=state_labels,
+        image_shape=[84, 84, 3],
         context_images_output_column=context_images_output_column if context_images_column is not None else None,
         image_sequence_length=image_sequence_length if context_images_column is not None else None,
     )
@@ -942,9 +948,11 @@ def _write_metadata(
     state_labels: list[str],
     context_images_output_column: str | None,
     image_sequence_length: int | None,
+    image_shape: list[int],
 ) -> None:
     meta_dir = dataset_dir / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
+    resolved_image_shape = image_shape
 
     modality = {
         "state": {
@@ -987,7 +995,7 @@ def _write_metadata(
         "features": {
             "observation.image": {
                 "dtype": "image",
-                "shape": [84, 84, 3],
+                "shape": resolved_image_shape,
                 "names": ["height", "width", "channel"],
                 "video_info": {"video.fps": FPS},
             },
@@ -1012,7 +1020,7 @@ def _write_metadata(
     if context_images_output_column is not None:
         info["features"][context_images_output_column] = {
             "dtype": "image_sequence",
-            "shape": [int(image_sequence_length or 1) - 1, 84, 84, 3],
+            "shape": [int(image_sequence_length or 1) - 1, *resolved_image_shape],
             "names": ["time", "height", "width", "channel"],
             "video_info": {"video.fps": FPS},
         }
@@ -1298,6 +1306,7 @@ def convert_dataset(
             action_labels=action_labels,
             state_dim=state_dim,
             state_labels=state_labels,
+            image_shape=[84, 84, 3],
             context_images_output_column=context_images_output_column if context_images_column is not None else None,
             image_sequence_length=image_sequence_length if context_images_column is not None else None,
         )
