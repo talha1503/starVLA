@@ -157,6 +157,7 @@ def _convert_episode(
         latency = int(row["latency_raw_frames"])
         latency_prompt_entry = {
             "latency": latency,
+            "latency_raw_frames": latency,
             "latency_ms": float(row["latency_ms"]),
             "prompt": prompt,
         }
@@ -314,16 +315,26 @@ def _convert_split(
     latency_prompt_map = flappy_converter.build_latency_prompt_map(
         list(latency_prompt_entries.values())
     )
+    for entry in latency_prompt_map.values():
+        entry["latency_raw_frames"] = int(entry["latency"])
     (split_output_dir / "latency_prompt_map.json").write_text(
         json.dumps(latency_prompt_map, indent=2),
         encoding="utf-8",
     )
 
+    source_latencies = sorted(
+        {
+            int(entry["latency_raw_frames"])
+            for entry in latency_prompt_entries.values()
+        }
+    )
     manifest = {
         "dataset_name": split_output_dir.name,
         "split": "train" if source_split == "train" else "validation",
         "source": dataset_name,
         "source_config": dataset_config_name,
+        "source_subdir": None,
+        "latency_subdirs": [None],
         "source_split": source_split,
         "format": "starvla_lerobot_v2_image_parquet",
         "action_labels": action_labels,
@@ -341,6 +352,15 @@ def _convert_split(
         "context_source": "previous_episode_rows",
         "context_images_output_column": context_images_output_column,
         "image_sequence_length": image_sequence_length,
+        "source_observation_fps": flappy_converter.FPS,
+        "source_env_fps": flappy_converter.FPS,
+        "source_env_frameskip": 1,
+        "latency_metadata": True,
+        "latency_unit": "raw_frames",
+        "latency_raw_frames": source_latencies,
+        "latency_env_steps": source_latencies,
+        "latency_filter": source_latencies,
+        "episodes_per_latency": max_episodes,
         "episodes": len(episode_lengths),
         "frames": int(sum(episode_lengths)),
         "max_episodes": max_episodes,

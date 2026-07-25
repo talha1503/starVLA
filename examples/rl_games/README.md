@@ -82,6 +82,18 @@ The converter writes the final `flappy_train__bridge` and validation datasets
 directly. It uses the Hugging Face cache for source parquet shards but does not
 materialize an intermediate dataset with duplicated context images.
 
+The legacy-named pipeline script now runs the same conversion and training path
+for fixed latency 3 only:
+
+```bash
+bash scripts/run_flappy_wan_oft_curriculum_pipeline.sh
+```
+
+The current `memory-rollouts` repository exposes only
+`flappy_fixed_latency_3_200ep_7k2steps`. Despite its retained filename, this
+script does not enable curriculum sampling, synthesize missing latency
+conditions, or evaluate other latency values.
+
 The corresponding Demon Attack config can be converted in the same way:
 
 ```bash

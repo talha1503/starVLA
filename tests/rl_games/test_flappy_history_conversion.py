@@ -133,6 +133,9 @@ def test_flappy_history_converter_builds_context_with_episode_local_left_padding
     info = json.loads(
         (output_dir / "meta/info.json").read_text(encoding="utf-8")
     )
+    prompt_map = json.loads(
+        (output_dir / "latency_prompt_map.json").read_text(encoding="utf-8")
+    )
 
     assert [
         [_pixel_value(image) for image in context]
@@ -152,6 +155,13 @@ def test_flappy_history_converter_builds_context_with_episode_local_left_padding
     assert info["features"]["observation.image"]["shape"] == [2, 2, 3]
     assert info["features"]["observation.context_images"]["shape"] == [3, 2, 2, 3]
     assert manifest["context_source"] == "previous_episode_rows"
+    assert manifest["source_config"] == "flappy_fixed_latency_3_200ep_7k2steps"
+    assert manifest["latency_metadata"] is True
+    assert manifest["latency_unit"] == "raw_frames"
+    assert manifest["latency_raw_frames"] == [3]
+    assert manifest["latency_env_steps"] == [3]
+    assert manifest["latency_filter"] == [3]
+    assert prompt_map["3"]["latency_raw_frames"] == 3
     assert manifest["episodes"] == 2
     assert manifest["frames"] == 5
 

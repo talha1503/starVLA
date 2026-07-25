@@ -444,6 +444,10 @@ def test_flappy_wan_oft_command_preserves_parameterized_fix_latency_defaults() -
     assert 'paths.dataset_local_dir="${DATASET_LOCAL_DIR}"' in command_text
     assert 'rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}"' in command_text
     assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
+    assert 'OBSERVATION_INDICES="["' in command_text
+    assert "for ((offset = CONTEXT_WINDOW - 1; offset >= 1; offset--)); do" in command_text
+    assert '"datasets.vla_data.observation_indices=${OBSERVATION_INDICES}"' in command_text
+    assert '"$@"' in command_text
 
 
 def test_wan_oft_flappy_mixed_latency_command_preserves_context5_baseline() -> None:
@@ -499,25 +503,47 @@ def test_wan_oft_flappy_curriculum_commands_enable_sequential_sampling() -> None
         assert "datasets.vla_data.latency_curriculum.eval_at_phase_end=false" in command_text
 
 
-def test_flappy_wan_oft_curriculum_pipeline_script_parameterizes_mode() -> None:
-    script_text = (REPO_ROOT / "scripts" / "run_flappy_wan_oft_curriculum_pipeline.sh").read_text(
-        encoding="utf-8"
-    )
+def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path() -> None:
+    script_path = REPO_ROOT / "scripts" / "run_flappy_wan_oft_curriculum_pipeline.sh"
+    script_text = script_path.read_text(encoding="utf-8")
 
-    assert "--mode <cumulative|exclusive>" in script_text
-    assert "TRAIN_MODE=\"curriculum_cumulative\"" in script_text
-    assert "TRAIN_MODE=\"curriculum_exclusive\"" in script_text
-    assert "RUN_ID=\"${RUN_ID:-wan_oft_flappy_mix_latency_context${CONTEXT_WINDOW}_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_curriculum_${MODE}}\"" in script_text
+    assert "--mode <" not in script_text
+    assert "\n    --mode)" not in script_text
+    assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
+    assert 'DATASET_CONFIG="flappy_fixed_latency_3_200ep_7k2steps"' in script_text
+    assert "LATENCY=3" in script_text
+    assert "convert_flappy_history_to_starvla_lerobot.py" in script_text
+    assert "convert_flappy_to_starvla_lerobot.py" not in script_text
+    assert '--dataset-name "${DATASET_REPO}"' in script_text
+    assert '--dataset-config-name "${DATASET_CONFIG}"' in script_text
+    assert '--max-episodes "${MAX_EPISODES}"' in script_text
+    assert "--context-images-column" not in script_text
+    assert '"dataset.source_hf=${DATASET_REPO}"' in script_text
+    assert '"dataset.config_name=${DATASET_CONFIG}"' in script_text
+    assert '"paths.run_root_dir=${RUN_ROOT_DIR}"' in script_text
+    assert '"paths.base_model_dir=${BASE_MODEL_DIR}"' in script_text
+    assert '"initialization.checkpoint_local_dir=${INIT_CHECKPOINT_DIR}"' in script_text
+    assert 'POST_TRAIN_LATENCIES="[3]"' in script_text
+    assert (
+        'bash commands/wanoft/train_flappy_wan_oft.sh 3 "${TRAIN_OVERRIDES[@]}"'
+        in script_text
+    )
+    assert "train_flappy_wan_oft_curriculum_cumulative.sh" not in script_text
+    assert "train_flappy_wan_oft_curriculum_exclusive.sh" not in script_text
     assert "UPLOAD_REPO=\"${UPLOAD_REPO:-latency-sensitive-bench/wanoft_flappy_200ep}\"" in script_text
     assert "UPLOAD_PATH_IN_REPO=\"${UPLOAD_PATH_IN_REPO:-${RUN_ID}}\"" in script_text
-    assert "--latency-filter \"${LATENCY_FILTER_CSV}\"" in script_text
-    assert "--episodes-per-latency \"${EPISODES_PER_LATENCY}\"" in script_text
-    assert "--context-images-column context_images" in script_text
     assert "--image-sequence-length \"${CONTEXT_WINDOW}\"" in script_text
-    assert "python examples/rl_games/scripts/launch_train.py" in script_text
-    assert "mode=\"${TRAIN_MODE}\"" in script_text
-    assert "checkpoint.sync.enabled=false" in script_text
     assert "hf upload \"${UPLOAD_REPO}\" \"${RUN_DIR}\" \"${UPLOAD_PATH_IN_REPO}\"" in script_text
+    subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
+    help_result = subprocess.run(
+        ["bash", str(script_path), "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert "fixed-latency-3" in help_result.stdout
+    assert "--mode" not in help_result.stdout
 
 
 def test_demon_attack_wan_oft_pipeline_uses_archived_training_command() -> None:
