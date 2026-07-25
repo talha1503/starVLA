@@ -297,6 +297,7 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         dataset_force_download=str(_as_bool(_get(cfg, "dataset.force_download", False))).lower(),
         setup_force=str(_as_bool(_get(cfg, "dataset.setup_force", False))).lower(),
         skip_verification=str(_as_bool(_get(cfg, "dataset.skip_verification", False))).lower(),
+        target_latency_unit=_get(cfg, "dataset.target_latency_unit", "observation_steps"),
         verify_rows=int(_get(cfg, "dataset.verify_rows", 200)),
         max_episodes=max_episodes,
         episodes_per_latency=(

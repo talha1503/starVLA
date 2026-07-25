@@ -99,6 +99,7 @@ def test_flappy_converter_writes_loader_compatible_context_image_metadata(
         context_images_output_column="observation.context_images",
         image_sequence_length=5,
         image_shape=[84, 84, 3],
+        fps=30.0,
     )
 
     modality = json.loads((tmp_path / "meta" / "modality.json").read_text())
@@ -109,7 +110,7 @@ def test_flappy_converter_writes_loader_compatible_context_image_metadata(
         "dtype": "image_sequence",
         "shape": [4, 84, 84, 3],
         "names": ["time", "height", "width", "channel"],
-        "video_info": {"video.fps": flappy_converter.FPS},
+        "video_info": {"video.fps": 30.0},
     }
 
 

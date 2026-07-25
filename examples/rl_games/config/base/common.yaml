@@ -92,6 +92,7 @@ dataset:
   force_download: false
   setup_force: false
   skip_verification: false
+  target_latency_unit: observation_steps
   verify_rows: 200
   max_episodes: null
   episodes_per_latency: null

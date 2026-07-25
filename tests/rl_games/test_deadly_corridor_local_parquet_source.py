@@ -177,7 +177,7 @@ def test_convert_deadly_corridor_writes_context_image_metadata(
         image_shape=[2, 2, 3],
         context_images_output_column="observation.context_images",
         image_sequence_length=5,
-        fps=convert_deadly_corridor.FPS,
+        fps=35.0,
     )
 
     info = json.loads((tmp_path / "meta" / "info.json").read_text(encoding="utf-8"))
@@ -186,7 +186,7 @@ def test_convert_deadly_corridor_writes_context_image_metadata(
         "dtype": "image_sequence",
         "shape": [4, 2, 2, 3],
         "names": ["time", "height", "width", "channel"],
-        "video_info": {"video.fps": convert_deadly_corridor.FPS},
+        "video_info": {"video.fps": 35.0},
     }
 
 
@@ -237,6 +237,11 @@ def test_convert_deadly_corridor_canonical_rollout_end_to_end(tmp_path: Path) ->
         source_action_layout="deadly_corridor_joint_54",
         context_images_column="context_images",
         image_sequence_length=5,
+        fps=35.0,
+        obs_stride_raw_frames=4,
+        source_latency_column="latency_raw_frames",
+        target_latency_unit="raw_frames",
+        source_rows_unit="decision_step",
     )
 
     output_table = parquet.read_table(output_dir / "data/chunk-000/episode_000000.parquet")

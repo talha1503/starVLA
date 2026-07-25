@@ -375,7 +375,10 @@ def _convert_split(
         fps=SOURCE_OBSERVATION_FPS,
     )
     latency_prompt_map = deadly_corridor_converter.build_latency_prompt_map(
-        list(latency_prompt_entries.values())
+        list(latency_prompt_entries.values()),
+        latency_column="latency_raw_frames",
+        target_latency_unit="raw_frames",
+        obs_stride_raw_frames=SOURCE_ENV_FRAMESKIP,
     )
     for entry in latency_prompt_map.values():
         entry["latency_raw_frames"] = int(entry["latency"])

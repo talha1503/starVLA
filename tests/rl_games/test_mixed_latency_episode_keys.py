@@ -62,6 +62,77 @@ def converters(monkeypatch: pytest.MonkeyPatch) -> list[ModuleType]:
         sys.modules.pop(module_name, None)
 
 
+@pytest.mark.parametrize("converter_index", [0, 1, 2])
+def test_converters_preserve_raw_frame_latency(
+    converters: list[ModuleType],
+    converter_index: int,
+) -> None:
+    converter = converters[converter_index]
+
+    assert converter._row_latency(
+        {"latency_raw_frames": 6},
+        latency_column="latency_raw_frames",
+        target_latency_unit="raw_frames",
+        obs_stride_raw_frames=4,
+        default_latency=None,
+    ) == 6
+
+
+@pytest.mark.parametrize("converter_index", [0, 1, 2])
+def test_converters_preserve_legacy_observation_step_ids(
+    converters: list[ModuleType],
+    converter_index: int,
+) -> None:
+    converter = converters[converter_index]
+
+    assert converter._row_latency(
+        {"latency_raw_frames": 8},
+        latency_column="latency_raw_frames",
+        target_latency_unit="observation_steps",
+        obs_stride_raw_frames=4,
+        default_latency=None,
+    ) == 2
+
+
+@pytest.mark.parametrize("converter_index", [0, 1, 2])
+def test_full_dataset_fallback_retains_explicit_latency_column(
+    monkeypatch: pytest.MonkeyPatch,
+    converters: list[ModuleType],
+    converter_index: int,
+) -> None:
+    converter = converters[converter_index]
+
+    class FakeDataset:
+        column_names = [
+            "episode_idx",
+            "decision_step",
+            "action_id",
+            "raw_reward",
+            "prompt",
+            "done",
+            "latency",
+            "latency_raw_frames",
+            "latency_ms",
+        ]
+
+    def fake_load_split(*args: Any, **kwargs: Any) -> FakeDataset:
+        if "columns" in kwargs:
+            raise RuntimeError("projected loading unavailable")
+        return FakeDataset()
+
+    monkeypatch.setattr(converter, "_load_split", fake_load_split)
+
+    _, columns = converter._load_index_split(
+        "fake/dataset",
+        "train",
+        cache_dir=None,
+        want_latency=True,
+        source_latency_column="latency_raw_frames",
+    )
+
+    assert columns.latency == "latency_raw_frames"
+
+
 def test_mixed_latency_variants_are_distinct_episode_keys(converters: list[ModuleType]) -> None:
     for converter in converters:
         first = converter._episode_key(0, 0)
@@ -215,6 +286,9 @@ def test_demon_attack_zero_latency_conversion_writes_latency_column(
         def select(self, indices: list[int]):
             return FakeDataset([self.dataset_rows[index] for index in indices])
 
+        def cast_column(self, name, feature):
+            return self
+
     def fake_load_dataset(*args, **kwargs):
         columns = kwargs.get("columns")
         if columns is None:
@@ -224,7 +298,10 @@ def test_demon_attack_zero_latency_conversion_writes_latency_column(
             raise RuntimeError(f"No match for FieldRef.Name({missing[0]})")
         return FakeDataset([{column: row[column] for column in columns} for row in rows])
 
-    def fake_write_episode(path, episode_rows, *, action_dim: int, state_dim: int) -> None:
+    def fake_write_episode(
+        path, episode_rows, *, action_dim: int, state_dim: int,
+        context_images_output_column=None,
+    ) -> None:
         captured_rows.extend(episode_rows)
 
     monkeypatch.setattr(demon, "load_dataset", fake_load_dataset)
@@ -245,6 +322,11 @@ def test_demon_attack_zero_latency_conversion_writes_latency_column(
         prompt_map_override=None,
         default_latency=None,
         action_carrier="native",
+        fps=15.0,
+        obs_stride_raw_frames=4,
+        source_latency_column=None,
+        target_latency_unit="raw_frames",
+        source_rows_unit="decision_step",
     )
 
     assert captured_rows
@@ -398,6 +480,11 @@ def test_deadly_corridor_zero_latency_conversion_writes_latency_column(
         latency_filter=None,
         episodes_per_latency=None,
         action_carrier="native",
+        fps=8.75,
+        obs_stride_raw_frames=4,
+        source_latency_column=None,
+        target_latency_unit="raw_frames",
+        source_rows_unit="decision_step",
         action_layout=deadly.ACTION_LAYOUT_MULTIBINARY_7,
     )
 

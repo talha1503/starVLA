@@ -27,6 +27,9 @@ from examples.rl_games.bash_scripts.gr00t.data_conversion import (
 DEFAULT_DATASET_NAME = "latency-sensitive-bench/memory-rollouts"
 DEFAULT_DATASET_CONFIG_NAME = "flappy_fixed_latency_3_200ep_7k2steps"
 DEFAULT_OUTPUT_DIR = Path("data/flappy_fix_latency_3_200ep_context5/flappy_train__bridge")
+SOURCE_OBSERVATION_FPS = 30.0
+SOURCE_ENV_FPS = 30.0
+SOURCE_ENV_FRAMESKIP = 1
 SOURCE_COLUMNS = (
     "episode_idx",
     "decision_step",
@@ -185,7 +188,7 @@ def _convert_episode(
                     int(row["action_id"]),
                     action_dim=action_dim,
                 ),
-                "timestamp": float(frame_idx) / flappy_converter.FPS,
+                "timestamp": float(frame_idx) / SOURCE_OBSERVATION_FPS,
                 "episode_index": new_episode_idx,
                 "frame_index": frame_idx,
                 "decision_step": decision_step,
@@ -311,9 +314,13 @@ def _convert_split(
         image_shape=image_shape,
         context_images_output_column=context_images_output_column,
         image_sequence_length=image_sequence_length,
+        fps=SOURCE_OBSERVATION_FPS,
     )
     latency_prompt_map = flappy_converter.build_latency_prompt_map(
-        list(latency_prompt_entries.values())
+        list(latency_prompt_entries.values()),
+        latency_column="latency_raw_frames",
+        target_latency_unit="raw_frames",
+        obs_stride_raw_frames=SOURCE_ENV_FRAMESKIP,
     )
     for entry in latency_prompt_map.values():
         entry["latency_raw_frames"] = int(entry["latency"])
@@ -352,9 +359,9 @@ def _convert_split(
         "context_source": "previous_episode_rows",
         "context_images_output_column": context_images_output_column,
         "image_sequence_length": image_sequence_length,
-        "source_observation_fps": flappy_converter.FPS,
-        "source_env_fps": flappy_converter.FPS,
-        "source_env_frameskip": 1,
+        "source_observation_fps": SOURCE_OBSERVATION_FPS,
+        "source_env_fps": SOURCE_ENV_FPS,
+        "source_env_frameskip": SOURCE_ENV_FRAMESKIP,
         "latency_metadata": True,
         "latency_unit": "raw_frames",
         "latency_raw_frames": source_latencies,

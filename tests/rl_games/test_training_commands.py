@@ -636,6 +636,16 @@ def test_deadly_corridor_wan_oft_pipeline_uses_fixed_latency_history_data_withou
     assert "--latency" not in help_result.stdout
 
 
+def test_demon_attack_wan_oft_pipeline_validates_raw_frame_latency_contract() -> None:
+    script_text = (REPO_ROOT / "scripts" / "run_demon_attack_wan_oft_pipeline.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'manifest.get("latency_unit") != "raw_frames"' in script_text
+    assert 'manifest.get("latency_raw_frames") != [6]' in script_text
+    assert 'manifest.get("latency_env_steps") != [1.5]' in script_text
+
+
 def test_openvla_deadly_cross_task_scripts_are_valid_bash() -> None:
     script_dir = REPO_ROOT / "examples" / "rl_games" / "bash_scripts" / "openvla" / "bridge" / "cross_task"
     command_paths = [str(script_dir / f"{script}.sh") for script in OPENVLA_DEADLY_CROSS_TASK_SCRIPTS]
@@ -880,6 +890,29 @@ def test_run_experiment_auto_forwards_canonical_nested_fields(tmp_path: Path) ->
     assert [item for item in cmd if "framework.qwenvl.base_vlm=" in item][-1] == (
         f"++framework.qwenvl.base_vlm={tmp_path / 'resolved_base_model'}"
     )
+
+
+def test_legacy_run_experiment_setup_namespace_forwards_latency_unit(tmp_path: Path) -> None:
+    cfg = {
+        "run_id": "legacy_setup",
+        "model": "openvla",
+        "env": "demon_attack",
+        "mode": "single",
+        "paths": {
+            "dataset_local_dir": "datasets",
+            "base_model_dir": "base_model",
+        },
+        "dataset": {
+            "converted_name": "demon_attack_train",
+        },
+    }
+
+    setup_args = run_experiment._setup_namespace(cfg, tmp_path, "results/Checkpoints")
+    assert setup_args.target_latency_unit == "observation_steps"
+
+    cfg["dataset"]["target_latency_unit"] = "raw_frames"
+    setup_args = run_experiment._setup_namespace(cfg, tmp_path, "results/Checkpoints")
+    assert setup_args.target_latency_unit == "raw_frames"
 
 
 def test_launcher_forwards_vit_and_llm_freeze_overrides(tmp_path: Path, monkeypatch) -> None:

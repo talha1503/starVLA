@@ -183,7 +183,7 @@ def test_convert_demon_attack_writes_loader_compatible_context_image_metadata(
         context_images_output_column="observation.context_images",
         image_sequence_length=5,
         image_shape=[84, 84, 3],
-        fps=convert_demon_attack.FPS,
+        fps=15.0,
     )
 
     modality = json.loads((tmp_path / "meta" / "modality.json").read_text())
@@ -194,5 +194,5 @@ def test_convert_demon_attack_writes_loader_compatible_context_image_metadata(
         "dtype": "image_sequence",
         "shape": [4, 84, 84, 3],
         "names": ["time", "height", "width", "channel"],
-        "video_info": {"video.fps": convert_demon_attack.FPS},
+        "video_info": {"video.fps": 15.0},
     }
