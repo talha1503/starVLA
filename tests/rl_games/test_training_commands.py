@@ -569,6 +569,7 @@ def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_histor
     assert 'BENCHMARK_ROOT="${LATENCY_BENCH_ROOT:-}"' in script_text
     assert "--benchmark-root <path>" in script_text
     assert 'BENCHMARK_ROOT="${BENCHMARK_ROOT:-${REPO_ROOT}/../latency-sensitive-bench}"' in script_text
+    assert 'third_party/flappy-bird-gymnasium/setup.py' in script_text
     assert 'LATENCY_BENCH_ROOT="${BENCHMARK_ROOT}" "${BOOTSTRAP_ARGS[@]}"' in script_text
     assert "--tier dev" in script_text
     assert "--accept-rom-license" in script_text

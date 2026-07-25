@@ -251,7 +251,7 @@ PY
 if [[ "${SKIP_ENV_SETUP}" != "true" ]]; then
   if [[ ! -f "${BENCHMARK_ROOT}/pyproject.toml" ]] \
     || [[ ! -d "${BENCHMARK_ROOT}/latency_bench" ]] \
-    || [[ ! -f "${BENCHMARK_ROOT}/third_party/flappy-bird-gymnasium/pyproject.toml" ]]; then
+    || [[ ! -f "${BENCHMARK_ROOT}/third_party/flappy-bird-gymnasium/setup.py" ]]; then
     echo "[demon-wanoft-fixed] Invalid latency-sensitive-bench checkout: ${BENCHMARK_ROOT}" >&2
     echo "[demon-wanoft-fixed] Pass --benchmark-root with a checkout whose submodules are initialized." >&2
     exit 1
