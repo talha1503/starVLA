@@ -3,31 +3,30 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/run_demon_attack_wan_oft_pipeline.sh [options]
+Usage: bash scripts/run_deadly_corridor_wan_oft_pipeline.sh [options]
 
-Runs the fixed-raw-frame-latency-6 Demon Attack WanOFT pipeline:
+Runs the fixed-raw-frame-latency-6 Deadly Corridor WanOFT pipeline:
   1. install/update the starvla_wanoft env
   2. download WanOFT checkpoints
   3. convert memory-rollouts row history directly into StarVLA LeRobot data
-  4. train WanOFT through commands/wanoft/train_demon_attack_wan_oft.sh
+  4. train WanOFT through commands/wanoft/train_deadly_corridor_wan_oft.sh
   5. upload the run directory
 
-The source latency is 6 raw Atari frames, or 1.5 policy decision steps at
-frameskip=4. Post-train rollout evaluation is disabled because the current
+The source latency is 6 raw VizDoom frames, or 1.5 policy decision steps at
+frameskip=4. Core environment evaluation is disabled because the current
 integer decision-step queue cannot reproduce a 1.5-step latency.
 
 Options:
   --conda-env <name>          Conda env name (default: starvla_wanoft)
   --python-version <ver>      Python version for bootstrap (default: 3.10)
   --context-window <N>        Context window size (default: 5)
-  --max-episodes <N>          Maximum source episodes per split (default: 200)
+  --max-episodes <N>          Maximum source episodes per split (default: 1000)
   --max-train-steps <N>       Training steps (default: 2000)
   --benchmark-root <path>     latency-sensitive-bench checkout (default: sibling checkout)
   --dataset-cache-dir <path>  Optional Hugging Face cache directory
-  --upload-repo <repo>        HF model repo for run upload (default: latency-sensitive-bench/demon_attack_200ep)
+  --upload-repo <repo>        HF model repo for run upload (default: latency-sensitive-bench/deadly_corridor_1000ep)
   --upload-path <path>        Path inside the HF repo (default: <run_id>)
   --run-id <id>               Override run id
-  --accept-rom-license        Permit AutoROM to accept and download Atari ROMs
   --skip-env-setup            Do not run examples/rl_games/install/bootstrap.sh
   --skip-checkpoints          Do not download Wan base/init checkpoints
   --skip-convert              Do not convert source data
@@ -40,7 +39,7 @@ EOF
 CONDA_ENV_NAME="${CONDA_ENV_NAME:-starvla_wanoft}"
 BOOTSTRAP_PYTHON_VERSION="${STARVLA_PYTHON_VERSION:-3.10}"
 CONTEXT_WINDOW="${CONTEXT_WINDOW:-5}"
-MAX_EPISODES="${MAX_EPISODES:-200}"
+MAX_EPISODES="${MAX_EPISODES:-1000}"
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-2000}"
 PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-4}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-32}"
@@ -48,19 +47,18 @@ EFFECTIVE_BATCH_SIZE="${EFFECTIVE_BATCH_SIZE:-$((PER_DEVICE_BATCH_SIZE * GRADIEN
 WANDB_ENTITY_VALUE="${WANDB_ENTITY:-dongqianyu99-zhejiang-university}"
 WANDB_PROJECT_VALUE="${WANDB_PROJECT:-starVLA_rl_games}"
 DATASET_REPO="latency-sensitive-bench/memory-rollouts"
-DATASET_CONFIG="demon_attack_fixed_latency_6_200ep_7k2steps"
+DATASET_CONFIG="deadly_corridor_fixed_latency_6_1000ep_7k2steps"
 DATASET_CACHE_DIR="${DATASET_CACHE_DIR:-}"
 BENCHMARK_ROOT="${LATENCY_BENCH_ROOT:-}"
 LATENCY_RAW_FRAMES=6
 RUN_ROOT_DIR="${RUN_ROOT_DIR:-results/Checkpoints}"
 RUN_ID="${RUN_ID:-}"
-UPLOAD_REPO="${UPLOAD_REPO:-latency-sensitive-bench/demon_attack_200ep}"
+UPLOAD_REPO="${UPLOAD_REPO:-latency-sensitive-bench/deadly_corridor_1000ep}"
 UPLOAD_PATH_IN_REPO="${UPLOAD_PATH_IN_REPO:-}"
 BASE_MODEL_REPO="${BASE_MODEL_REPO:-Wan-AI/Wan2.2-TI2V-5B-Diffusers}"
 BASE_MODEL_DIR="${BASE_MODEL_DIR:-playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers}"
 INIT_CHECKPOINT_REPO="${INIT_CHECKPOINT_REPO:-StarVLA/WM4A-Wan2d2-OFT-LIBERO-4in1}"
 INIT_CHECKPOINT_DIR="${INIT_CHECKPOINT_DIR:-playground/Pretrained_models/WM4A-Wan2d2-OFT-LIBERO-4in1}"
-ACCEPT_ROM_LICENSE="false"
 SKIP_ENV_SETUP="false"
 SKIP_CHECKPOINTS="false"
 SKIP_CONVERT="false"
@@ -109,10 +107,6 @@ while [[ $# -gt 0 ]]; do
       RUN_ID="$2"
       shift 2
       ;;
-    --accept-rom-license)
-      ACCEPT_ROM_LICENSE="true"
-      shift
-      ;;
     --skip-env-setup)
       SKIP_ENV_SETUP="true"
       shift
@@ -138,7 +132,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "[demon-wanoft-fixed] Unknown argument: $1" >&2
+      echo "[deadly-wanoft-fixed] Unknown argument: $1" >&2
       usage >&2
       exit 2
       ;;
@@ -146,11 +140,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 if ! [[ "${CONTEXT_WINDOW}" =~ ^[0-9]+$ ]] || [[ "${CONTEXT_WINDOW}" -lt 2 ]]; then
-  echo "[demon-wanoft-fixed] --context-window must be an integer >= 2, got: ${CONTEXT_WINDOW}" >&2
+  echo "[deadly-wanoft-fixed] --context-window must be an integer >= 2, got: ${CONTEXT_WINDOW}" >&2
   exit 2
 fi
 if ! [[ "${MAX_EPISODES}" =~ ^[0-9]+$ ]] || [[ "${MAX_EPISODES}" -lt 1 ]]; then
-  echo "[demon-wanoft-fixed] --max-episodes must be a positive integer, got: ${MAX_EPISODES}" >&2
+  echo "[deadly-wanoft-fixed] --max-episodes must be a positive integer, got: ${MAX_EPISODES}" >&2
   exit 2
 fi
 
@@ -159,25 +153,25 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 BENCHMARK_ROOT="${BENCHMARK_ROOT:-${REPO_ROOT}/../latency-sensitive-bench}"
-CONVERTED_DATA_ROOT="data/demon_attack_fix_latency_${LATENCY_RAW_FRAMES}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}"
-CONVERTED_DATA_DIR="${CONVERTED_DATA_ROOT}/demon_attack_train__bridge"
+CONVERTED_DATA_ROOT="data/deadly_corridor_fix_latency_${LATENCY_RAW_FRAMES}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}"
+CONVERTED_DATA_DIR="${CONVERTED_DATA_ROOT}/deadly_corridor_train__bridge"
 PROMPT_MAP_PATH="${CONVERTED_DATA_DIR}/latency_prompt_map.json"
 MANIFEST_PATH="${CONVERTED_DATA_DIR}/manifest.json"
-RUN_ID="${RUN_ID:-wan_oft_demon_attack_fix_latency_${LATENCY_RAW_FRAMES}_context${CONTEXT_WINDOW}_standard_sft_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_224_currentce}"
+RUN_ID="${RUN_ID:-wan_oft_deadly_corridor_fix_latency_${LATENCY_RAW_FRAMES}_context${CONTEXT_WINDOW}_standard_sft_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_224_currentbce}"
 UPLOAD_PATH_IN_REPO="${UPLOAD_PATH_IN_REPO:-${RUN_ID}}"
 RUN_DIR="${RUN_ROOT_DIR}/${RUN_ID}"
 
 ensure_hf_cli() {
   if ! command -v hf >/dev/null 2>&1; then
-    echo "[demon-wanoft-fixed] Hugging Face CLI command 'hf' is not available in PATH." >&2
-    echo "[demon-wanoft-fixed] Re-run without --skip-env-setup, or install huggingface-hub in ${CONDA_ENV_NAME}." >&2
+    echo "[deadly-wanoft-fixed] Hugging Face CLI command 'hf' is not available in PATH." >&2
+    echo "[deadly-wanoft-fixed] Re-run without --skip-env-setup, or install huggingface-hub in ${CONDA_ENV_NAME}." >&2
     exit 1
   fi
 }
 
 activate_conda_env() {
   if ! command -v conda >/dev/null 2>&1; then
-    echo "[demon-wanoft-fixed] conda is required but was not found in PATH." >&2
+    echo "[deadly-wanoft-fixed] conda is required but was not found in PATH." >&2
     exit 1
   fi
   local conda_base
@@ -214,6 +208,15 @@ prompt_map = json.loads(prompt_map_path.read_text(encoding="utf-8"))
 if manifest.get("source_config") != expected_config:
     raise ValueError(
         f"Expected source_config={expected_config!r}, got {manifest.get('source_config')!r}"
+    )
+if manifest.get("action_layout") != "multibinary_7":
+    raise ValueError(
+        f"Expected action_layout='multibinary_7', got {manifest.get('action_layout')!r}"
+    )
+if manifest.get("source_action_layout") != "deadly_corridor_joint_54":
+    raise ValueError(
+        "Expected source_action_layout='deadly_corridor_joint_54', got "
+        f"{manifest.get('source_action_layout')!r}"
     )
 if manifest.get("image_sequence_length") != expected_context_window:
     raise ValueError(
@@ -252,24 +255,17 @@ if [[ "${SKIP_ENV_SETUP}" != "true" ]]; then
   if [[ ! -f "${BENCHMARK_ROOT}/pyproject.toml" ]] \
     || [[ ! -d "${BENCHMARK_ROOT}/latency_bench" ]] \
     || [[ ! -f "${BENCHMARK_ROOT}/third_party/flappy-bird-gymnasium/setup.py" ]]; then
-    echo "[demon-wanoft-fixed] Invalid latency-sensitive-bench checkout: ${BENCHMARK_ROOT}" >&2
-    echo "[demon-wanoft-fixed] Pass --benchmark-root with a checkout whose submodules are initialized." >&2
+    echo "[deadly-wanoft-fixed] Invalid latency-sensitive-bench checkout: ${BENCHMARK_ROOT}" >&2
+    echo "[deadly-wanoft-fixed] Pass --benchmark-root with a checkout whose submodules are initialized." >&2
     exit 1
   fi
-  echo "[demon-wanoft-fixed] Installing/updating env: ${CONDA_ENV_NAME}"
-  BOOTSTRAP_ARGS=(
-    bash
-    examples/rl_games/install/bootstrap.sh
-    --tier dev
-    --conda-env "${CONDA_ENV_NAME}"
-    --python-version "${BOOTSTRAP_PYTHON_VERSION}"
-    --model wan_oft
-    --env demon_attack
-  )
-  if [[ "${ACCEPT_ROM_LICENSE}" == "true" ]]; then
-    BOOTSTRAP_ARGS+=(--accept-rom-license)
-  fi
-  LATENCY_BENCH_ROOT="${BENCHMARK_ROOT}" "${BOOTSTRAP_ARGS[@]}"
+  echo "[deadly-wanoft-fixed] Installing/updating env: ${CONDA_ENV_NAME}"
+  LATENCY_BENCH_ROOT="${BENCHMARK_ROOT}" bash examples/rl_games/install/bootstrap.sh \
+    --tier dev \
+    --conda-env "${CONDA_ENV_NAME}" \
+    --python-version "${BOOTSTRAP_PYTHON_VERSION}" \
+    --model wan_oft \
+    --env deadly_corridor
 fi
 
 activate_conda_env
@@ -278,25 +274,24 @@ if [[ "${SKIP_CHECKPOINTS}" != "true" || "${SKIP_UPLOAD}" != "true" ]]; then
 fi
 
 if [[ "${SKIP_CHECKPOINTS}" != "true" ]]; then
-  echo "[demon-wanoft-fixed] Downloading Wan base model checkpoint"
+  echo "[deadly-wanoft-fixed] Downloading Wan base model checkpoint"
   hf download "${BASE_MODEL_REPO}" \
     --local-dir "${BASE_MODEL_DIR}"
 
-  echo "[demon-wanoft-fixed] Downloading WanOFT initialization checkpoint"
+  echo "[deadly-wanoft-fixed] Downloading WanOFT initialization checkpoint"
   hf download "${INIT_CHECKPOINT_REPO}" \
     --local-dir "${INIT_CHECKPOINT_DIR}"
 fi
 
 if [[ "${SKIP_CONVERT}" != "true" ]]; then
-  echo "[demon-wanoft-fixed] Converting ${DATASET_REPO}/${DATASET_CONFIG} into ${CONVERTED_DATA_DIR}"
+  echo "[deadly-wanoft-fixed] Converting ${DATASET_REPO}/${DATASET_CONFIG} into ${CONVERTED_DATA_DIR}"
   CONVERTER_ARGS=(
     python
-    examples/rl_games/bash_scripts/gr00t/data_conversion/convert_demon_attack_history_to_starvla_lerobot.py
+    examples/rl_games/bash_scripts/gr00t/data_conversion/convert_deadly_corridor_history_to_starvla_lerobot.py
     --dataset-name "${DATASET_REPO}"
     --dataset-config-name "${DATASET_CONFIG}"
     --output-dir "${CONVERTED_DATA_DIR}"
     --max-episodes "${MAX_EPISODES}"
-    --action-carrier bridge
     --image-sequence-length "${CONTEXT_WINDOW}"
     --force
   )
@@ -308,7 +303,7 @@ fi
 
 if [[ "${SKIP_TRAIN}" != "true" ]]; then
   validate_converted_dataset
-  echo "[demon-wanoft-fixed] Training raw-frame latency=${LATENCY_RAW_FRAMES} run_id=${RUN_ID}"
+  echo "[deadly-wanoft-fixed] Training raw-frame latency=${LATENCY_RAW_FRAMES} with core eval disabled run_id=${RUN_ID}"
   export WANDB_ENTITY="${WANDB_ENTITY_VALUE}"
   export WANDB_PROJECT="${WANDB_PROJECT_VALUE}"
 
@@ -319,6 +314,8 @@ if [[ "${SKIP_TRAIN}" != "true" ]]; then
     "dataset.source_hf=${DATASET_REPO}"
     "dataset.config_name=${DATASET_CONFIG}"
     "dataset.max_episodes=${MAX_EPISODES}"
+    "rl_games.env_eval.enabled=false"
+    "rl_games.env_eval.mid_train.enabled=false"
     "rl_games.env_eval.post_train.enabled=false"
   )
   if [[ -n "${DATASET_CACHE_DIR}" ]]; then
@@ -333,18 +330,18 @@ if [[ "${SKIP_TRAIN}" != "true" ]]; then
   DATASET_LOCAL_DIR="${CONVERTED_DATA_ROOT}" \
   RUN_ID="${RUN_ID}" \
   PROMPT_MAP_PATH="${PROMPT_MAP_PATH}" \
-    bash commands/wanoft/train_demon_attack_wan_oft.sh 6 "${TRAIN_OVERRIDES[@]}"
+    bash commands/wanoft/train_deadly_corridor_wan_oft.sh 6 "${TRAIN_OVERRIDES[@]}"
 fi
 
 if [[ "${SKIP_UPLOAD}" != "true" ]]; then
   if [[ ! -d "${RUN_DIR}" ]]; then
-    echo "[demon-wanoft-fixed] Training output directory does not exist: ${RUN_DIR}" >&2
+    echo "[deadly-wanoft-fixed] Training output directory does not exist: ${RUN_DIR}" >&2
     exit 1
   fi
-  echo "[demon-wanoft-fixed] Uploading ${RUN_DIR} to ${UPLOAD_REPO}:${UPLOAD_PATH_IN_REPO}"
+  echo "[deadly-wanoft-fixed] Uploading ${RUN_DIR} to ${UPLOAD_REPO}:${UPLOAD_PATH_IN_REPO}"
   hf upload "${UPLOAD_REPO}" "${RUN_DIR}" "${UPLOAD_PATH_IN_REPO}" \
     --exclude "wandb/**" \
     --repo-type model
 fi
 
-echo "[demon-wanoft-fixed] Complete: raw-frame latency=${LATENCY_RAW_FRAMES} run_id=${RUN_ID}"
+echo "[deadly-wanoft-fixed] Complete: raw-frame latency=${LATENCY_RAW_FRAMES} core_eval=false run_id=${RUN_ID}"

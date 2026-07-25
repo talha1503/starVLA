@@ -67,6 +67,71 @@ python examples/rl_games/scripts/launch_train.py \
   mode=mixed_latency
 ```
 
+The `memory-rollouts` Flappy config stores one image per row instead of an
+explicit context-image column. Convert it directly into the existing WanOFT
+LeRobot interface by deriving each row's history inside its episode:
+
+```bash
+python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_flappy_history_to_starvla_lerobot.py \
+  --image-sequence-length 5
+
+bash commands/wanoft/train_flappy_wan_oft.sh 3
+```
+
+The converter writes the final `flappy_train__bridge` and validation datasets
+directly. It uses the Hugging Face cache for source parquet shards but does not
+materialize an intermediate dataset with duplicated context images.
+
+The legacy-named pipeline script now runs the same conversion and training path
+for fixed latency 3 only:
+
+```bash
+bash scripts/run_flappy_wan_oft_curriculum_pipeline.sh
+```
+
+The current `memory-rollouts` repository exposes only
+`flappy_fixed_latency_3_200ep_7k2steps`. Despite its retained filename, this
+script does not enable curriculum sampling, synthesize missing latency
+conditions, or evaluate other latency values.
+
+The corresponding Demon Attack config can be converted in the same way:
+
+```bash
+python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_demon_attack_history_to_starvla_lerobot.py \
+  --image-sequence-length 5
+```
+
+This writes `demon_attack_train__bridge` and its validation dataset under
+`data/demon_attack_fix_latency_6_200ep_context5`. The source latency is recorded
+faithfully as 6 raw ALE frames (100 ms), with observations at 15 FPS. It must
+not be interpreted as six environment decision steps: with Demon Attack's
+frameskip of four, the existing step-based eval queue would turn that into 24
+raw frames. Exact online evaluation for this dataset therefore requires a
+raw-frame latency evaluator instead of relabeling the converted data.
+
+The `memory-rollouts` Deadly Corridor config also stores only the current
+image on each row. Its actions are joint-54 IDs rather than an explicit action
+vector. The history converter derives the previous four images within each
+episode, validates `action_id` against `action_text`, and writes the decoded 7D
+semantic multi-hot action directly:
+
+```bash
+python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_deadly_corridor_history_to_starvla_lerobot.py \
+  --image-sequence-length 5
+
+MAX_EPISODES=1000 \
+  bash commands/wanoft/train_deadly_corridor_wan_oft.sh 6
+```
+
+This writes `deadly_corridor_train__bridge` and its validation dataset under
+`data/deadly_corridor_fix_latency_6_1000ep_context5`; source parquet shards are
+kept in the Hugging Face cache, so no context-enriched intermediate dataset is
+materialized. The source has 8.75 FPS observations and a latency of 6 raw
+VizDoom frames, which is 1.5 decision steps with frameskip four. The current
+online evaluator accepts integer decision-step latency only, so both core
+environment evaluation and post-train evaluation are disabled by default
+instead of silently changing the latency.
+
 Single-latency Deadly Corridor with bridge initialization:
 
 ```bash
@@ -75,6 +140,21 @@ python examples/rl_games/scripts/launch_train.py \
   env=deadly_corridor \
   init=bridge \
   mode=single
+```
+
+Deadly Corridor context-5 training with WanOFT uses the released 7D Bridge
+carrier. The raw teacher export stores `deadly_corridor_joint_54` action IDs;
+the pipeline decodes those IDs into the equivalent 7D semantic multi-hot
+buttons and trains the current action with binary cross-entropy:
+
+```bash
+bash scripts/run_deadly_corridor_wan_oft_pipeline.sh
+```
+
+The standalone training boundary is:
+
+```bash
+bash commands/wanoft/train_deadly_corridor_wan_oft.sh 6
 ```
 
 Single-latency Deadly Corridor with the pi-0.5 VLA backbone initialized from

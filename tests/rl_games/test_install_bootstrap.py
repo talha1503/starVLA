@@ -210,6 +210,27 @@ def test_training_dependencies_are_not_in_the_use_manifest() -> None:
     for dependency in ("datasets", "deepspeed", "hydra-core", "wandb"):
         assert dependency not in use_requirements
         assert dependency in dev_requirements
+    assert "pyarrow>=15.0.0" in dev_requirements
+
+
+def test_optional_flash_attention_check_does_not_fail_validation() -> None:
+    repo_root: Path = _repo_root()
+    validator_source = (
+        repo_root / "examples" / "rl_games" / "install" / "validate" / "common.sh"
+    ).read_text()
+
+    assert '"${INSTALL_DIR}/flash_attn.sh" --check || true' in validator_source
+
+
+def test_demon_attack_installer_uses_gymnasium_compatible_ale() -> None:
+    repo_root: Path = _repo_root()
+    installer_source = (
+        repo_root / "examples" / "rl_games" / "install" / "env" / "demon_attack.sh"
+    ).read_text()
+
+    assert '"ale-py==0.8.1"' in installer_source
+    assert '"gymnasium[atari]==0.29.1"' in installer_source
+    assert "ale-py==0.10.2" not in installer_source
 
 
 def test_torch_auto_profile_uses_cpu_without_nvidia_smi() -> None:

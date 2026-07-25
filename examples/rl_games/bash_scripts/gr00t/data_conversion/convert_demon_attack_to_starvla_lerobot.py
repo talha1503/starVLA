@@ -275,6 +275,12 @@ def _image_struct(image: Any) -> dict[str, bytes | str | None]:
     return {"bytes": _png_bytes(image), "path": None}
 
 
+def _image_shape(image_bytes: bytes) -> list[int]:
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        width, height = image.size
+    return [height, width, 3]
+
+
 def _context_images_from_context(
     row: dict[str, Any],
     *,
@@ -570,6 +576,7 @@ def _write_metadata(
     state_labels: list[str],
     context_images_output_column: str | None,
     image_sequence_length: int | None,
+    image_shape: list[int],
     fps: float,
 ) -> None:
     meta_dir = dataset_dir / "meta"
@@ -616,7 +623,7 @@ def _write_metadata(
         "features": {
             "observation.image": {
                 "dtype": "image",
-                "shape": [84, 84, 3],
+                "shape": image_shape,
                 "names": ["height", "width", "channel"],
                 "video_info": {"video.fps": fps},
             },
@@ -640,7 +647,7 @@ def _write_metadata(
     if context_images_output_column is not None:
         info["features"][context_images_output_column] = {
             "dtype": "image_sequence",
-            "shape": [int(image_sequence_length or 1) - 1, 84, 84, 3],
+            "shape": [int(image_sequence_length or 1) - 1, *image_shape],
             "names": ["time", "height", "width", "channel"],
             "video_info": {"video.fps": fps},
         }
@@ -907,6 +914,7 @@ def convert_dataset(
             state_labels=state_labels,
             context_images_output_column=context_images_output_column if context_images_column is not None else None,
             image_sequence_length=image_sequence_length if context_images_column is not None else None,
+            image_shape=[84, 84, 3],
             fps=fps,
         )
 

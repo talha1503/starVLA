@@ -324,6 +324,7 @@ def test_wan_oft_commands_are_valid_bash() -> None:
         REPO_ROOT / "commands" / "wanoft" / "train_flappy_wan_oft_curriculum_cumulative.sh",
         REPO_ROOT / "commands" / "wanoft" / "train_flappy_wan_oft_curriculum_exclusive.sh",
         REPO_ROOT / "commands" / "wanoft" / "train_demon_attack_wan_oft.sh",
+        REPO_ROOT / "commands" / "wanoft" / "train_deadly_corridor_wan_oft.sh",
     ]
 
     subprocess.run(["bash", "-n", *[str(path) for path in command_paths]], check=True, cwd=REPO_ROOT)
@@ -351,6 +352,7 @@ def test_archived_release_commands_share_shell_structure() -> None:
 
 def test_archived_wan_oft_commands_only_run_post_train_eval() -> None:
     script_names = (
+        "train_deadly_corridor_wan_oft.sh",
         "train_demon_attack_wan_oft.sh",
         "train_flappy_wan_oft.sh",
         "train_flappy_wan_oft_mixed_latency.sh",
@@ -371,9 +373,15 @@ def test_archived_wan_oft_commands_only_run_post_train_eval() -> None:
         assert "rl_games.env_eval.mid_train.interval_steps=" not in command_text
         assert "rl_games.env_eval.mid_train.latencies=" not in command_text
         assert "rl_games.env_eval.mid_train.num_episodes=" not in command_text
-        assert "rl_games.env_eval.post_train.enabled=true" in command_text
-        assert "rl_games.env_eval.post_train.latencies=" in command_text
-        assert "rl_games.env_eval.post_train.num_episodes=" in command_text
+        if script_name == "train_deadly_corridor_wan_oft.sh":
+            assert "rl_games.env_eval.enabled=false" in command_text
+            assert "rl_games.env_eval.post_train.enabled=false" in command_text
+            assert "rl_games.env_eval.post_train.latencies=" not in command_text
+            assert "rl_games.env_eval.post_train.num_episodes=" not in command_text
+        else:
+            assert "rl_games.env_eval.post_train.enabled=true" in command_text
+            assert "rl_games.env_eval.post_train.latencies=" in command_text
+            assert "rl_games.env_eval.post_train.num_episodes=" in command_text
 
 
 def test_demon_attack_wan_oft_command_preserves_parameterized_post_train_eval() -> None:
@@ -385,6 +393,37 @@ def test_demon_attack_wan_oft_command_preserves_parameterized_post_train_eval() 
     assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"' in command_text
     assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
     assert 'rl_games.env_eval.post_train.num_episodes="${POST_TRAIN_NUM_EPISODES}"' in command_text
+    assert "if [[ $# -gt 0 ]]; then\n  shift\nfi" in command_text
+    assert 'OBSERVATION_INDICES="["' in command_text
+    assert "for ((offset = CONTEXT_WINDOW - 1; offset >= 1; offset--)); do" in command_text
+    assert '"datasets.vla_data.observation_indices=${OBSERVATION_INDICES}"' in command_text
+    assert '"$@"' in command_text
+
+
+def test_deadly_corridor_wan_oft_command_preserves_context_and_action_contract() -> None:
+    command_text = (
+        REPO_ROOT / "commands" / "wanoft" / "train_deadly_corridor_wan_oft.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'LATENCY="${1:-${LATENCY:-6}}"' in command_text
+    assert 'CONTEXT_WINDOW="${CONTEXT_WINDOW:-5}"' in command_text
+    assert 'MAX_EPISODES="${MAX_EPISODES:-1000}"' in command_text
+    assert "model=wan_oft" in command_text
+    assert "env=deadly_corridor" in command_text
+    assert "init=wan_oft_libero" in command_text
+    assert "dataset.converted_name=deadly_corridor_train__bridge" in command_text
+    assert "datasets.vla_data.data_mix=deadly_corridor_train__bridge" in command_text
+    assert 'datasets.vla_data.image_sequence_length="${CONTEXT_WINDOW}"' in command_text
+    assert '"datasets.vla_data.observation_indices=${OBSERVATION_INDICES}"' in command_text
+    assert 'framework.world_model.num_frames="${CONTEXT_WINDOW}"' in command_text
+    assert "rl_games.deadly_corridor_loss_type=current_multibinary_bce" in command_text
+    assert "rl_games.env_eval.deadly.action_layout=multibinary_7" in command_text
+    assert "rl_games.env_eval.deadly.multibinary_threshold=0.0" in command_text
+    assert "rl_games.env_eval.enabled=false" in command_text
+    assert "rl_games.env_eval.post_train.enabled=false" in command_text
+    assert "rl_games.env_eval.post_train.latencies=" not in command_text
+    assert "if [[ $# -gt 0 ]]; then\n  shift\nfi" in command_text
+    assert '"$@"' in command_text
 
 
 def test_flappy_wan_oft_command_preserves_parameterized_fix_latency_defaults() -> None:
@@ -393,6 +432,7 @@ def test_flappy_wan_oft_command_preserves_parameterized_fix_latency_defaults() -
     ).read_text(encoding="utf-8")
 
     assert 'LATENCY="${1:-${LATENCY:-0}}"' in command_text
+    assert "if [[ $# -gt 0 ]]; then\n  shift\nfi" in command_text
     assert 'CONTEXT_WINDOW="${CONTEXT_WINDOW:-5}"' in command_text
     assert 'MAX_EPISODES="${MAX_EPISODES:-200}"' in command_text
     assert 'MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-2000}"' in command_text
@@ -406,6 +446,10 @@ def test_flappy_wan_oft_command_preserves_parameterized_fix_latency_defaults() -
     assert 'paths.dataset_local_dir="${DATASET_LOCAL_DIR}"' in command_text
     assert 'rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}"' in command_text
     assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
+    assert 'OBSERVATION_INDICES="["' in command_text
+    assert "for ((offset = CONTEXT_WINDOW - 1; offset >= 1; offset--)); do" in command_text
+    assert '"datasets.vla_data.observation_indices=${OBSERVATION_INDICES}"' in command_text
+    assert '"$@"' in command_text
 
 
 def test_wan_oft_flappy_mixed_latency_command_preserves_context5_baseline() -> None:
@@ -461,53 +505,145 @@ def test_wan_oft_flappy_curriculum_commands_enable_sequential_sampling() -> None
         assert "datasets.vla_data.latency_curriculum.eval_at_phase_end=false" in command_text
 
 
-def test_flappy_wan_oft_curriculum_pipeline_script_parameterizes_mode() -> None:
-    script_text = (REPO_ROOT / "scripts" / "run_flappy_wan_oft_curriculum_pipeline.sh").read_text(
-        encoding="utf-8"
-    )
+def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path() -> None:
+    script_path = REPO_ROOT / "scripts" / "run_flappy_wan_oft_curriculum_pipeline.sh"
+    script_text = script_path.read_text(encoding="utf-8")
 
-    assert "--mode <cumulative|exclusive>" in script_text
-    assert "TRAIN_MODE=\"curriculum_cumulative\"" in script_text
-    assert "TRAIN_MODE=\"curriculum_exclusive\"" in script_text
-    assert "RUN_ID=\"${RUN_ID:-wan_oft_flappy_mix_latency_context${CONTEXT_WINDOW}_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_curriculum_${MODE}}\"" in script_text
+    assert "--mode <" not in script_text
+    assert "\n    --mode)" not in script_text
+    assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
+    assert 'DATASET_CONFIG="flappy_fixed_latency_3_200ep_7k2steps"' in script_text
+    assert "LATENCY=3" in script_text
+    assert "examples/rl_games/install/bootstrap.sh" in script_text
+    assert "--tier dev" in script_text
+    assert "convert_flappy_history_to_starvla_lerobot.py" in script_text
+    assert "convert_flappy_to_starvla_lerobot.py" not in script_text
+    assert '--dataset-name "${DATASET_REPO}"' in script_text
+    assert '--dataset-config-name "${DATASET_CONFIG}"' in script_text
+    assert '--max-episodes "${MAX_EPISODES}"' in script_text
+    assert "--context-images-column" not in script_text
+    assert '"dataset.source_hf=${DATASET_REPO}"' in script_text
+    assert '"dataset.config_name=${DATASET_CONFIG}"' in script_text
+    assert '"paths.run_root_dir=${RUN_ROOT_DIR}"' in script_text
+    assert '"paths.base_model_dir=${BASE_MODEL_DIR}"' in script_text
+    assert '"initialization.checkpoint_local_dir=${INIT_CHECKPOINT_DIR}"' in script_text
+    assert 'POST_TRAIN_LATENCIES="[3]"' in script_text
+    assert (
+        'bash commands/wanoft/train_flappy_wan_oft.sh 3 "${TRAIN_OVERRIDES[@]}"'
+        in script_text
+    )
+    assert "train_flappy_wan_oft_curriculum_cumulative.sh" not in script_text
+    assert "train_flappy_wan_oft_curriculum_exclusive.sh" not in script_text
     assert "UPLOAD_REPO=\"${UPLOAD_REPO:-latency-sensitive-bench/wanoft_flappy_200ep}\"" in script_text
     assert "UPLOAD_PATH_IN_REPO=\"${UPLOAD_PATH_IN_REPO:-${RUN_ID}}\"" in script_text
-    assert "--latency-filter \"${LATENCY_FILTER_CSV}\"" in script_text
-    assert "--episodes-per-latency \"${EPISODES_PER_LATENCY}\"" in script_text
-    assert "--source-metadata \"${RAW_DATA_ROOT}/${RAW_TEMPLATE_SUBDIR}/metadata.json\"" in script_text
-    assert "--source-latency-column latency_raw_frames" in script_text
-    assert "--target-latency-unit observation_steps" in script_text
-    assert "--context-images-column context_images" in script_text
     assert "--image-sequence-length \"${CONTEXT_WINDOW}\"" in script_text
-    assert "python examples/rl_games/scripts/launch_train.py" in script_text
-    assert "mode=\"${TRAIN_MODE}\"" in script_text
-    assert "checkpoint.sync.enabled=false" in script_text
     assert "hf upload \"${UPLOAD_REPO}\" \"${RUN_DIR}\" \"${UPLOAD_PATH_IN_REPO}\"" in script_text
+    subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
+    help_result = subprocess.run(
+        ["bash", str(script_path), "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert "fixed-latency-3" in help_result.stdout
+    assert "--mode" not in help_result.stdout
 
 
-def test_demon_attack_wan_oft_pipeline_uses_archived_training_command() -> None:
+def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path() -> None:
     script_path = REPO_ROOT / "scripts" / "run_demon_attack_wan_oft_pipeline.sh"
     training_command_path = REPO_ROOT / "commands" / "wanoft" / "train_demon_attack_wan_oft.sh"
     script_text = script_path.read_text(encoding="utf-8")
 
     assert training_command_path.exists()
-    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[0,2,4,6,8]}"' in script_text
-    assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"' in script_text
-    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES}" \\' in script_text
-    assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES}" \\' in script_text
-    assert 'bash commands/wanoft/train_demon_attack_wan_oft.sh "${LATENCY}"' in script_text
+    assert "--latency <" not in script_text
+    assert "\n    --latency)" not in script_text
+    assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
+    assert 'DATASET_CONFIG="demon_attack_fixed_latency_6_200ep_7k2steps"' in script_text
+    assert "LATENCY_RAW_FRAMES=6" in script_text
+    assert 'BOOTSTRAP_PYTHON_VERSION="${STARVLA_PYTHON_VERSION:-3.10}"' in script_text
+    assert 'BENCHMARK_ROOT="${LATENCY_BENCH_ROOT:-}"' in script_text
+    assert "--benchmark-root <path>" in script_text
+    assert 'BENCHMARK_ROOT="${BENCHMARK_ROOT:-${REPO_ROOT}/../latency-sensitive-bench}"' in script_text
+    assert 'third_party/flappy-bird-gymnasium/setup.py' in script_text
+    assert 'LATENCY_BENCH_ROOT="${BENCHMARK_ROOT}" "${BOOTSTRAP_ARGS[@]}"' in script_text
+    assert "--tier dev" in script_text
+    assert "--accept-rom-license" in script_text
+    assert "convert_demon_attack_history_to_starvla_lerobot.py" in script_text
+    assert "convert_demon_attack_to_starvla_lerobot.py" not in script_text
+    assert '--dataset-name "${DATASET_REPO}"' in script_text
+    assert '--dataset-config-name "${DATASET_CONFIG}"' in script_text
+    assert '--max-episodes "${MAX_EPISODES}"' in script_text
+    assert "--context-images-column" not in script_text
+    assert '"dataset.source_hf=${DATASET_REPO}"' in script_text
+    assert '"dataset.config_name=${DATASET_CONFIG}"' in script_text
+    assert '"paths.run_root_dir=${RUN_ROOT_DIR}"' in script_text
+    assert '"paths.base_model_dir=${BASE_MODEL_DIR}"' in script_text
+    assert '"initialization.checkpoint_local_dir=${INIT_CHECKPOINT_DIR}"' in script_text
+    assert '"rl_games.env_eval.post_train.enabled=false"' in script_text
+    assert (
+        'bash commands/wanoft/train_demon_attack_wan_oft.sh 6 "${TRAIN_OVERRIDES[@]}"'
+        in script_text
+    )
     assert 'bash commands/train_demon_attack_wan_oft.sh "${LATENCY}"' not in script_text
+    assert "--image-sequence-length \"${CONTEXT_WINDOW}\"" in script_text
+    assert 'manifest.get("latency_raw_frames") != [6]' in script_text
+    assert 'manifest.get("latency_env_steps") != [1.5]' in script_text
     subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
+    help_result = subprocess.run(
+        ["bash", str(script_path), "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert "fixed-raw-frame-latency-6" in help_result.stdout
+    assert "1.5 policy decision steps" in help_result.stdout
+    assert "--latency" not in help_result.stdout
 
 
-def test_demon_attack_wan_oft_pipeline_uses_explicit_latency_conversion_contract() -> None:
+def test_deadly_corridor_wan_oft_pipeline_uses_fixed_latency_history_data_without_core_eval() -> None:
+    script_path = REPO_ROOT / "scripts" / "run_deadly_corridor_wan_oft_pipeline.sh"
+    training_command_path = REPO_ROOT / "commands" / "wanoft" / "train_deadly_corridor_wan_oft.sh"
+    script_text = script_path.read_text(encoding="utf-8")
+
+    assert training_command_path.exists()
+    assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
+    assert 'DATASET_CONFIG="deadly_corridor_fixed_latency_6_1000ep_7k2steps"' in script_text
+    assert "LATENCY_RAW_FRAMES=6" in script_text
+    assert "convert_deadly_corridor_history_to_starvla_lerobot.py" in script_text
+    assert "--dataset-config-name \"${DATASET_CONFIG}\"" in script_text
+    assert "--max-episodes \"${MAX_EPISODES}\"" in script_text
+    assert '--image-sequence-length "${CONTEXT_WINDOW}"' in script_text
+    assert "--context-images-column" not in script_text
+    assert '"rl_games.env_eval.enabled=false"' in script_text
+    assert '"rl_games.env_eval.post_train.enabled=false"' in script_text
+    assert 'bash commands/wanoft/train_deadly_corridor_wan_oft.sh 6 "${TRAIN_OVERRIDES[@]}"' in script_text
+    assert 'manifest.get("action_layout") != "multibinary_7"' in script_text
+    assert 'manifest.get("source_action_layout") != "deadly_corridor_joint_54"' in script_text
+    assert 'manifest.get("latency_raw_frames") != [6]' in script_text
+    assert 'manifest.get("latency_env_steps") != [1.5]' in script_text
+    subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
+    help_result = subprocess.run(
+        ["bash", str(script_path), "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert "fixed-raw-frame-latency-6" in help_result.stdout
+    assert "Core environment evaluation is disabled" in help_result.stdout
+    assert "--latency" not in help_result.stdout
+
+
+def test_demon_attack_wan_oft_pipeline_validates_raw_frame_latency_contract() -> None:
     script_text = (REPO_ROOT / "scripts" / "run_demon_attack_wan_oft_pipeline.sh").read_text(
         encoding="utf-8"
     )
 
-    assert "--source-metadata \"${RAW_DATA_DIR}/metadata.json\"" in script_text
-    assert "--source-latency-column latency_raw_frames" in script_text
-    assert "--target-latency-unit observation_steps" in script_text
+    assert 'manifest.get("latency_unit") != "raw_frames"' in script_text
+    assert 'manifest.get("latency_raw_frames") != [6]' in script_text
+    assert 'manifest.get("latency_env_steps") != [1.5]' in script_text
 
 
 def test_openvla_deadly_cross_task_scripts_are_valid_bash() -> None:

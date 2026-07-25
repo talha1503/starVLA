@@ -33,6 +33,8 @@ _DEADLY_ACTION_LAYOUT_ALIASES = {
 }
 
 _ZERO_LOGIT_THRESHOLD_LOSS_TYPES = {
+    "current_multibinary_bce",
+    "current_bce",
     "multibinary_bce",
     "multibinary_ce",
     "bce",

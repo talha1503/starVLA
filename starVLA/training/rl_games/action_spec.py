@@ -6,6 +6,8 @@ BRIDGE_CHUNK_PRESERVING_MODEL_ALIASES = {"wan_oft"}
 DEADLY_LOSS_TYPE_ALIASES = {
     "l1": "l1",
     "mae": "l1",
+    "current_multibinary_bce": "current_multibinary_bce",
+    "current_bce": "current_multibinary_bce",
     "multibinary_ce": "multibinary_bce",
     "multibinary_bce": "multibinary_bce",
     "bce": "multibinary_bce",

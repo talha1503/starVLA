@@ -182,6 +182,7 @@ def test_convert_demon_attack_writes_loader_compatible_context_image_metadata(
         state_labels=["s0", "s1", "s2", "s3", "s4", "s5", "s6"],
         context_images_output_column="observation.context_images",
         image_sequence_length=5,
+        image_shape=[84, 84, 3],
         fps=15.0,
     )
 

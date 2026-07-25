@@ -6,6 +6,9 @@ set -euo pipefail
 #   bash commands/wanoft/train_demon_attack_wan_oft.sh 2
 #   LATENCY=2 bash commands/wanoft/train_demon_attack_wan_oft.sh
 LATENCY="${1:-${LATENCY:-0}}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
 if ! [[ "${LATENCY}" =~ ^[0-9]+$ ]]; then
   echo "LATENCY must be a non-negative integer, got: ${LATENCY}" >&2
   exit 2
@@ -23,6 +26,12 @@ POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[${LATENCY}]}"
 DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/demon_attack_fix_latency_${LATENCY}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}}"
 RUN_ID="${RUN_ID:-wan_oft_demon_attack_fix_latency_${LATENCY}_context${CONTEXT_WINDOW}_standard_sft_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_224_currentce}"
 PROMPT_MAP_PATH="${PROMPT_MAP_PATH:-prompt/demon_attack_latency_prompt_map.json}"
+
+OBSERVATION_INDICES="["
+for ((offset = CONTEXT_WINDOW - 1; offset >= 1; offset--)); do
+  OBSERVATION_INDICES+="-${offset},"
+done
+OBSERVATION_INDICES+="0]"
 
 # export WANDB_MODE=offline
 export HF_DATASETS_OFFLINE=1
@@ -44,7 +53,7 @@ python examples/rl_games/scripts/launch_train.py \
   datasets.vla_data.data_mix=demon_attack_train__bridge \
   "datasets.vla_data.obs_image_size=[224,224]" \
   datasets.vla_data.image_sequence_length="${CONTEXT_WINDOW}" \
-  "datasets.vla_data.observation_indices=[-4,-3,-2,-1,0]" \
+  "datasets.vla_data.observation_indices=${OBSERVATION_INDICES}" \
   datasets.vla_data.sequential_step_sampling=false \
   datasets.vla_data.action_balance.enabled=false \
   framework.world_model.num_frames="${CONTEXT_WINDOW}" \
@@ -70,4 +79,5 @@ python examples/rl_games/scripts/launch_train.py \
   checkpoint.save_best_model=false \
   checkpoint.save_final_model=true \
   checkpoint.local.keep_last_n=1 \
-  checkpoint.load=none
+  checkpoint.load=none \
+  "$@"
