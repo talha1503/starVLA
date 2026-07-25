@@ -373,7 +373,17 @@ def test_archived_wan_oft_commands_only_run_post_train_eval() -> None:
         assert "rl_games.env_eval.mid_train.interval_steps=" not in command_text
         assert "rl_games.env_eval.mid_train.latencies=" not in command_text
         assert "rl_games.env_eval.mid_train.num_episodes=" not in command_text
-        assert "rl_games.env_eval.post_train.enabled=true" in command_text
+        if script_name == "train_deadly_corridor_wan_oft.sh":
+            assert (
+                'POST_TRAIN_ENABLED="${POST_TRAIN_ENABLED:-true}"'
+                in command_text
+            )
+            assert (
+                'rl_games.env_eval.post_train.enabled="${POST_TRAIN_ENABLED}"'
+                in command_text
+            )
+        else:
+            assert "rl_games.env_eval.post_train.enabled=true" in command_text
         assert "rl_games.env_eval.post_train.latencies=" in command_text
         assert "rl_games.env_eval.post_train.num_episodes=" in command_text
 
@@ -408,6 +418,11 @@ def test_deadly_corridor_wan_oft_command_preserves_context_and_action_contract()
     assert "rl_games.env_eval.deadly.action_layout=multibinary_7" in command_text
     assert "rl_games.env_eval.deadly.multibinary_threshold=0.0" in command_text
     assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[${LATENCY}]}"' in command_text
+    assert 'POST_TRAIN_ENABLED="${POST_TRAIN_ENABLED:-true}"' in command_text
+    assert (
+        'rl_games.env_eval.post_train.enabled="${POST_TRAIN_ENABLED}"'
+        in command_text
+    )
 
 
 def test_flappy_wan_oft_command_preserves_parameterized_fix_latency_defaults() -> None:

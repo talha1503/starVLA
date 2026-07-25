@@ -97,6 +97,28 @@ frameskip of four, the existing step-based eval queue would turn that into 24
 raw frames. Exact online evaluation for this dataset therefore requires a
 raw-frame latency evaluator instead of relabeling the converted data.
 
+The `memory-rollouts` Deadly Corridor config also stores only the current
+image on each row. Its actions are joint-54 IDs rather than an explicit action
+vector. The history converter derives the previous four images within each
+episode, validates `action_id` against `action_text`, and writes the decoded 7D
+semantic multi-hot action directly:
+
+```bash
+python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_deadly_corridor_history_to_starvla_lerobot.py \
+  --image-sequence-length 5
+
+MAX_EPISODES=1000 POST_TRAIN_ENABLED=false \
+  bash commands/wanoft/train_deadly_corridor_wan_oft.sh 6
+```
+
+This writes `deadly_corridor_train__bridge` and its validation dataset under
+`data/deadly_corridor_fix_latency_6_1000ep_context5`; source parquet shards are
+kept in the Hugging Face cache, so no context-enriched intermediate dataset is
+materialized. The source has 8.75 FPS observations and a latency of 6 raw
+VizDoom frames, which is 1.5 decision steps with frameskip four. The current
+online evaluator accepts integer decision-step latency only, so the example
+disables post-train evaluation instead of silently changing the latency.
+
 Single-latency Deadly Corridor with bridge initialization:
 
 ```bash

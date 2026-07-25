@@ -177,6 +177,7 @@ def test_convert_deadly_corridor_writes_context_image_metadata(
         image_shape=[2, 2, 3],
         context_images_output_column="observation.context_images",
         image_sequence_length=5,
+        fps=convert_deadly_corridor.FPS,
     )
 
     info = json.loads((tmp_path / "meta" / "info.json").read_text(encoding="utf-8"))

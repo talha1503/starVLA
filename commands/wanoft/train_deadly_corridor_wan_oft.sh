@@ -18,6 +18,7 @@ PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-4}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-32}"
 EFFECTIVE_BATCH_SIZE="${EFFECTIVE_BATCH_SIZE:-$((PER_DEVICE_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS))}"
 POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"
+POST_TRAIN_ENABLED="${POST_TRAIN_ENABLED:-true}"
 MAX_STEPS_PER_EPISODE="${MAX_STEPS_PER_EPISODE:-3600}"
 POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[${LATENCY}]}"
 DATASET_LOCAL_DIR="${DATASET_LOCAL_DIR:-data/deadly_corridor_fix_latency_${LATENCY}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}}"
@@ -69,7 +70,7 @@ python examples/rl_games/scripts/launch_train.py \
   rl_games.env_eval.deadly.multibinary_threshold=0.0 \
   rl_games.env_eval.latency.prompt_map_path="${PROMPT_MAP_PATH}" \
   rl_games.env_eval.mid_train.enabled=false \
-  rl_games.env_eval.post_train.enabled=true \
+  rl_games.env_eval.post_train.enabled="${POST_TRAIN_ENABLED}" \
   "rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}" \
   rl_games.env_eval.post_train.num_episodes="${POST_TRAIN_NUM_EPISODES}" \
   rl_games.env_eval.post_train.max_steps_per_episode="${MAX_STEPS_PER_EPISODE}" \
