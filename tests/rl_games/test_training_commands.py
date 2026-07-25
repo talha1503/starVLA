@@ -512,6 +512,8 @@ def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path
     assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
     assert 'DATASET_CONFIG="flappy_fixed_latency_3_200ep_7k2steps"' in script_text
     assert "LATENCY=3" in script_text
+    assert "examples/rl_games/install/bootstrap.sh" in script_text
+    assert "--tier dev" in script_text
     assert "convert_flappy_history_to_starvla_lerobot.py" in script_text
     assert "convert_flappy_to_starvla_lerobot.py" not in script_text
     assert '--dataset-name "${DATASET_REPO}"' in script_text

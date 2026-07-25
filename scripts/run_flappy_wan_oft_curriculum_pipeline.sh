@@ -228,6 +228,7 @@ PY
 if [[ "${SKIP_ENV_SETUP}" != "true" ]]; then
   echo "[flappy-wanoft-fixed] Installing/updating env: ${CONDA_ENV_NAME}"
   bash examples/rl_games/install/bootstrap.sh \
+    --tier dev \
     --conda-env "${CONDA_ENV_NAME}" \
     --python-version "${PYTHON_VERSION}" \
     --model wan_oft \
