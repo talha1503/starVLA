@@ -22,6 +22,7 @@ Options:
   --context-window <N>        Context window size (default: 5)
   --max-episodes <N>          Maximum source episodes per split (default: 200)
   --max-train-steps <N>       Training steps (default: 2000)
+  --benchmark-root <path>     latency-sensitive-bench checkout (default: sibling checkout)
   --dataset-cache-dir <path>  Optional Hugging Face cache directory
   --upload-repo <repo>        HF model repo for run upload (default: latency-sensitive-bench/demon_attack_200ep)
   --upload-path <path>        Path inside the HF repo (default: <run_id>)
@@ -49,6 +50,7 @@ WANDB_PROJECT_VALUE="${WANDB_PROJECT:-starVLA_rl_games}"
 DATASET_REPO="latency-sensitive-bench/memory-rollouts"
 DATASET_CONFIG="demon_attack_fixed_latency_6_200ep_7k2steps"
 DATASET_CACHE_DIR="${DATASET_CACHE_DIR:-}"
+BENCHMARK_ROOT="${LATENCY_BENCH_ROOT:-}"
 LATENCY_RAW_FRAMES=6
 RUN_ROOT_DIR="${RUN_ROOT_DIR:-results/Checkpoints}"
 RUN_ID="${RUN_ID:-}"
@@ -85,6 +87,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --max-train-steps)
       MAX_TRAIN_STEPS="$2"
+      shift 2
+      ;;
+    --benchmark-root)
+      BENCHMARK_ROOT="$2"
       shift 2
       ;;
     --dataset-cache-dir)
@@ -152,6 +158,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
+BENCHMARK_ROOT="${BENCHMARK_ROOT:-${REPO_ROOT}/../latency-sensitive-bench}"
 CONVERTED_DATA_ROOT="data/demon_attack_fix_latency_${LATENCY_RAW_FRAMES}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}"
 CONVERTED_DATA_DIR="${CONVERTED_DATA_ROOT}/demon_attack_train__bridge"
 PROMPT_MAP_PATH="${CONVERTED_DATA_DIR}/latency_prompt_map.json"
@@ -242,6 +249,13 @@ PY
 }
 
 if [[ "${SKIP_ENV_SETUP}" != "true" ]]; then
+  if [[ ! -f "${BENCHMARK_ROOT}/pyproject.toml" ]] \
+    || [[ ! -d "${BENCHMARK_ROOT}/latency_bench" ]] \
+    || [[ ! -f "${BENCHMARK_ROOT}/third_party/flappy-bird-gymnasium/pyproject.toml" ]]; then
+    echo "[demon-wanoft-fixed] Invalid latency-sensitive-bench checkout: ${BENCHMARK_ROOT}" >&2
+    echo "[demon-wanoft-fixed] Pass --benchmark-root with a checkout whose submodules are initialized." >&2
+    exit 1
+  fi
   echo "[demon-wanoft-fixed] Installing/updating env: ${CONDA_ENV_NAME}"
   BOOTSTRAP_ARGS=(
     bash
@@ -255,7 +269,7 @@ if [[ "${SKIP_ENV_SETUP}" != "true" ]]; then
   if [[ "${ACCEPT_ROM_LICENSE}" == "true" ]]; then
     BOOTSTRAP_ARGS+=(--accept-rom-license)
   fi
-  "${BOOTSTRAP_ARGS[@]}"
+  LATENCY_BENCH_ROOT="${BENCHMARK_ROOT}" "${BOOTSTRAP_ARGS[@]}"
 fi
 
 activate_conda_env

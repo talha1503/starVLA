@@ -566,6 +566,10 @@ def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_histor
     assert 'DATASET_CONFIG="demon_attack_fixed_latency_6_200ep_7k2steps"' in script_text
     assert "LATENCY_RAW_FRAMES=6" in script_text
     assert 'BOOTSTRAP_PYTHON_VERSION="${STARVLA_PYTHON_VERSION:-3.10}"' in script_text
+    assert 'BENCHMARK_ROOT="${LATENCY_BENCH_ROOT:-}"' in script_text
+    assert "--benchmark-root <path>" in script_text
+    assert 'BENCHMARK_ROOT="${BENCHMARK_ROOT:-${REPO_ROOT}/../latency-sensitive-bench}"' in script_text
+    assert 'LATENCY_BENCH_ROOT="${BENCHMARK_ROOT}" "${BOOTSTRAP_ARGS[@]}"' in script_text
     assert "--tier dev" in script_text
     assert "--accept-rom-license" in script_text
     assert "convert_demon_attack_history_to_starvla_lerobot.py" in script_text
