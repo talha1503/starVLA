@@ -431,6 +431,7 @@ def test_flappy_wan_oft_command_preserves_parameterized_fix_latency_defaults() -
     ).read_text(encoding="utf-8")
 
     assert 'LATENCY="${1:-${LATENCY:-0}}"' in command_text
+    assert "if [[ $# -gt 0 ]]; then\n  shift\nfi" in command_text
     assert 'CONTEXT_WINDOW="${CONTEXT_WINDOW:-5}"' in command_text
     assert 'MAX_EPISODES="${MAX_EPISODES:-200}"' in command_text
     assert 'MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-2000}"' in command_text

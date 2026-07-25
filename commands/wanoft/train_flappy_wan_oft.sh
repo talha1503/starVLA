@@ -6,6 +6,9 @@ set -euo pipefail
 #   bash commands/wanoft/train_flappy_wan_oft.sh 2
 #   LATENCY=2 bash commands/wanoft/train_flappy_wan_oft.sh
 LATENCY="${1:-${LATENCY:-0}}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
 if ! [[ "${LATENCY}" =~ ^[0-9]+$ ]]; then
   echo "LATENCY must be a non-negative integer, got: ${LATENCY}" >&2
   exit 2
