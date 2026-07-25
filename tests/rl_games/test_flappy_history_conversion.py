@@ -92,6 +92,42 @@ def _pixel_value(image_entry: dict[str, Any]) -> int:
     return int(np.asarray(image)[0, 0, 0])
 
 
+def test_flappy_history_converter_downloads_each_source_shard(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo_paths = [
+        "config/train-00000-of-00002.parquet",
+        "config/train-00001-of-00002.parquet",
+    ]
+    downloaded_paths: list[str] = []
+
+    def fake_hf_hub_download(
+        repo_id: str,
+        filename: str,
+        repo_type: str,
+        cache_dir: str | None,
+    ) -> str:
+        assert repo_id == "latency-sensitive-bench/memory-rollouts"
+        assert repo_type == "dataset"
+        assert cache_dir == "/cache"
+        downloaded_paths.append(filename)
+        return str(tmp_path / Path(filename).name)
+
+    monkeypatch.setattr(CONVERTER, "hf_hub_download", fake_hf_hub_download)
+
+    local_paths = list(
+        CONVERTER._downloaded_hub_shards(
+            "latency-sensitive-bench/memory-rollouts",
+            repo_paths,
+            "/cache",
+        )
+    )
+
+    assert downloaded_paths == repo_paths
+    assert local_paths == [tmp_path / Path(path).name for path in repo_paths]
+
+
 def test_flappy_history_converter_builds_context_with_episode_local_left_padding(
     tmp_path: Path,
 ) -> None:

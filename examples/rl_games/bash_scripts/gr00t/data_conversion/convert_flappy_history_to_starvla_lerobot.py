@@ -64,7 +64,7 @@ def _downloaded_hub_shards(
     repo_paths: list[str],
     cache_dir: str | None,
 ) -> Iterator[Path]:
-    for repo_path in tqdm(repo_paths, desc=f"Downloading/caching {Path(repo_path).stem}"):
+    for repo_path in tqdm(repo_paths, desc="Downloading/caching Flappy shards"):
         local_path = hf_hub_download(
             repo_id=dataset_name,
             filename=repo_path,

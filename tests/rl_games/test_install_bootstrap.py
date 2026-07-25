@@ -210,6 +210,7 @@ def test_training_dependencies_are_not_in_the_use_manifest() -> None:
     for dependency in ("datasets", "deepspeed", "hydra-core", "wandb"):
         assert dependency not in use_requirements
         assert dependency in dev_requirements
+    assert "pyarrow>=15.0.0" in dev_requirements
 
 
 def test_torch_auto_profile_uses_cpu_without_nvidia_smi() -> None:
