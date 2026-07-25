@@ -222,6 +222,17 @@ def test_optional_flash_attention_check_does_not_fail_validation() -> None:
     assert '"${INSTALL_DIR}/flash_attn.sh" --check || true' in validator_source
 
 
+def test_demon_attack_installer_uses_gymnasium_compatible_ale() -> None:
+    repo_root: Path = _repo_root()
+    installer_source = (
+        repo_root / "examples" / "rl_games" / "install" / "env" / "demon_attack.sh"
+    ).read_text()
+
+    assert '"ale-py==0.8.1"' in installer_source
+    assert '"gymnasium[atari]==0.29.1"' in installer_source
+    assert "ale-py==0.10.2" not in installer_source
+
+
 def test_torch_auto_profile_uses_cpu_without_nvidia_smi() -> None:
     repo_root: Path = _repo_root()
     resolver: Path = repo_root / "examples" / "rl_games" / "install" / "_torch_profile.sh"
