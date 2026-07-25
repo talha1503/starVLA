@@ -119,7 +119,7 @@ semantic multi-hot action directly:
 python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_deadly_corridor_history_to_starvla_lerobot.py \
   --image-sequence-length 5
 
-MAX_EPISODES=1000 POST_TRAIN_ENABLED=false \
+MAX_EPISODES=1000 \
   bash commands/wanoft/train_deadly_corridor_wan_oft.sh 6
 ```
 
@@ -128,8 +128,9 @@ This writes `deadly_corridor_train__bridge` and its validation dataset under
 kept in the Hugging Face cache, so no context-enriched intermediate dataset is
 materialized. The source has 8.75 FPS observations and a latency of 6 raw
 VizDoom frames, which is 1.5 decision steps with frameskip four. The current
-online evaluator accepts integer decision-step latency only, so the example
-disables post-train evaluation instead of silently changing the latency.
+online evaluator accepts integer decision-step latency only, so both core
+environment evaluation and post-train evaluation are disabled by default
+instead of silently changing the latency.
 
 Single-latency Deadly Corridor with bridge initialization:
 
@@ -147,13 +148,13 @@ the pipeline decodes those IDs into the equivalent 7D semantic multi-hot
 buttons and trains the current action with binary cross-entropy:
 
 ```bash
-bash scripts/run_deadly_corridor_wan_oft_pipeline.sh --latency 2
+bash scripts/run_deadly_corridor_wan_oft_pipeline.sh
 ```
 
 The standalone training boundary is:
 
 ```bash
-bash commands/wanoft/train_deadly_corridor_wan_oft.sh 2
+bash commands/wanoft/train_deadly_corridor_wan_oft.sh 6
 ```
 
 Single-latency Deadly Corridor with the pi-0.5 VLA backbone initialized from

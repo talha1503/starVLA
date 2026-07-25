@@ -374,18 +374,14 @@ def test_archived_wan_oft_commands_only_run_post_train_eval() -> None:
         assert "rl_games.env_eval.mid_train.latencies=" not in command_text
         assert "rl_games.env_eval.mid_train.num_episodes=" not in command_text
         if script_name == "train_deadly_corridor_wan_oft.sh":
-            assert (
-                'POST_TRAIN_ENABLED="${POST_TRAIN_ENABLED:-true}"'
-                in command_text
-            )
-            assert (
-                'rl_games.env_eval.post_train.enabled="${POST_TRAIN_ENABLED}"'
-                in command_text
-            )
+            assert "rl_games.env_eval.enabled=false" in command_text
+            assert "rl_games.env_eval.post_train.enabled=false" in command_text
+            assert "rl_games.env_eval.post_train.latencies=" not in command_text
+            assert "rl_games.env_eval.post_train.num_episodes=" not in command_text
         else:
             assert "rl_games.env_eval.post_train.enabled=true" in command_text
-        assert "rl_games.env_eval.post_train.latencies=" in command_text
-        assert "rl_games.env_eval.post_train.num_episodes=" in command_text
+            assert "rl_games.env_eval.post_train.latencies=" in command_text
+            assert "rl_games.env_eval.post_train.num_episodes=" in command_text
 
 
 def test_demon_attack_wan_oft_command_preserves_parameterized_post_train_eval() -> None:
@@ -409,8 +405,9 @@ def test_deadly_corridor_wan_oft_command_preserves_context_and_action_contract()
         REPO_ROOT / "commands" / "wanoft" / "train_deadly_corridor_wan_oft.sh"
     ).read_text(encoding="utf-8")
 
-    assert 'LATENCY="${1:-${LATENCY:-2}}"' in command_text
+    assert 'LATENCY="${1:-${LATENCY:-6}}"' in command_text
     assert 'CONTEXT_WINDOW="${CONTEXT_WINDOW:-5}"' in command_text
+    assert 'MAX_EPISODES="${MAX_EPISODES:-1000}"' in command_text
     assert "model=wan_oft" in command_text
     assert "env=deadly_corridor" in command_text
     assert "init=wan_oft_libero" in command_text
@@ -422,12 +419,11 @@ def test_deadly_corridor_wan_oft_command_preserves_context_and_action_contract()
     assert "rl_games.deadly_corridor_loss_type=current_multibinary_bce" in command_text
     assert "rl_games.env_eval.deadly.action_layout=multibinary_7" in command_text
     assert "rl_games.env_eval.deadly.multibinary_threshold=0.0" in command_text
-    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[${LATENCY}]}"' in command_text
-    assert 'POST_TRAIN_ENABLED="${POST_TRAIN_ENABLED:-true}"' in command_text
-    assert (
-        'rl_games.env_eval.post_train.enabled="${POST_TRAIN_ENABLED}"'
-        in command_text
-    )
+    assert "rl_games.env_eval.enabled=false" in command_text
+    assert "rl_games.env_eval.post_train.enabled=false" in command_text
+    assert "rl_games.env_eval.post_train.latencies=" not in command_text
+    assert "if [[ $# -gt 0 ]]; then\n  shift\nfi" in command_text
+    assert '"$@"' in command_text
 
 
 def test_flappy_wan_oft_command_preserves_parameterized_fix_latency_defaults() -> None:
@@ -606,20 +602,38 @@ def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_histor
     assert "--latency" not in help_result.stdout
 
 
-def test_deadly_corridor_wan_oft_pipeline_covers_conversion_training_and_eval() -> None:
+def test_deadly_corridor_wan_oft_pipeline_uses_fixed_latency_history_data_without_core_eval() -> None:
     script_path = REPO_ROOT / "scripts" / "run_deadly_corridor_wan_oft_pipeline.sh"
     training_command_path = REPO_ROOT / "commands" / "wanoft" / "train_deadly_corridor_wan_oft.sh"
     script_text = script_path.read_text(encoding="utf-8")
 
     assert training_command_path.exists()
-    assert '--source-action-layout deadly_corridor_joint_54' in script_text
-    assert '--action-layout multibinary_7' in script_text
-    assert '--context-images-column context_images' in script_text
+    assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
+    assert 'DATASET_CONFIG="deadly_corridor_fixed_latency_6_1000ep_7k2steps"' in script_text
+    assert "LATENCY_RAW_FRAMES=6" in script_text
+    assert "convert_deadly_corridor_history_to_starvla_lerobot.py" in script_text
+    assert "--dataset-config-name \"${DATASET_CONFIG}\"" in script_text
+    assert "--max-episodes \"${MAX_EPISODES}\"" in script_text
     assert '--image-sequence-length "${CONTEXT_WINDOW}"' in script_text
-    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[0,2,4,6,8]}"' in script_text
-    assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"' in script_text
-    assert 'bash commands/wanoft/train_deadly_corridor_wan_oft.sh "${LATENCY}"' in script_text
+    assert "--context-images-column" not in script_text
+    assert '"rl_games.env_eval.enabled=false"' in script_text
+    assert '"rl_games.env_eval.post_train.enabled=false"' in script_text
+    assert 'bash commands/wanoft/train_deadly_corridor_wan_oft.sh 6 "${TRAIN_OVERRIDES[@]}"' in script_text
+    assert 'manifest.get("action_layout") != "multibinary_7"' in script_text
+    assert 'manifest.get("source_action_layout") != "deadly_corridor_joint_54"' in script_text
+    assert 'manifest.get("latency_raw_frames") != [6]' in script_text
+    assert 'manifest.get("latency_env_steps") != [1.5]' in script_text
     subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
+    help_result = subprocess.run(
+        ["bash", str(script_path), "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert "fixed-raw-frame-latency-6" in help_result.stdout
+    assert "Core environment evaluation is disabled" in help_result.stdout
+    assert "--latency" not in help_result.stdout
 
 
 def test_openvla_deadly_cross_task_scripts_are_valid_bash() -> None:

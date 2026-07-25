@@ -3,78 +3,76 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/run_deadly_corridor_wan_oft_pipeline.sh --latency <N> [options]
+Usage: bash scripts/run_deadly_corridor_wan_oft_pipeline.sh [options]
 
-Runs the Deadly Corridor context-window WanOFT pipeline:
+Runs the fixed-raw-frame-latency-6 Deadly Corridor WanOFT pipeline:
   1. install/update the starvla_wanoft env
   2. download WanOFT checkpoints
-  3. download raw context-image rollout data for the selected latency
-  4. convert joint-54 teacher actions into the 7D semantic Bridge carrier
-  5. train WanOFT with current-action multibinary BCE
-  6. evaluate latencies 0,2,4,6,8 with 20 episodes each
-  7. upload the checkpoint directory to Hugging Face
+  3. convert memory-rollouts row history directly into StarVLA LeRobot data
+  4. train WanOFT through commands/wanoft/train_deadly_corridor_wan_oft.sh
+  5. upload the run directory
+
+The source latency is 6 raw VizDoom frames, or 1.5 policy decision steps at
+frameskip=4. Core environment evaluation is disabled because the current
+integer decision-step queue cannot reproduce a 1.5-step latency.
 
 Options:
-  --latency <N>             Required fixed latency id, e.g. 2
-  --conda-env <name>        Conda env name (default: starvla_wanoft)
-  --python-version <ver>    Python version for bootstrap (default: 3.10)
-  --context-window <N>      Context window size (default: 5)
-  --max-episodes <N>        Dataset episode count used in path names (default: 200)
-  --max-train-steps <N>     Training steps forwarded to train command (default: 2000)
-  --upload-repo <repo>      HF model repo for checkpoint upload (default: latency-sensitive-bench/deadly_corridor_200ep)
-  --upload-path <path>      Path inside the HF repo (default: ./<run_id>)
-  --raw-dataset-repo <repo> HF dataset repo for raw data (default: latency-sensitive-bench/deadly_corridor_200ep_context<context-window>)
-  --skip-env-setup          Do not run examples/rl_games/install/bootstrap.sh
-  --skip-checkpoints        Do not download Wan base/init checkpoints
-  --skip-data-download      Do not download raw rollout data
-  --skip-convert            Do not convert raw data
-  --skip-train              Do not run training
-  --skip-upload             Do not upload checkpoint directory
-  -h, --help                Show this help
+  --conda-env <name>          Conda env name (default: starvla_wanoft)
+  --python-version <ver>      Python version for bootstrap (default: 3.10)
+  --context-window <N>        Context window size (default: 5)
+  --max-episodes <N>          Maximum source episodes per split (default: 1000)
+  --max-train-steps <N>       Training steps (default: 2000)
+  --benchmark-root <path>     latency-sensitive-bench checkout (default: sibling checkout)
+  --dataset-cache-dir <path>  Optional Hugging Face cache directory
+  --upload-repo <repo>        HF model repo for run upload (default: latency-sensitive-bench/deadly_corridor_1000ep)
+  --upload-path <path>        Path inside the HF repo (default: <run_id>)
+  --run-id <id>               Override run id
+  --skip-env-setup            Do not run examples/rl_games/install/bootstrap.sh
+  --skip-checkpoints          Do not download Wan base/init checkpoints
+  --skip-convert              Do not convert source data
+  --skip-train                Do not run training
+  --skip-upload               Do not upload the run directory
+  -h, --help                  Show this help
 EOF
 }
 
-LATENCY=""
 CONDA_ENV_NAME="${CONDA_ENV_NAME:-starvla_wanoft}"
-PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
+BOOTSTRAP_PYTHON_VERSION="${STARVLA_PYTHON_VERSION:-3.10}"
 CONTEXT_WINDOW="${CONTEXT_WINDOW:-5}"
-MAX_EPISODES="${MAX_EPISODES:-200}"
+MAX_EPISODES="${MAX_EPISODES:-1000}"
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-2000}"
 PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-4}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-32}"
 EFFECTIVE_BATCH_SIZE="${EFFECTIVE_BATCH_SIZE:-$((PER_DEVICE_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS))}"
-POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[0,2,4,6,8]}"
-POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"
 WANDB_ENTITY_VALUE="${WANDB_ENTITY:-dongqianyu99-zhejiang-university}"
 WANDB_PROJECT_VALUE="${WANDB_PROJECT:-starVLA_rl_games}"
-RAW_DATASET_REPO="${RAW_DATASET_REPO:-}"
-UPLOAD_REPO="${UPLOAD_REPO:-latency-sensitive-bench/deadly_corridor_200ep}"
-UPLOAD_PATH_IN_REPO="${UPLOAD_PATH_IN_REPO:-}"
-RAW_DATA_ROOT="${RAW_DATA_ROOT:-data/raw}"
+DATASET_REPO="latency-sensitive-bench/memory-rollouts"
+DATASET_CONFIG="deadly_corridor_fixed_latency_6_1000ep_7k2steps"
+DATASET_CACHE_DIR="${DATASET_CACHE_DIR:-}"
+BENCHMARK_ROOT="${LATENCY_BENCH_ROOT:-}"
+LATENCY_RAW_FRAMES=6
 RUN_ROOT_DIR="${RUN_ROOT_DIR:-results/Checkpoints}"
+RUN_ID="${RUN_ID:-}"
+UPLOAD_REPO="${UPLOAD_REPO:-latency-sensitive-bench/deadly_corridor_1000ep}"
+UPLOAD_PATH_IN_REPO="${UPLOAD_PATH_IN_REPO:-}"
 BASE_MODEL_REPO="${BASE_MODEL_REPO:-Wan-AI/Wan2.2-TI2V-5B-Diffusers}"
 BASE_MODEL_DIR="${BASE_MODEL_DIR:-playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers}"
 INIT_CHECKPOINT_REPO="${INIT_CHECKPOINT_REPO:-StarVLA/WM4A-Wan2d2-OFT-LIBERO-4in1}"
 INIT_CHECKPOINT_DIR="${INIT_CHECKPOINT_DIR:-playground/Pretrained_models/WM4A-Wan2d2-OFT-LIBERO-4in1}"
 SKIP_ENV_SETUP="false"
 SKIP_CHECKPOINTS="false"
-SKIP_DATA_DOWNLOAD="false"
 SKIP_CONVERT="false"
 SKIP_TRAIN="false"
 SKIP_UPLOAD="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --latency)
-      LATENCY="$2"
-      shift 2
-      ;;
     --conda-env)
       CONDA_ENV_NAME="$2"
       shift 2
       ;;
     --python-version)
-      PYTHON_VERSION="$2"
+      BOOTSTRAP_PYTHON_VERSION="$2"
       shift 2
       ;;
     --context-window)
@@ -89,6 +87,14 @@ while [[ $# -gt 0 ]]; do
       MAX_TRAIN_STEPS="$2"
       shift 2
       ;;
+    --benchmark-root)
+      BENCHMARK_ROOT="$2"
+      shift 2
+      ;;
+    --dataset-cache-dir)
+      DATASET_CACHE_DIR="$2"
+      shift 2
+      ;;
     --upload-repo)
       UPLOAD_REPO="$2"
       shift 2
@@ -97,8 +103,8 @@ while [[ $# -gt 0 ]]; do
       UPLOAD_PATH_IN_REPO="$2"
       shift 2
       ;;
-    --raw-dataset-repo)
-      RAW_DATASET_REPO="$2"
+    --run-id)
+      RUN_ID="$2"
       shift 2
       ;;
     --skip-env-setup)
@@ -107,10 +113,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-checkpoints)
       SKIP_CHECKPOINTS="true"
-      shift
-      ;;
-    --skip-data-download)
-      SKIP_DATA_DOWNLOAD="true"
       shift
       ;;
     --skip-convert)
@@ -130,20 +132,19 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "[deadly-wanoft] Unknown argument: $1" >&2
+      echo "[deadly-wanoft-fixed] Unknown argument: $1" >&2
       usage >&2
       exit 2
       ;;
   esac
 done
 
-if [[ -z "${LATENCY}" ]]; then
-  echo "[deadly-wanoft] --latency is required." >&2
-  usage >&2
+if ! [[ "${CONTEXT_WINDOW}" =~ ^[0-9]+$ ]] || [[ "${CONTEXT_WINDOW}" -lt 2 ]]; then
+  echo "[deadly-wanoft-fixed] --context-window must be an integer >= 2, got: ${CONTEXT_WINDOW}" >&2
   exit 2
 fi
-if ! [[ "${LATENCY}" =~ ^[0-9]+$ ]]; then
-  echo "[deadly-wanoft] --latency must be a non-negative integer, got: ${LATENCY}" >&2
+if ! [[ "${MAX_EPISODES}" =~ ^[0-9]+$ ]] || [[ "${MAX_EPISODES}" -lt 1 ]]; then
+  echo "[deadly-wanoft-fixed] --max-episodes must be a positive integer, got: ${MAX_EPISODES}" >&2
   exit 2
 fi
 
@@ -151,26 +152,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
-RAW_DATASET_REPO="${RAW_DATASET_REPO:-latency-sensitive-bench/deadly_corridor_200ep_context${CONTEXT_WINDOW}}"
-RAW_SUBDIR="deadly_corridor_fix_latency_${LATENCY}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}"
-RAW_DATA_DIR="${RAW_DATA_ROOT}/${RAW_SUBDIR}"
-CONVERTED_DATA_ROOT="data/deadly_corridor_fix_latency_${LATENCY}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}"
+BENCHMARK_ROOT="${BENCHMARK_ROOT:-${REPO_ROOT}/../latency-sensitive-bench}"
+CONVERTED_DATA_ROOT="data/deadly_corridor_fix_latency_${LATENCY_RAW_FRAMES}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}"
 CONVERTED_DATA_DIR="${CONVERTED_DATA_ROOT}/deadly_corridor_train__bridge"
-RUN_ID="wan_oft_deadly_corridor_fix_latency_${LATENCY}_context${CONTEXT_WINDOW}_standard_sft_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_224_currentbce"
-UPLOAD_PATH_IN_REPO="${UPLOAD_PATH_IN_REPO:-./${RUN_ID}}"
+PROMPT_MAP_PATH="${CONVERTED_DATA_DIR}/latency_prompt_map.json"
+MANIFEST_PATH="${CONVERTED_DATA_DIR}/manifest.json"
+RUN_ID="${RUN_ID:-wan_oft_deadly_corridor_fix_latency_${LATENCY_RAW_FRAMES}_context${CONTEXT_WINDOW}_standard_sft_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_224_currentbce}"
+UPLOAD_PATH_IN_REPO="${UPLOAD_PATH_IN_REPO:-${RUN_ID}}"
 RUN_DIR="${RUN_ROOT_DIR}/${RUN_ID}"
 
 ensure_hf_cli() {
   if ! command -v hf >/dev/null 2>&1; then
-    echo "[deadly-wanoft] Hugging Face CLI command 'hf' is not available in PATH." >&2
-    echo "[deadly-wanoft] Re-run without --skip-env-setup, or install huggingface-hub in ${CONDA_ENV_NAME}." >&2
+    echo "[deadly-wanoft-fixed] Hugging Face CLI command 'hf' is not available in PATH." >&2
+    echo "[deadly-wanoft-fixed] Re-run without --skip-env-setup, or install huggingface-hub in ${CONDA_ENV_NAME}." >&2
     exit 1
   fi
 }
 
 activate_conda_env() {
   if ! command -v conda >/dev/null 2>&1; then
-    echo "[deadly-wanoft] conda is required but was not found in PATH." >&2
+    echo "[deadly-wanoft-fixed] conda is required but was not found in PATH." >&2
     exit 1
   fi
   local conda_base
@@ -180,74 +181,167 @@ activate_conda_env() {
   conda activate "${CONDA_ENV_NAME}"
 }
 
+validate_converted_dataset() {
+  python - \
+    "${MANIFEST_PATH}" \
+    "${PROMPT_MAP_PATH}" \
+    "${DATASET_CONFIG}" \
+    "${CONTEXT_WINDOW}" \
+    "${MAX_EPISODES}" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+manifest_path = Path(sys.argv[1])
+prompt_map_path = Path(sys.argv[2])
+expected_config = sys.argv[3]
+expected_context_window = int(sys.argv[4])
+expected_max_episodes = int(sys.argv[5])
+
+if not manifest_path.is_file():
+    raise FileNotFoundError(f"Converted manifest does not exist: {manifest_path}")
+if not prompt_map_path.is_file():
+    raise FileNotFoundError(f"Converted prompt map does not exist: {prompt_map_path}")
+
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+prompt_map = json.loads(prompt_map_path.read_text(encoding="utf-8"))
+if manifest.get("source_config") != expected_config:
+    raise ValueError(
+        f"Expected source_config={expected_config!r}, got {manifest.get('source_config')!r}"
+    )
+if manifest.get("action_layout") != "multibinary_7":
+    raise ValueError(
+        f"Expected action_layout='multibinary_7', got {manifest.get('action_layout')!r}"
+    )
+if manifest.get("source_action_layout") != "deadly_corridor_joint_54":
+    raise ValueError(
+        "Expected source_action_layout='deadly_corridor_joint_54', got "
+        f"{manifest.get('source_action_layout')!r}"
+    )
+if manifest.get("image_sequence_length") != expected_context_window:
+    raise ValueError(
+        "Converted image_sequence_length does not match the requested context window: "
+        f"{manifest.get('image_sequence_length')} != {expected_context_window}"
+    )
+if manifest.get("max_episodes") != expected_max_episodes:
+    raise ValueError(
+        f"Converted max_episodes={manifest.get('max_episodes')} != {expected_max_episodes}"
+    )
+if manifest.get("latency_unit") != "raw_frames":
+    raise ValueError(
+        f"Expected latency_unit='raw_frames', got {manifest.get('latency_unit')!r}"
+    )
+if manifest.get("latency_raw_frames") != [6]:
+    raise ValueError(
+        f"Expected latency_raw_frames=[6], got {manifest.get('latency_raw_frames')!r}"
+    )
+if manifest.get("latency_env_steps") != [1.5]:
+    raise ValueError(
+        f"Expected latency_env_steps=[1.5], got {manifest.get('latency_env_steps')!r}"
+    )
+if set(prompt_map) != {"6"}:
+    raise ValueError(
+        f"Expected exactly raw-frame latency 6 in the prompt map, got {sorted(prompt_map)}"
+    )
+if prompt_map["6"].get("latency_raw_frames") != 6:
+    raise ValueError(
+        "Expected prompt-map latency_raw_frames=6, got "
+        f"{prompt_map['6'].get('latency_raw_frames')!r}"
+    )
+PY
+}
+
 if [[ "${SKIP_ENV_SETUP}" != "true" ]]; then
-  echo "[deadly-wanoft] Installing/updating env: ${CONDA_ENV_NAME}"
-  bash examples/rl_games/install/bootstrap.sh \
+  if [[ ! -f "${BENCHMARK_ROOT}/pyproject.toml" ]] \
+    || [[ ! -d "${BENCHMARK_ROOT}/latency_bench" ]] \
+    || [[ ! -f "${BENCHMARK_ROOT}/third_party/flappy-bird-gymnasium/setup.py" ]]; then
+    echo "[deadly-wanoft-fixed] Invalid latency-sensitive-bench checkout: ${BENCHMARK_ROOT}" >&2
+    echo "[deadly-wanoft-fixed] Pass --benchmark-root with a checkout whose submodules are initialized." >&2
+    exit 1
+  fi
+  echo "[deadly-wanoft-fixed] Installing/updating env: ${CONDA_ENV_NAME}"
+  LATENCY_BENCH_ROOT="${BENCHMARK_ROOT}" bash examples/rl_games/install/bootstrap.sh \
+    --tier dev \
     --conda-env "${CONDA_ENV_NAME}" \
-    --python-version "${PYTHON_VERSION}" \
+    --python-version "${BOOTSTRAP_PYTHON_VERSION}" \
     --model wan_oft \
     --env deadly_corridor
 fi
 
 activate_conda_env
-ensure_hf_cli
+if [[ "${SKIP_CHECKPOINTS}" != "true" || "${SKIP_UPLOAD}" != "true" ]]; then
+  ensure_hf_cli
+fi
 
 if [[ "${SKIP_CHECKPOINTS}" != "true" ]]; then
-  echo "[deadly-wanoft] Downloading Wan base model checkpoint"
+  echo "[deadly-wanoft-fixed] Downloading Wan base model checkpoint"
   hf download "${BASE_MODEL_REPO}" \
     --local-dir "${BASE_MODEL_DIR}"
 
-  echo "[deadly-wanoft] Downloading WanOFT initialization checkpoint"
+  echo "[deadly-wanoft-fixed] Downloading WanOFT initialization checkpoint"
   hf download "${INIT_CHECKPOINT_REPO}" \
     --local-dir "${INIT_CHECKPOINT_DIR}"
 fi
 
-if [[ "${SKIP_DATA_DOWNLOAD}" != "true" ]]; then
-  echo "[deadly-wanoft] Downloading raw data ${RAW_SUBDIR} from ${RAW_DATASET_REPO}"
-  hf download "${RAW_DATASET_REPO}" \
-    --repo-type dataset \
-    --include "${RAW_SUBDIR}/**" \
-    --local-dir "${RAW_DATA_ROOT}"
-fi
-
 if [[ "${SKIP_CONVERT}" != "true" ]]; then
-  echo "[deadly-wanoft] Converting raw data into ${CONVERTED_DATA_DIR}"
-  python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_deadly_corridor_to_starvla_lerobot.py \
-    --dataset-name "${RAW_DATA_DIR}" \
-    --output-dir "${CONVERTED_DATA_DIR}" \
-    --action-carrier bridge \
-    --action-layout multibinary_7 \
-    --source-action-layout deadly_corridor_joint_54 \
-    --context-images-column context_images \
-    --image-sequence-length "${CONTEXT_WINDOW}" \
+  echo "[deadly-wanoft-fixed] Converting ${DATASET_REPO}/${DATASET_CONFIG} into ${CONVERTED_DATA_DIR}"
+  CONVERTER_ARGS=(
+    python
+    examples/rl_games/bash_scripts/gr00t/data_conversion/convert_deadly_corridor_history_to_starvla_lerobot.py
+    --dataset-name "${DATASET_REPO}"
+    --dataset-config-name "${DATASET_CONFIG}"
+    --output-dir "${CONVERTED_DATA_DIR}"
+    --max-episodes "${MAX_EPISODES}"
+    --image-sequence-length "${CONTEXT_WINDOW}"
     --force
+  )
+  if [[ -n "${DATASET_CACHE_DIR}" ]]; then
+    CONVERTER_ARGS+=(--cache-dir "${DATASET_CACHE_DIR}")
+  fi
+  "${CONVERTER_ARGS[@]}"
 fi
 
 if [[ "${SKIP_TRAIN}" != "true" ]]; then
-  echo "[deadly-wanoft] Training run_id=${RUN_ID}"
+  validate_converted_dataset
+  echo "[deadly-wanoft-fixed] Training raw-frame latency=${LATENCY_RAW_FRAMES} with core eval disabled run_id=${RUN_ID}"
   export WANDB_ENTITY="${WANDB_ENTITY_VALUE}"
   export WANDB_PROJECT="${WANDB_PROJECT_VALUE}"
+
+  TRAIN_OVERRIDES=(
+    "paths.run_root_dir=${RUN_ROOT_DIR}"
+    "paths.base_model_dir=${BASE_MODEL_DIR}"
+    "initialization.checkpoint_local_dir=${INIT_CHECKPOINT_DIR}"
+    "dataset.source_hf=${DATASET_REPO}"
+    "dataset.config_name=${DATASET_CONFIG}"
+    "dataset.max_episodes=${MAX_EPISODES}"
+    "rl_games.env_eval.enabled=false"
+    "rl_games.env_eval.mid_train.enabled=false"
+    "rl_games.env_eval.post_train.enabled=false"
+  )
+  if [[ -n "${DATASET_CACHE_DIR}" ]]; then
+    TRAIN_OVERRIDES+=("paths.dataset_cache_dir=${DATASET_CACHE_DIR}")
+  fi
+
   CONTEXT_WINDOW="${CONTEXT_WINDOW}" \
   MAX_EPISODES="${MAX_EPISODES}" \
   MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS}" \
   PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE}" \
   GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS}" \
-  POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES}" \
-  POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES}" \
   DATASET_LOCAL_DIR="${CONVERTED_DATA_ROOT}" \
   RUN_ID="${RUN_ID}" \
-    bash commands/wanoft/train_deadly_corridor_wan_oft.sh "${LATENCY}"
+  PROMPT_MAP_PATH="${PROMPT_MAP_PATH}" \
+    bash commands/wanoft/train_deadly_corridor_wan_oft.sh 6 "${TRAIN_OVERRIDES[@]}"
 fi
 
 if [[ "${SKIP_UPLOAD}" != "true" ]]; then
   if [[ ! -d "${RUN_DIR}" ]]; then
-    echo "[deadly-wanoft] Training output directory does not exist: ${RUN_DIR}" >&2
+    echo "[deadly-wanoft-fixed] Training output directory does not exist: ${RUN_DIR}" >&2
     exit 1
   fi
-  echo "[deadly-wanoft] Uploading ${RUN_DIR} to ${UPLOAD_REPO}:${UPLOAD_PATH_IN_REPO}"
+  echo "[deadly-wanoft-fixed] Uploading ${RUN_DIR} to ${UPLOAD_REPO}:${UPLOAD_PATH_IN_REPO}"
   hf upload "${UPLOAD_REPO}" "${RUN_DIR}" "${UPLOAD_PATH_IN_REPO}" \
     --exclude "wandb/**" \
     --repo-type model
 fi
 
-echo "[deadly-wanoft] Complete: latency=${LATENCY} run_id=${RUN_ID}"
+echo "[deadly-wanoft-fixed] Complete: raw-frame latency=${LATENCY_RAW_FRAMES} core_eval=false run_id=${RUN_ID}"
