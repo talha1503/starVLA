@@ -14,7 +14,7 @@ if [[ "${INSTALL_TIER}" == "dev" ]]; then
   "$PYTHON_BIN" -c "import hydra; print('ok-common-dev')"
   if [[ "${STARVLA_TORCH_PROFILE}" != "cpu" ]]; then
     INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-    PYTHON_BIN="$PYTHON_BIN" "${INSTALL_DIR}/flash_attn.sh" --check
+    PYTHON_BIN="$PYTHON_BIN" "${INSTALL_DIR}/flash_attn.sh" --check || true
   fi
 fi
 

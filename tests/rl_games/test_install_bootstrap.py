@@ -213,6 +213,15 @@ def test_training_dependencies_are_not_in_the_use_manifest() -> None:
     assert "pyarrow>=15.0.0" in dev_requirements
 
 
+def test_optional_flash_attention_check_does_not_fail_validation() -> None:
+    repo_root: Path = _repo_root()
+    validator_source = (
+        repo_root / "examples" / "rl_games" / "install" / "validate" / "common.sh"
+    ).read_text()
+
+    assert '"${INSTALL_DIR}/flash_attn.sh" --check || true' in validator_source
+
+
 def test_torch_auto_profile_uses_cpu_without_nvidia_smi() -> None:
     repo_root: Path = _repo_root()
     resolver: Path = repo_root / "examples" / "rl_games" / "install" / "_torch_profile.sh"

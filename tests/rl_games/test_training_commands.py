@@ -397,6 +397,11 @@ def test_demon_attack_wan_oft_command_preserves_parameterized_post_train_eval() 
     assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"' in command_text
     assert '"rl_games.env_eval.post_train.latencies=${POST_TRAIN_LATENCIES}"' in command_text
     assert 'rl_games.env_eval.post_train.num_episodes="${POST_TRAIN_NUM_EPISODES}"' in command_text
+    assert "if [[ $# -gt 0 ]]; then\n  shift\nfi" in command_text
+    assert 'OBSERVATION_INDICES="["' in command_text
+    assert "for ((offset = CONTEXT_WINDOW - 1; offset >= 1; offset--)); do" in command_text
+    assert '"datasets.vla_data.observation_indices=${OBSERVATION_INDICES}"' in command_text
+    assert '"$@"' in command_text
 
 
 def test_deadly_corridor_wan_oft_command_preserves_context_and_action_contract() -> None:
@@ -549,19 +554,51 @@ def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path
     assert "--mode" not in help_result.stdout
 
 
-def test_demon_attack_wan_oft_pipeline_uses_archived_training_command() -> None:
+def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path() -> None:
     script_path = REPO_ROOT / "scripts" / "run_demon_attack_wan_oft_pipeline.sh"
     training_command_path = REPO_ROOT / "commands" / "wanoft" / "train_demon_attack_wan_oft.sh"
     script_text = script_path.read_text(encoding="utf-8")
 
     assert training_command_path.exists()
-    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES:-[0,2,4,6,8]}"' in script_text
-    assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"' in script_text
-    assert 'POST_TRAIN_LATENCIES="${POST_TRAIN_LATENCIES}" \\' in script_text
-    assert 'POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES}" \\' in script_text
-    assert 'bash commands/wanoft/train_demon_attack_wan_oft.sh "${LATENCY}"' in script_text
+    assert "--latency <" not in script_text
+    assert "\n    --latency)" not in script_text
+    assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
+    assert 'DATASET_CONFIG="demon_attack_fixed_latency_6_200ep_7k2steps"' in script_text
+    assert "LATENCY_RAW_FRAMES=6" in script_text
+    assert 'BOOTSTRAP_PYTHON_VERSION="${STARVLA_PYTHON_VERSION:-3.10}"' in script_text
+    assert "--tier dev" in script_text
+    assert "--accept-rom-license" in script_text
+    assert "convert_demon_attack_history_to_starvla_lerobot.py" in script_text
+    assert "convert_demon_attack_to_starvla_lerobot.py" not in script_text
+    assert '--dataset-name "${DATASET_REPO}"' in script_text
+    assert '--dataset-config-name "${DATASET_CONFIG}"' in script_text
+    assert '--max-episodes "${MAX_EPISODES}"' in script_text
+    assert "--context-images-column" not in script_text
+    assert '"dataset.source_hf=${DATASET_REPO}"' in script_text
+    assert '"dataset.config_name=${DATASET_CONFIG}"' in script_text
+    assert '"paths.run_root_dir=${RUN_ROOT_DIR}"' in script_text
+    assert '"paths.base_model_dir=${BASE_MODEL_DIR}"' in script_text
+    assert '"initialization.checkpoint_local_dir=${INIT_CHECKPOINT_DIR}"' in script_text
+    assert '"rl_games.env_eval.post_train.enabled=false"' in script_text
+    assert (
+        'bash commands/wanoft/train_demon_attack_wan_oft.sh 6 "${TRAIN_OVERRIDES[@]}"'
+        in script_text
+    )
     assert 'bash commands/train_demon_attack_wan_oft.sh "${LATENCY}"' not in script_text
+    assert "--image-sequence-length \"${CONTEXT_WINDOW}\"" in script_text
+    assert 'manifest.get("latency_raw_frames") != [6]' in script_text
+    assert 'manifest.get("latency_env_steps") != [1.5]' in script_text
     subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
+    help_result = subprocess.run(
+        ["bash", str(script_path), "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert "fixed-raw-frame-latency-6" in help_result.stdout
+    assert "1.5 policy decision steps" in help_result.stdout
+    assert "--latency" not in help_result.stdout
 
 
 def test_deadly_corridor_wan_oft_pipeline_covers_conversion_training_and_eval() -> None:
