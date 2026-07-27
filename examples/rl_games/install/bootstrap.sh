@@ -105,6 +105,7 @@ ensure_conda_env() {
     setuptools \
     wheel \
     packaging \
+    "zlib=1.3.2" \
     -y
 }
 
@@ -148,7 +149,9 @@ ORIGINAL_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 for model in "${MODELS_TO_INSTALL[@]}"; do
   CONDA_ENV_NAME="starvla_rl_games_${model}"
   ensure_conda_env "${CONDA_ENV_NAME}"
+  set +u
   conda activate "${CONDA_ENV_NAME}"
+  set -u
 
   export CUDA_HOME="${CONDA_PREFIX}"
   export LD_LIBRARY_PATH="${CUDA_HOME}/lib:${CUDA_HOME}/lib64${ORIGINAL_LD_LIBRARY_PATH:+:${ORIGINAL_LD_LIBRARY_PATH}}"

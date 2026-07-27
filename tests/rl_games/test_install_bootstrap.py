@@ -173,6 +173,7 @@ fi
       fi
       ;;
     activate)
+      : "${{NVCC_PREPEND_FLAGS}}"
       export CONDA_PREFIX="{conda_base}/envs/$2"
       ;;
     deactivate)
@@ -209,6 +210,7 @@ fi
     assert "-c nvidia/label/cuda-12.8.1" in conda_calls
     assert "python=3.10" in conda_calls
     assert "cuda-toolkit=12.8.1" in conda_calls
+    assert "zlib=1.3.2" in conda_calls
     create_offsets = [
         conda_calls.index(f"create -n starvla_rl_games_{model}")
         for model in expected_models
@@ -245,16 +247,20 @@ fi
     assert "create -n starvla_rl_games_openvla" not in existing_env_calls
     assert "python=3.10" in existing_env_calls
     assert "cuda-toolkit=12.8.1" in existing_env_calls
+    assert "zlib=1.3.2" in existing_env_calls
 
 
 def test_training_dependencies_are_not_in_the_use_manifest() -> None:
     repo_root: Path = _repo_root()
-    use_requirements: str = (repo_root / "requirements.txt").read_text()
-    dev_requirements: str = (repo_root / "requirements-dev.txt").read_text()
+    use_requirements = (repo_root / "requirements.txt").read_text().splitlines()
+    dev_requirements = (repo_root / "requirements-dev.txt").read_text().splitlines()
 
     for dependency in ("datasets", "deepspeed", "hydra-core", "wandb"):
-        assert dependency not in use_requirements
-        assert dependency in dev_requirements
+        assert not any(line.startswith(dependency) for line in use_requirements)
+        assert any(line.startswith(dependency) for line in dev_requirements)
+
+    assert "decord==0.6.0" not in dev_requirements
+    assert "eva-decord==0.6.1" in dev_requirements
     assert "pyarrow>=15.0.0" in dev_requirements
 
 
@@ -317,8 +323,9 @@ def test_flash_attention_build_checks_both_target_architectures() -> None:
     assert "--force-reinstall" in flash_source
     assert "--no-cache-dir" in flash_source
     assert "--no-binary=flash-attn" in flash_source
-    assert 'cuobjdump --list-elf "${extension_path}" | grep -q "sm_90"' in flash_source
-    assert 'cuobjdump --list-elf "${extension_path}" | grep -q "sm_120"' in flash_source
+    assert 'code_objects="$(cuobjdump --list-elf "${extension_path}")"' in flash_source
+    assert 'grep -q "sm_90" <<<"${code_objects}"' in flash_source
+    assert 'grep -q "sm_120" <<<"${code_objects}"' in flash_source
 
 
 def test_every_model_has_a_validator_for_every_game() -> None:

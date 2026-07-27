@@ -1,5 +1,4 @@
 datasets>=3.0
-decord==0.6.0
 deepspeed==0.16.9
 eva-decord==0.6.1
 fastparquet==2024.11.0

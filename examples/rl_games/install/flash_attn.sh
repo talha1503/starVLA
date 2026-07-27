@@ -45,14 +45,17 @@ PY
 
 run_arch_check() {
   local extension_path
+  local code_objects
   extension_path="$("$PYTHON_BIN" - <<'PY'
+import torch  # noqa: F401
 import flash_attn_2_cuda
 
 print(flash_attn_2_cuda.__file__)
 PY
 )"
-  cuobjdump --list-elf "${extension_path}" | grep -q "sm_90"
-  cuobjdump --list-elf "${extension_path}" | grep -q "sm_120"
+  code_objects="$(cuobjdump --list-elf "${extension_path}")"
+  grep -q "sm_90" <<<"${code_objects}"
+  grep -q "sm_120" <<<"${code_objects}"
 }
 
 case "${1:-}" in
