@@ -44,6 +44,7 @@ from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, 
 from starVLA.training.rl_games.auth import login_training_services
 from starVLA.training.rl_games.eval_core import EvalResult
 from starVLA.training.rl_games import action_cc_f1
+from starVLA.training.nan_debug import NanDebugSession
 from starVLA.training.train_step_events import (
     calculate_epoch_progress,
     should_run_optional_step_interval_event,
@@ -466,10 +467,25 @@ def setup_directories(cfg) -> Path:
     return output_dir
 
 
-def prepare_data(cfg, accelerator, output_dir) -> tuple[DataLoader, DataLoader | None]:
+def prepare_data(
+    cfg,
+    accelerator,
+    output_dir,
+    *,
+    nan_debug_config,
+) -> tuple[DataLoader, DataLoader | None]:
     """Prepare VLA training data."""
     logger.info(f"Creating VLA Dataset with Mixture `{cfg.datasets.vla_data.data_mix}`")
-    vla_train_dataloader = build_dataloader(cfg=cfg, dataset_py=cfg.datasets.vla_data.dataset_py)
+    nan_debug_capture_raw = (
+        nan_debug_config is not None
+        and nan_debug_config.enabled
+        and nan_debug_config.capture_raw_batch
+    )
+    vla_train_dataloader = build_dataloader(
+        cfg=cfg,
+        dataset_py=cfg.datasets.vla_data.dataset_py,
+        nan_debug_capture_raw=nan_debug_capture_raw,
+    )
     vla_eval_dataloader = None
     eval_data_mix = getattr(cfg.datasets.vla_data, "eval_data_mix", None)
     if eval_data_mix:
@@ -479,6 +495,7 @@ def prepare_data(cfg, accelerator, output_dir) -> tuple[DataLoader, DataLoader |
             dataset_py=cfg.datasets.vla_data.dataset_py,
             data_mix=str(eval_data_mix),
             mode="eval",
+            nan_debug_capture_raw=False,
             save_statistics_filename="dataset_statistics_eval.json",
         )
 
@@ -566,7 +583,17 @@ def _preload_model_checkpoint_before_accelerator(cfg, model):
 
 
 class VLATrainer(TrainerUtils):
-    def __init__(self, cfg, model, vla_train_dataloader, vla_eval_dataloader, optimizer, lr_scheduler, accelerator):
+    def __init__(
+        self,
+        cfg,
+        model,
+        vla_train_dataloader,
+        vla_eval_dataloader,
+        optimizer,
+        lr_scheduler,
+        accelerator,
+        nan_debug_config,
+    ):
         self.config = cfg
         self.model = model
         self.vla_train_dataloader = vla_train_dataloader
@@ -574,6 +601,8 @@ class VLATrainer(TrainerUtils):
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
         self.accelerator = accelerator
+        self.nan_debug_config = nan_debug_config
+        self._nan_debug = None
 
         self.completed_steps = 0
         self.total_batch_size = self._calculate_total_batch_size()
@@ -649,6 +678,8 @@ class VLATrainer(TrainerUtils):
         # (ckpt load / DeepSpeed init / dataloader build) crashes, the
         # produced run dir is still introspectable / from_pretrained-able.
         self._save_initial_configs()
+        if self.nan_debug_config is not None and self.nan_debug_config.enabled:
+            _distributed_barrier()
 
         self._init_checkpointing()
 
@@ -683,6 +714,35 @@ class VLATrainer(TrainerUtils):
             self._adjust_lr_scheduler_for_resume()
 
         self._init_wandb()
+        self._init_nan_debug()
+
+    def _init_nan_debug(self) -> None:
+        if self.nan_debug_config is None or not self.nan_debug_config.enabled:
+            return
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        debug_optimizer = (
+            self.model.optimizer
+            if self.accelerator.distributed_type == DistributedType.DEEPSPEED
+            else self.optimizer
+        )
+        self._nan_debug = NanDebugSession(
+            output_dir=Path(self.config.output_dir),
+            output_subdir=self.nan_debug_config.output_subdir,
+            rank=rank,
+            capture_raw_batch=self.nan_debug_config.capture_raw_batch,
+            save_state_on_failure=self.nan_debug_config.save_state_on_failure,
+            trace_modules=self.nan_debug_config.trace_modules,
+            deepspeed_zero2=(
+                self.accelerator.distributed_type == DistributedType.DEEPSPEED
+                and self.config.trainer.deepspeed_zero_stage == 2
+            ),
+            config_path=Path(self.config.output_dir) / "config.full.yaml",
+            model=self.accelerator.unwrap_model(self.model),
+            optimizer=debug_optimizer,
+        )
+        self._nan_debug.inspect_parameters("initial.parameters")
+        self._nan_debug.inspect_optimizer("initial.optimizer")
+        self._nan_debug.raise_if_nonfinite("initialization")
 
     def _calculate_total_batch_size(self):
         """Calculate global batch size."""
@@ -1177,6 +1237,8 @@ class VLATrainer(TrainerUtils):
         shutdown(self._action_cc_f1_frame_loader)
 
     def cleanup_runtime(self) -> None:
+        if self._nan_debug is not None:
+            self._nan_debug.close()
         self._shutdown_dataloader_workers()
         unwrapped = None
         try:
@@ -1470,12 +1532,20 @@ class VLATrainer(TrainerUtils):
                 batch_vla = self._get_next_batch()
                 t_end_data = time.perf_counter()
                 profile_data_seconds = self._profile_elapsed(t_profile_data) if profile_enabled else None
+                if self._nan_debug is not None:
+                    self._nan_debug.begin_step(
+                        optimizer_step=self.completed_steps + 1,
+                        batch=batch_vla,
+                    )
+                    self._nan_debug.raise_if_nonfinite("batch")
 
                 t_profile_model = self._profile_start() if profile_enabled else None
                 t_start_model = time.perf_counter()
                 step_metrics = self._train_step(batch_vla)
                 t_end_model = time.perf_counter()
                 profile_model_seconds = self._profile_elapsed(t_profile_model) if profile_enabled else None
+                if self._nan_debug is not None:
+                    self._nan_debug.finish_step()
 
                 optimizer_stepped = bool(step_metrics.pop("_optimizer_step"))
                 stop_requested = False
@@ -2231,6 +2301,9 @@ class VLATrainer(TrainerUtils):
                 action_loss = output_dict["action_loss"]
                 loss_weight = output_dict["loss_weight"]
                 total_loss = action_loss
+            if self._nan_debug is not None:
+                self._nan_debug.inspect("forward.output", output_dict)
+                self._nan_debug.raise_if_nonfinite("forward")
             if profile_log:
                 profile_metrics["timing/forward"] = self._profile_elapsed(t_forward)
                 profile_metrics.update(output_dict["timing"])
@@ -2239,12 +2312,19 @@ class VLATrainer(TrainerUtils):
             t_backward = self._profile_start() if profile_log else None
             self.model.backward(total_loss)
             self._record_train_loss(action_loss, loss_weight)
+            if self._nan_debug is not None:
+                self._nan_debug.inspect_gradients("backward.gradients")
+                self._nan_debug.raise_if_nonfinite("backward")
             if profile_log:
                 profile_metrics["timing/backward"] = self._profile_elapsed(t_backward)
 
             optimizer_stepped = bool(self.model.is_gradient_accumulation_boundary())
             t_optimizer = self._profile_start() if profile_log else None
             self.model.step()
+            if self._nan_debug is not None and optimizer_stepped:
+                self._nan_debug.inspect_parameters("optimizer.parameters")
+                self._nan_debug.inspect_optimizer("optimizer.state")
+                self._nan_debug.raise_if_nonfinite("optimizer")
             if profile_log:
                 profile_metrics["timing/optimizer_step"] = self._profile_elapsed(t_optimizer)
 
@@ -2274,6 +2354,9 @@ class VLATrainer(TrainerUtils):
                 action_loss = output_dict["action_loss"]
                 loss_weight = output_dict["loss_weight"]
                 total_loss = action_loss
+            if self._nan_debug is not None:
+                self._nan_debug.inspect("forward.output", output_dict)
+                self._nan_debug.raise_if_nonfinite("forward")
             if profile_log:
                 profile_metrics["timing/forward"] = self._profile_elapsed(t_forward)
                 profile_metrics.update(output_dict["timing"])
@@ -2282,6 +2365,9 @@ class VLATrainer(TrainerUtils):
             t_backward = self._profile_start() if profile_log else None
             self.accelerator.backward(total_loss)
             self._record_train_loss(action_loss, loss_weight)
+            if self._nan_debug is not None:
+                self._nan_debug.inspect_gradients("backward.gradients")
+                self._nan_debug.raise_if_nonfinite("backward")
             if profile_log:
                 profile_metrics["timing/backward"] = self._profile_elapsed(t_backward)
 
@@ -2292,11 +2378,18 @@ class VLATrainer(TrainerUtils):
                 grad_norm = self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
             elif gradients_synced:
                 grad_norm = self._total_grad_norm(self.model.parameters())
+            if self._nan_debug is not None and gradients_synced:
+                self._nan_debug.inspect_gradients("grad_clip.gradients")
+                self._nan_debug.raise_if_nonfinite("gradient clipping")
             if profile_log:
                 profile_metrics["timing/grad_clip_or_norm"] = self._profile_elapsed(t_grad)
 
             t_optimizer = self._profile_start() if profile_log else None
             self.optimizer.step()
+            if self._nan_debug is not None and gradients_synced:
+                self._nan_debug.inspect_parameters("optimizer.parameters")
+                self._nan_debug.inspect_optimizer("optimizer.state")
+                self._nan_debug.raise_if_nonfinite("optimizer")
             if profile_log:
                 profile_metrics["timing/optimizer_step"] = self._profile_elapsed(t_optimizer)
             # Only step the LR scheduler when gradients are actually synced
@@ -2505,7 +2598,7 @@ def _run_eval_batch_benchmark(trainer) -> None:
         logger.info("[LB_EVAL_BENCH] serial 20-ep estimate (1:4 x5) = %.1fs", serial20)
 
 
-def main(cfg) -> None:
+def main(cfg, *, nan_debug_config) -> None:
     previous_signal_handlers = _install_graceful_stop_handlers()
     trainer = None
     normal_completion = False
@@ -2531,7 +2624,12 @@ def main(cfg) -> None:
         distributed_backend = str(getattr(cfg.trainer, "distributed_backend", "deepspeed")).lower()
         accelerator = build_accelerator(cfg, use_deepspeed=distributed_backend == "deepspeed")
 
-        vla_train_dataloader, vla_eval_dataloader = prepare_data(cfg=cfg, accelerator=accelerator, output_dir=output_dir)
+        vla_train_dataloader, vla_eval_dataloader = prepare_data(
+            cfg=cfg,
+            accelerator=accelerator,
+            output_dir=output_dir,
+            nan_debug_config=nan_debug_config,
+        )
         _configure_quota_cumulative_training_steps(cfg=cfg, dataloader=vla_train_dataloader, accelerator=accelerator)
         optimizer, lr_scheduler = setup_optimizer_and_scheduler(model=vla, cfg=cfg)
 
@@ -2543,6 +2641,7 @@ def main(cfg) -> None:
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
             accelerator=accelerator,
+            nan_debug_config=nan_debug_config,
         )
 
         trainer.prepare_training()
@@ -2596,4 +2695,4 @@ if __name__ == "__main__":
         print("🔍 Rank 0 waiting for debugger attach on port 10092...")
         debugpy.wait_for_client()
 
-    main(cfg)
+    main(cfg, nan_debug_config=None)

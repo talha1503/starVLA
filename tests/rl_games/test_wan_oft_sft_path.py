@@ -223,7 +223,7 @@ def test_train_starvla_uses_device_aware_distributed_barrier() -> None:
     assert "def _distributed_barrier()" in trainer_text
     assert "dist.barrier(device_ids=[device_idx])" in trainer_text
     assert trainer_text.count("dist.barrier()") == 1
-    assert trainer_text.count("_distributed_barrier()") == 5
+    assert trainer_text.count("_distributed_barrier()") == 6
 
 
 def test_rl_games_modality_indices_can_be_overridden_for_wan_oft_clip() -> None:

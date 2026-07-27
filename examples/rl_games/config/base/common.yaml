@@ -1,5 +1,13 @@
 # @package _global_
 
+debug:
+  nan:
+    enabled: false
+    capture_raw_batch: true
+    save_state_on_failure: false
+    trace_modules: true
+    output_subdir: nan_debug
+
 framework:
   qwenvl:
     base_vlm: ${paths.base_model_dir}
@@ -156,6 +164,7 @@ trainer:
   gradient_clipping: 1.0
   gradient_accumulation_steps: 1
   distributed_backend: deepspeed
+  deepspeed_zero_stage: 2
   is_resume: false
   pretrained_checkpoint: null
   resume_step: 0

@@ -58,6 +58,7 @@ def test_model_only_checkpoint_does_not_save_full_training_state(tmp_path: Path)
         optimizer=None,
         lr_scheduler=None,
         accelerator=accelerator,
+        nan_debug_config=None,
     )
     trainer.checkpoint_dir = str(tmp_path / "checkpoints")
     Path(trainer.checkpoint_dir).mkdir()

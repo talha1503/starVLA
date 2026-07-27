@@ -592,6 +592,7 @@ class LeRobotSingleDataset(Dataset):
         transforms: ComposedModalityTransform | None = None,
         delete_pause_frame: bool = False,
         data_cfg = None,
+        nan_debug_capture_raw: bool = False,
         **kwargs,
     ):
         """
@@ -608,6 +609,7 @@ class LeRobotSingleDataset(Dataset):
         """
         # first check if the path directory exists
         self.data_cfg = data_cfg
+        self.nan_debug_capture_raw = nan_debug_capture_raw
         if not Path(dataset_path).exists():
             raise FileNotFoundError(f"Dataset path {dataset_path} does not exist")
         # indict letobot version
@@ -1388,9 +1390,18 @@ class LeRobotSingleDataset(Dataset):
         """
         trajectory_id, base_index = self.all_steps[index]
         raw_data = self.get_step_data(trajectory_id, base_index)
+        nan_debug_raw_data = copy.deepcopy(raw_data) if self.nan_debug_capture_raw else None
         data = self.transforms(raw_data)
         sample = self._pack_sample(data, trajectory_id=trajectory_id, base_index=base_index)
         self._attach_rl_games_metadata(sample, base_index)
+        if self.nan_debug_capture_raw:
+            sample["_nan_debug"] = {
+                "dataset_name": self.dataset_name,
+                "dataset_index": index,
+                "trajectory_id": trajectory_id,
+                "base_index": base_index,
+                "raw_data": nan_debug_raw_data,
+            }
         return sample
 
     def _pack_sample(self, data: dict, trajectory_id: int | None = None, base_index: int | None = None) -> dict:

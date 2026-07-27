@@ -59,6 +59,7 @@ def make_LeRobotSingleDataset(
     robot_type: str,
     delete_pause_frame: bool = False,
     data_cfg: dict | None = None,
+    nan_debug_capture_raw: bool = False,
 ) -> LeRobotSingleDataset:
     """
     Make a LeRobotSingleDataset object.
@@ -104,6 +105,7 @@ def make_LeRobotSingleDataset(
         video_backend=video_backend, # decord is more efficiency | torchvision_av for video.av1
         delete_pause_frame=delete_pause_frame,
         data_cfg=data_cfg,
+        nan_debug_capture_raw=nan_debug_capture_raw,
     )
     if robot_type in RL_GAMES_TASK_METADATA:
         dataset.rl_games_task, dataset.rl_games_action_env_dim = RL_GAMES_TASK_METADATA[robot_type]
@@ -115,6 +117,7 @@ def get_vla_dataset(
     balance_dataset_weights: bool = False,
     balance_trajectory_weights: bool = False,
     seed: int = 42,
+    nan_debug_capture_raw: bool = False,
     **kwargs: dict,
 ) -> LeRobotMixtureDataset:
     """
@@ -137,7 +140,19 @@ def get_vla_dataset(
 
     dataset_mixture = []
     for d_name, d_weight, robot_type in filtered_mixture_spec:
-        dataset_mixture.append((make_LeRobotSingleDataset(Path(data_root_dir), d_name, robot_type, delete_pause_frame=delete_pause_frame, data_cfg=data_cfg), d_weight))
+        dataset_mixture.append(
+            (
+                make_LeRobotSingleDataset(
+                    Path(data_root_dir),
+                    d_name,
+                    robot_type,
+                    delete_pause_frame=delete_pause_frame,
+                    data_cfg=data_cfg,
+                    nan_debug_capture_raw=nan_debug_capture_raw,
+                ),
+                d_weight,
+            )
+        )
 
     return LeRobotMixtureDataset(
         dataset_mixture,

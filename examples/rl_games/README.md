@@ -255,6 +255,18 @@ python examples/rl_games/scripts/launch_train.py \
   trainer.eval_interval=5
 ```
 
+Fail fast at the first NaN/Inf and save the raw/transformed batch, RNG state,
+resolved config, and the first non-finite module/tensor:
+
+```bash
+bash commands/memory/train_flappy_openvla_kv_memory_flex.sh \
+  debug.nan.enabled=true \
+  debug.nan.save_state_on_failure=true
+```
+
+Artifacts are written under `<run_dir>/nan_debug/rank_<rank>/`. The same
+overrides work with the single baseline, plain-multi, and stitch commands.
+
 Fast end-to-end preprocessing debug:
 
 ```bash
