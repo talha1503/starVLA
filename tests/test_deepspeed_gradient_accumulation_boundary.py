@@ -65,7 +65,6 @@ def _trainer(boundary_every=4):
     trainer.accelerator = _ForbiddenAccelerator()
     trainer.lr_scheduler = _Scheduler()
     trainer.completed_steps = 0
-    trainer._nan_debug = None
     trainer.config = SimpleNamespace(trainer=SimpleNamespace(gradient_clipping=None))
     trainer._profile_timing_should_log = lambda *args, **kwargs: False
     trainer._train_loss_sum = 0.0
@@ -155,7 +154,6 @@ def _plain_trainer(boundary_every=4):
     trainer.optimizer = _Optimizer()
     trainer.lr_scheduler = _Scheduler()
     trainer.completed_steps = 0
-    trainer._nan_debug = None
     trainer.config = SimpleNamespace(trainer=SimpleNamespace(gradient_clipping=1.0))
     trainer._profile_timing_should_log = lambda *args, **kwargs: False
     trainer._train_loss_sum = 0.0

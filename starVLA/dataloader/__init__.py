@@ -40,7 +40,6 @@ def build_dataloader(
     cfg,
     dataset_py="lerobot_datasets_oxe",
     *,
-    nan_debug_capture_raw: bool,
     data_mix: str | None = None,
     mode: str = "train",
     save_statistics_filename: str | None = "dataset_statistics.json",
@@ -56,11 +55,7 @@ def build_dataloader(
             if eval_sequential is not None:
                 vla_dataset_cfg.sequential_step_sampling = eval_sequential
 
-        vla_dataset = get_vla_dataset(
-            data_cfg=vla_dataset_cfg,
-            mode=mode,
-            nan_debug_capture_raw=nan_debug_capture_raw,
-        )
+        vla_dataset = get_vla_dataset(data_cfg=vla_dataset_cfg, mode=mode)
         num_workers_value = vla_dataset_cfg.get("num_workers", 4)
         num_workers = int(4 if num_workers_value is None else num_workers_value)
         if mode == "eval":

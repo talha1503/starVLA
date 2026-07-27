@@ -64,16 +64,8 @@ def setup_directories(cfg) -> Path:
 def prepare_data(cfg, accelerator, output_dir) -> Tuple[DataLoader, DataLoader]:
     """Prepare co-training data."""
     logger.info(f"Creating VLA Dataset with Mixture `{cfg.datasets.vla_data.data_mix}`")
-    vla_train_dataloader = build_dataloader(
-        cfg=cfg,
-        dataset_py=cfg.datasets.vla_data.dataset_py,
-        nan_debug_capture_raw=False,
-    )
-    vlm_train_dataloader = build_dataloader(
-        cfg=cfg,
-        dataset_py=cfg.datasets.vlm_data.dataset_py,
-        nan_debug_capture_raw=False,
-    )
+    vla_train_dataloader = build_dataloader(cfg=cfg, dataset_py=cfg.datasets.vla_data.dataset_py)
+    vlm_train_dataloader = build_dataloader(cfg=cfg, dataset_py=cfg.datasets.vlm_data.dataset_py)
 
     accelerator.dataloader_config.dispatch_batches = False
     dist.barrier()

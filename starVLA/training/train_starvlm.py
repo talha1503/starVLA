@@ -61,11 +61,7 @@ def setup_directories(cfg) -> Path:
 def prepare_data(cfg, accelerator, output_dir) -> DataLoader:
     """Prepare VLM training data."""
     logger.info(f"Creating VLM Dataset `{cfg.datasets.vlm_data.dataset_use}`")
-    vlm_train_dataloader = build_dataloader(
-        cfg=cfg,
-        dataset_py=cfg.datasets.vlm_data.dataset_py,
-        nan_debug_capture_raw=False,
-    )
+    vlm_train_dataloader = build_dataloader(cfg=cfg, dataset_py=cfg.datasets.vlm_data.dataset_py)
 
     accelerator.dataloader_config.dispatch_batches = False
     dist.barrier()
