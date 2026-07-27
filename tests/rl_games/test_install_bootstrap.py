@@ -39,6 +39,7 @@ def test_bootstrap_requires_an_explicit_model_for_the_fixed_stack() -> None:
     assert "--torch-profile" not in bootstrap_help
     assert "--python-version" not in bootstrap_help
     assert "--current-env" not in bootstrap_help
+    assert "--accept-rom-license" not in bootstrap_help
 
     missing_model = subprocess.run(
         [
@@ -69,7 +70,6 @@ def test_install_stack_remains_a_training_compatibility_entrypoint(tmp_path: Pat
         [
             "bash",
             str(install_stack),
-            "--accept-rom-license",
             "openvla",
             "cross_task",
         ],
@@ -87,7 +87,6 @@ def test_install_stack_remains_a_training_compatibility_entrypoint(tmp_path: Pat
         "dev",
         "--model",
         "openvla",
-        "--accept-rom-license",
     ]
 
 
@@ -277,6 +276,7 @@ def test_demon_attack_installer_uses_gymnasium_compatible_ale() -> None:
     assert '"ale-py==0.8.1"' in installer_source
     assert '"gymnasium[atari]==0.29.1"' in installer_source
     assert "ale-py==0.10.2" not in installer_source
+    assert "AutoROM --accept-license" in installer_source
 
 
 def test_torch_installer_is_fixed_to_cu128() -> None:

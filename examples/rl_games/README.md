@@ -17,16 +17,14 @@ Install one model:
 
 ```bash
 bash examples/rl_games/install/bootstrap.sh \
-  --model openvla \
-  --accept-rom-license
+  --model openvla
 ```
 
 Install all five model environments:
 
 ```bash
 bash examples/rl_games/install/bootstrap.sh \
-  --model all \
-  --accept-rom-license
+  --model all
 ```
 
 The environments are `starvla_rl_games_openvla`, `starvla_rl_games_pi0`,
@@ -36,6 +34,8 @@ runtime-only model packages.
 
 There is no Torch/CUDA auto-detection or alternate version profile. The
 bootstrap script fixes the CUDA/PyTorch stack in every environment, while
+the Demon Attack installer accepts the AutoROM license automatically when its
+ROM is missing.
 Transformers, Datasets, Diffusers, JAX, and other model dependencies are
 installed independently by each model installer. No dependency lock file is
 used.

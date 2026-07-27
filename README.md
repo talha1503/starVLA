@@ -161,8 +161,7 @@ recommended entrypoint is the enclosing benchmark repository:
 cd PATH_TO_LATENCY_SENSITIVE_BENCH
 bash install.sh \
   --tier dev \
-  --model openvla \
-  --accept-rom-license
+  --model openvla
 ```
 
 Use `--model all` to create all five model environments.

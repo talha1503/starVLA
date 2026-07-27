@@ -517,7 +517,6 @@ def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path
     assert "examples/rl_games/install/bootstrap.sh" in script_text
     assert "--tier dev" in script_text
     assert "--model wan_oft" in script_text
-    assert "--accept-rom-license" in script_text
     assert 'CONDA_ENV_NAME="starvla_rl_games_wan_oft"' in script_text
     assert "--conda-env" not in script_text
     assert "--python-version" not in script_text
@@ -553,6 +552,7 @@ def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path
     )
     assert "fixed-latency-3" in help_result.stdout
     assert "--mode" not in help_result.stdout
+    assert "--accept-rom-license" not in help_result.stdout
 
 
 def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path() -> None:
@@ -576,7 +576,6 @@ def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_histor
     assert "--model wan_oft" in script_text
     assert "--conda-env" not in script_text
     assert "--python-version" not in script_text
-    assert "--accept-rom-license" in script_text
     assert "convert_demon_attack_history_to_starvla_lerobot.py" in script_text
     assert "convert_demon_attack_to_starvla_lerobot.py" not in script_text
     assert '--dataset-name "${DATASET_REPO}"' in script_text
@@ -608,6 +607,7 @@ def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_histor
     assert "fixed-raw-frame-latency-6" in help_result.stdout
     assert "1.5 policy decision steps" in help_result.stdout
     assert "--latency" not in help_result.stdout
+    assert "--accept-rom-license" not in help_result.stdout
 
 
 def test_deadly_corridor_wan_oft_pipeline_uses_fixed_latency_history_data_without_core_eval() -> None:
@@ -621,7 +621,6 @@ def test_deadly_corridor_wan_oft_pipeline_uses_fixed_latency_history_data_withou
     assert "LATENCY_RAW_FRAMES=6" in script_text
     assert 'CONDA_ENV_NAME="starvla_rl_games_wan_oft"' in script_text
     assert "--model wan_oft" in script_text
-    assert "--accept-rom-license" in script_text
     assert "rev-parse --show-superproject-working-tree" in script_text
     assert 'LATENCY_BENCH_ROOT="${BENCHMARK_ROOT}" "${BOOTSTRAP_ARGS[@]}"' in script_text
     assert "--conda-env" not in script_text
@@ -649,6 +648,7 @@ def test_deadly_corridor_wan_oft_pipeline_uses_fixed_latency_history_data_withou
     assert "fixed-raw-frame-latency-6" in help_result.stdout
     assert "Core environment evaluation is disabled" in help_result.stdout
     assert "--latency" not in help_result.stdout
+    assert "--accept-rom-license" not in help_result.stdout
 
 
 def test_demon_attack_wan_oft_pipeline_validates_raw_frame_latency_contract() -> None:

@@ -25,7 +25,6 @@ Options:
   --upload-repo <repo>        HF model repo for run upload (default: latency-sensitive-bench/deadly_corridor_1000ep)
   --upload-path <path>        Path inside the HF repo (default: <run_id>)
   --run-id <id>               Override run id
-  --accept-rom-license        Permit AutoROM to accept and download Atari ROMs
   --skip-env-setup            Do not run examples/rl_games/install/bootstrap.sh
   --skip-checkpoints          Do not download Wan base/init checkpoints
   --skip-convert              Do not convert source data
@@ -57,7 +56,6 @@ BASE_MODEL_REPO="${BASE_MODEL_REPO:-Wan-AI/Wan2.2-TI2V-5B-Diffusers}"
 BASE_MODEL_DIR="${BASE_MODEL_DIR:-playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers}"
 INIT_CHECKPOINT_REPO="${INIT_CHECKPOINT_REPO:-StarVLA/WM4A-Wan2d2-OFT-LIBERO-4in1}"
 INIT_CHECKPOINT_DIR="${INIT_CHECKPOINT_DIR:-playground/Pretrained_models/WM4A-Wan2d2-OFT-LIBERO-4in1}"
-ACCEPT_ROM_LICENSE="false"
 SKIP_ENV_SETUP="false"
 SKIP_CHECKPOINTS="false"
 SKIP_CONVERT="false"
@@ -97,10 +95,6 @@ while [[ $# -gt 0 ]]; do
     --run-id)
       RUN_ID="$2"
       shift 2
-      ;;
-    --accept-rom-license)
-      ACCEPT_ROM_LICENSE="true"
-      shift
       ;;
     --skip-env-setup)
       SKIP_ENV_SETUP="true"
@@ -266,9 +260,6 @@ if [[ "${SKIP_ENV_SETUP}" != "true" ]]; then
     --tier dev
     --model wan_oft
   )
-  if [[ "${ACCEPT_ROM_LICENSE}" == "true" ]]; then
-    BOOTSTRAP_ARGS+=(--accept-rom-license)
-  fi
   LATENCY_BENCH_ROOT="${BENCHMARK_ROOT}" "${BOOTSTRAP_ARGS[@]}"
 fi
 

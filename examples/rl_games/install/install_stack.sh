@@ -2,7 +2,6 @@
 set -euo pipefail
 
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ACCEPT_ROM_LICENSE="false"
 POSITIONAL=()
 
 usage() {
@@ -19,17 +18,12 @@ Arguments:
                             still includes all three games
 
 Options:
-  --accept-rom-license      Permit AutoROM to accept and download Atari ROMs
   -h, --help                Show this help
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --accept-rom-license)
-      ACCEPT_ROM_LICENSE="true"
-      shift
-      ;;
     -h|--help)
       usage
       exit 0
@@ -60,9 +54,5 @@ ARGS=(
   --tier dev
   --model "${MODEL_TARGET}"
 )
-
-if [[ "${ACCEPT_ROM_LICENSE}" == "true" ]]; then
-  ARGS+=(--accept-rom-license)
-fi
 
 exec "${INSTALL_DIR}/bootstrap.sh" "${ARGS[@]}"

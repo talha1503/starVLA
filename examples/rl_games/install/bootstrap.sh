@@ -13,7 +13,6 @@ PYTHON_VERSION="3.10"
 CUDA_VERSION="12.8.1"
 MODEL_TARGET=""
 RUN_VALIDATE="true"
-ACCEPT_ROM_LICENSE="false"
 SUPPORTED_MODELS=(openvla pi0 pi05 gr00t wan_oft)
 GAME_ENVS=(demon_attack deadly_corridor flappy)
 
@@ -27,7 +26,6 @@ Python ${PYTHON_VERSION}, CUDA Toolkit ${CUDA_VERSION}, PyTorch 2.11.0+cu128.
 Options:
   --tier <use|dev>         Dependency tier (default: ${INSTALL_TIER})
   --model <name|all>       Required: openvla|pi0|pi05|gr00t|wan_oft|all
-  --accept-rom-license     Permit AutoROM to accept and download Atari ROMs
   --skip-validate          Skip final validation
   -h, --help               Show this help
 EOF
@@ -42,10 +40,6 @@ while [[ $# -gt 0 ]]; do
     --model)
       MODEL_TARGET="$2"
       shift 2
-      ;;
-    --accept-rom-license)
-      ACCEPT_ROM_LICENSE="true"
-      shift
       ;;
     --skip-validate)
       RUN_VALIDATE="false"
@@ -90,7 +84,6 @@ case "${MODEL_TARGET}" in
 esac
 
 export STARVLA_INSTALL_TIER="${INSTALL_TIER}"
-export ACCEPT_ROM_LICENSE
 
 ensure_conda_env() {
   local env_name="$1"
