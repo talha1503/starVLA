@@ -94,22 +94,25 @@ export ACCEPT_ROM_LICENSE
 
 ensure_conda_env() {
   local env_name="$1"
-  if ! conda env list | awk '{print $1}' | grep -qx "${env_name}"; then
-    conda create \
-      -n "${env_name}" \
-      --override-channels \
-      -c nvidia/label/cuda-12.8.1 \
-      -c conda-forge \
-      "python=${PYTHON_VERSION}" \
-      "cuda-toolkit=${CUDA_VERSION}" \
-      pip \
-      setuptools \
-      wheel \
-      packaging \
-      -y
+  local conda_action="create"
+  if conda env list | awk '{print $1}' | grep -qx "${env_name}"; then
+    conda_action="install"
+    echo "[bootstrap] updating existing Conda environment: ${env_name}"
   else
-    echo "[bootstrap] using existing Conda environment: ${env_name}"
+    echo "[bootstrap] creating Conda environment: ${env_name}"
   fi
+  conda "${conda_action}" \
+    -n "${env_name}" \
+    --override-channels \
+    -c nvidia/label/cuda-12.8.1 \
+    -c conda-forge \
+    "python=${PYTHON_VERSION}" \
+    "cuda-toolkit=${CUDA_VERSION}" \
+    pip \
+    setuptools \
+    wheel \
+    packaging \
+    -y
 }
 
 target_validator_name() {
@@ -126,8 +129,8 @@ run_validation() {
   local env_name validator
 
   PYTHON_BIN=python "${SCRIPT_DIR}/validate/common.sh"
-  case "${model}:${INSTALL_TIER}" in
-    openvla:*|pi0:dev|pi05:dev|gr00t:dev)
+  case "${model}" in
+    openvla|pi0|pi05|gr00t)
       PYTHON_BIN=python "${SCRIPT_DIR}/flash_attn.sh" --check
       ;;
   esac

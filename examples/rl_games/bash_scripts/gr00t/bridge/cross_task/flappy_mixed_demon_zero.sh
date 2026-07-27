@@ -7,12 +7,12 @@ conda activate starvla_rl_games_gr00t
 bash examples/rl_games/install/flash_attn.sh --check >/dev/null 2>&1 || bash examples/rl_games/install/flash_attn.sh
 
 python examples/rl_games/scripts/launch_train.py \
-    model=openvla \
+    model=gr00t \
     env=cross_task \
     init=bridge \
     mode=cross_task \
     cross_task_setup=flappy_mixed_demon_zero \
-    run_id="openvla_bridge_cross_flappy_mixed_demon_zero_exp4" \
+    run_id="gr00t_bridge_cross_flappy_mixed_demon_zero_exp4" \
     trainer.distributed_backend=deepspeed \
     launch.use_accelerate=true \
     launch.gpus=0,1 \
@@ -20,9 +20,9 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.env_eval.distributed_mode=rank_sharded \
     workspace_dir="/workspace" \
     wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_bridge_cross_flappy_mixed_demon_zero_exp4" \
+    checkpoint.hf_repo_id="talha15032/gr00t_bridge_cross_flappy_mixed_demon_zero_exp4" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_bridge_cross_flappy_mixed_demon_zero_exp4" \
+    checkpoint.sync.repo_id="talha15032/gr00t_bridge_cross_flappy_mixed_demon_zero_exp4" \
     checkpoint.save_best_model=true \
     trainer.max_train_steps=5000 \
     trainer.num_warmup_steps=0 \

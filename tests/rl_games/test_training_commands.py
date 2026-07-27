@@ -517,6 +517,7 @@ def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path
     assert "examples/rl_games/install/bootstrap.sh" in script_text
     assert "--tier dev" in script_text
     assert "--model wan_oft" in script_text
+    assert "--accept-rom-license" in script_text
     assert 'CONDA_ENV_NAME="starvla_rl_games_wan_oft"' in script_text
     assert "--conda-env" not in script_text
     assert "--python-version" not in script_text
@@ -568,7 +569,7 @@ def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_histor
     assert 'CONDA_ENV_NAME="starvla_rl_games_wan_oft"' in script_text
     assert 'BENCHMARK_ROOT="${LATENCY_BENCH_ROOT:-}"' in script_text
     assert "--benchmark-root <path>" in script_text
-    assert 'BENCHMARK_ROOT="${BENCHMARK_ROOT:-${REPO_ROOT}/../latency-sensitive-bench}"' in script_text
+    assert "rev-parse --show-superproject-working-tree" in script_text
     assert 'third_party/flappy-bird-gymnasium/setup.py' in script_text
     assert 'LATENCY_BENCH_ROOT="${BENCHMARK_ROOT}" "${BOOTSTRAP_ARGS[@]}"' in script_text
     assert "--tier dev" in script_text
@@ -620,6 +621,9 @@ def test_deadly_corridor_wan_oft_pipeline_uses_fixed_latency_history_data_withou
     assert "LATENCY_RAW_FRAMES=6" in script_text
     assert 'CONDA_ENV_NAME="starvla_rl_games_wan_oft"' in script_text
     assert "--model wan_oft" in script_text
+    assert "--accept-rom-license" in script_text
+    assert "rev-parse --show-superproject-working-tree" in script_text
+    assert 'LATENCY_BENCH_ROOT="${BENCHMARK_ROOT}" "${BOOTSTRAP_ARGS[@]}"' in script_text
     assert "--conda-env" not in script_text
     assert "--python-version" not in script_text
     assert "convert_deadly_corridor_history_to_starvla_lerobot.py" in script_text
@@ -662,6 +666,17 @@ def test_openvla_deadly_cross_task_scripts_are_valid_bash() -> None:
     command_paths = [str(script_dir / f"{script}.sh") for script in OPENVLA_DEADLY_CROSS_TASK_SCRIPTS]
 
     subprocess.run(["bash", "-n", *command_paths], check=True, cwd=REPO_ROOT)
+
+
+def test_gr00t_launchers_use_the_gr00t_model_environment_and_run_names() -> None:
+    script_dir = REPO_ROOT / "examples" / "rl_games" / "bash_scripts" / "gr00t"
+
+    for script_path in script_dir.rglob("*.sh"):
+        script_text = script_path.read_text(encoding="utf-8")
+        assert "model=gr00t" in script_text
+        assert "conda activate starvla_rl_games_gr00t" in script_text
+        assert "model=openvla" not in script_text
+        assert "openvla_bridge" not in script_text
 
 
 def test_cross_task_setup_supports_deadly_corridor_converter() -> None:

@@ -147,7 +147,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
-BENCHMARK_ROOT="${BENCHMARK_ROOT:-${REPO_ROOT}/../latency-sensitive-bench}"
+if [[ -z "${BENCHMARK_ROOT}" ]]; then
+  BENCHMARK_ROOT="$(git -C "${REPO_ROOT}" rev-parse --show-superproject-working-tree)"
+  if [[ -z "${BENCHMARK_ROOT}" ]]; then
+    BENCHMARK_ROOT="${REPO_ROOT}/../latency-sensitive-bench"
+  fi
+fi
 CONVERTED_DATA_ROOT="data/demon_attack_fix_latency_${LATENCY_RAW_FRAMES}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}"
 CONVERTED_DATA_DIR="${CONVERTED_DATA_ROOT}/demon_attack_train__bridge"
 PROMPT_MAP_PATH="${CONVERTED_DATA_DIR}/latency_prompt_map.json"

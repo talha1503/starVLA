@@ -81,6 +81,9 @@ echo "[install/flash_attn] Building flash-attn==${FLASH_ATTN_VERSION} from sourc
   wheel==0.47.0
 "$PYTHON_BIN" -m pip install \
   "flash-attn==${FLASH_ATTN_VERSION}" \
+  --force-reinstall \
+  --no-cache-dir \
+  --no-binary=flash-attn \
   --no-build-isolation \
   --no-deps
 run_arch_check

@@ -169,6 +169,9 @@ fi
     env)
       [[ "$2" == "list" ]]
       printf '# conda environments:\\n'
+      if [[ -n "${{FAKE_EXISTING_ENV:-}}" ]]; then
+        printf '%s\\n' "${{FAKE_EXISTING_ENV}}"
+      fi
       ;;
     activate)
       export CONDA_PREFIX="{conda_base}/envs/$2"
@@ -217,6 +220,32 @@ fi
         for _model in expected_models
         for game in ("demon_attack", "deadly_corridor", "flappy")
     ]
+
+    conda_log.write_text("")
+    existing_env_result = subprocess.run(
+        [
+            "bash",
+            str(install_dir / "bootstrap.sh"),
+            "--model",
+            "openvla",
+            "--skip-validate",
+        ],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "LATENCY_BENCH_ROOT": str(tmp_path / "latency-bench"),
+            "FAKE_EXISTING_ENV": "starvla_rl_games_openvla",
+        },
+    )
+
+    assert existing_env_result.returncode == 0, existing_env_result.stderr
+    existing_env_calls = conda_log.read_text()
+    assert "install -n starvla_rl_games_openvla" in existing_env_calls
+    assert "create -n starvla_rl_games_openvla" not in existing_env_calls
+    assert "python=3.10" in existing_env_calls
+    assert "cuda-toolkit=12.8.1" in existing_env_calls
 
 
 def test_training_dependencies_are_not_in_the_use_manifest() -> None:
@@ -270,10 +299,14 @@ def test_model_installers_do_not_select_torch_or_flash_versions() -> None:
     model_sources = "\n".join(
         script.read_text() for script in (install_dir / "model").glob("*.sh")
     )
+    bootstrap_source = (install_dir / "bootstrap.sh").read_text()
 
     assert "STARVLA_TORCH_PROFILE" not in model_sources
     assert "flash_attn4" not in model_sources
     assert not (install_dir / "flash_attn4.sh").exists()
+    for model in ("pi0", "gr00t"):
+        assert "flash_attn.sh" in (install_dir / "model" / f"{model}.sh").read_text()
+    assert "openvla|pi0|pi05|gr00t)" in bootstrap_source
 
 
 def test_flash_attention_build_checks_both_target_architectures() -> None:
@@ -281,6 +314,9 @@ def test_flash_attention_build_checks_both_target_architectures() -> None:
         _repo_root() / "examples" / "rl_games" / "install" / "flash_attn.sh"
     ).read_text()
 
+    assert "--force-reinstall" in flash_source
+    assert "--no-cache-dir" in flash_source
+    assert "--no-binary=flash-attn" in flash_source
     assert 'cuobjdump --list-elf "${extension_path}" | grep -q "sm_90"' in flash_source
     assert 'cuobjdump --list-elf "${extension_path}" | grep -q "sm_120"' in flash_source
 
