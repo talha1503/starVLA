@@ -50,17 +50,16 @@ def _patch_qwen3vl_flash_attention_position_ids() -> None:
     text_attention_cls._starvla_flash_attention_position_ids_patched = True
 
 
-# FlexAttention backend selector. PyTorch 2.12 has native sm_120 Triton flex
-# configs, so the old torch-2.7 small-smem num_stages override is intentionally
-# not injected on the Triton path. FA4 is a distinct FlexAttention backend and
-# should receive only the backend selector.
-_FLEX_KERNEL_OPTIONS_BY_BACKEND = {
-    "triton": {"BACKEND": "TRITON"},
-    "flash": {"BACKEND": "FLASH"},
+# The fixed Triton stage counts keep the PyTorch 2.11 CUDA 12.8 kernel
+# within the shared-memory budget on sm_120.
+_FLEX_KERNEL_OPTIONS = {
+    "BACKEND": "TRITON",
+    "fwd_num_stages": 2,
+    "bwd_num_stages": 1,
 }
 
 
-def _patch_qwen3vl_flex_attention_support(flex_backend: str) -> None:
+def _patch_qwen3vl_flex_attention_support() -> None:
     """Allow loading Qwen3-VL with ``attn_implementation='flex_attention'``.
 
     Qwen3-VL's attention already dispatches through the generic
@@ -71,8 +70,8 @@ def _patch_qwen3vl_flex_attention_support(flex_backend: str) -> None:
     packed KV-memory training (`QwenOFT._forward_memory_packed`) passes a
     BlockMask that FlexAttention consumes natively.
 
-    Also wraps the registered ``flex_attention`` interface to inject the explicit
-    backend selector. Wrapping the dispatch entry — rather than threading
+    Also wraps the registered ``flex_attention`` interface to inject the fixed
+    Triton kernel options. Wrapping the dispatch entry — rather than threading
     ``kernel_options`` through the top-level forward kwargs — guarantees both the
     forward and the gradient-checkpointing backward recompile pick it up.
     """
@@ -92,19 +91,13 @@ def _patch_qwen3vl_flex_attention_support(flex_backend: str) -> None:
 
     base_flex = ALL_ATTENTION_FUNCTIONS["flex_attention"]
     if getattr(base_flex, "_starvla_kernel_options_patched", False):
-        if base_flex._starvla_flex_backend == flex_backend:
-            return
-        base_flex = base_flex._starvla_base_flex_attention
-
-    kernel_options = _FLEX_KERNEL_OPTIONS_BY_BACKEND[flex_backend]
+        return
 
     def flex_attention_with_kernel_options(*args, **kwargs):
-        kwargs["kernel_options"] = kernel_options
+        kwargs["kernel_options"] = _FLEX_KERNEL_OPTIONS
         return base_flex(*args, **kwargs)
 
     flex_attention_with_kernel_options._starvla_kernel_options_patched = True
-    flex_attention_with_kernel_options._starvla_flex_backend = flex_backend
-    flex_attention_with_kernel_options._starvla_base_flex_attention = base_flex
     ALL_ATTENTION_FUNCTIONS["flex_attention"] = flex_attention_with_kernel_options
 
 
@@ -137,18 +130,13 @@ class _QWen3_VL_Interface(nn.Module):
             flush=True,
         )
 
-        # Fallback to sdpa if flash_attention_2 is requested but flash_attn is not installed
         if attn_implementation == "flash_attention_2":
-            try:
-                import flash_attn_2_cuda  # noqa: F401
-            except ImportError:
-                print("[WARNING] flash_attn not installed, falling back to sdpa")
-                attn_implementation = "sdpa"
-            else:
-                _patch_qwen3vl_flash_attention_position_ids()
+            import flash_attn_2_cuda  # noqa: F401
+
+            _patch_qwen3vl_flash_attention_position_ids()
 
         if attn_implementation == "flex_attention":
-            _patch_qwen3vl_flex_attention_support(qwenvl_config["flex_backend"])
+            _patch_qwen3vl_flex_attention_support()
 
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_id,

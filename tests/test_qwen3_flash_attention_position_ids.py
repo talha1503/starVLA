@@ -54,7 +54,7 @@ def test_flash_attention_patch_removes_mrope_position_ids_only_for_fa2():
             del cls._starvla_flash_attention_position_ids_patched
 
 
-def test_flex_attention_patch_selects_explicit_backend_without_smem_override():
+def test_flex_attention_patch_uses_fixed_triton_stages():
     pytest.importorskip("transformers")
 
     from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
@@ -70,21 +70,17 @@ def test_flex_attention_patch_selects_explicit_backend_without_smem_override():
     original_flex = ALL_ATTENTION_FUNCTIONS["flex_attention"]
     ALL_ATTENTION_FUNCTIONS["flex_attention"] = fake_flex
     try:
-        _patch_qwen3vl_flex_attention_support("triton")
+        _patch_qwen3vl_flex_attention_support()
         ALL_ATTENTION_FUNCTIONS["flex_attention"]()
-        assert calls[-1]["kernel_options"] == {"BACKEND": "TRITON"}
-        assert "fwd_num_stages" not in calls[-1]["kernel_options"]
-        assert "bwd_num_stages" not in calls[-1]["kernel_options"]
-
-        _patch_qwen3vl_flex_attention_support("flash")
-        ALL_ATTENTION_FUNCTIONS["flex_attention"]()
-        assert calls[-1]["kernel_options"] == {"BACKEND": "FLASH"}
-        assert "fwd_num_stages" not in calls[-1]["kernel_options"]
-        assert "bwd_num_stages" not in calls[-1]["kernel_options"]
+        assert calls[-1]["kernel_options"] == {
+            "BACKEND": "TRITON",
+            "fwd_num_stages": 2,
+            "bwd_num_stages": 1,
+        }
     finally:
         ALL_ATTENTION_FUNCTIONS["flex_attention"] = original_flex
 
 
 if __name__ == "__main__":
     test_flash_attention_patch_removes_mrope_position_ids_only_for_fa2()
-    test_flex_attention_patch_selects_explicit_backend_without_smem_override()
+    test_flex_attention_patch_uses_fixed_triton_stages()
