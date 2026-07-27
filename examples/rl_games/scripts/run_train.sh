@@ -252,7 +252,7 @@ activate_conda_env() {
 
   if ! conda env list | awk '{print $1}' | grep -qx "$CONDA_ENV_NAME"; then
     echo "Conda env '${CONDA_ENV_NAME}' does not exist." >&2
-    echo "Install it first with: bash examples/rl_games/install/install_stack.sh ${MODEL} ${ENV_NAME}" >&2
+    echo "Install it first with: bash examples/rl_games/install/install_stack.sh ${MODEL}" >&2
     exit 1
   fi
 

@@ -4,39 +4,41 @@ Detailed guide: `examples/rl_games/USAGE.md`
 
 ## Installation
 
-Install one model family at a time. The default is the OpenVLA use tier with
-Flappy, Demon Attack, and Deadly Corridor:
+The installer creates one isolated environment per explicitly selected model.
+Every model environment includes Flappy, Demon Attack, and Deadly Corridor:
+
+- Python 3.10.x
+- CUDA Toolkit 12.8.1
+- PyTorch 2.11.0+cu128, torchvision 0.26.0+cu128, torchaudio 2.11.0+cu128
+- Triton 3.6.0
+- CUDA extension targets sm_90 and sm_120
+
+Install one model:
 
 ```bash
-bash examples/rl_games/install/bootstrap.sh --accept-rom-license
+bash examples/rl_games/install/bootstrap.sh \
+  --model openvla \
+  --accept-rom-license
 ```
 
-Choose another family or add its development/training dependencies explicitly:
+Install all five model environments:
 
 ```bash
-bash examples/rl_games/install/bootstrap.sh --tier use --model pi05 --env flappy
-bash examples/rl_games/install/bootstrap.sh --tier dev --model gr00t --env all --accept-rom-license
-bash examples/rl_games/install/bootstrap.sh --tier dev --model wan_oft --env flappy
+bash examples/rl_games/install/bootstrap.sh \
+  --model all \
+  --accept-rom-license
 ```
 
-Each family uses an independent environment:
-- `starvla_rl_games_openvla`
-- `starvla_rl_games_pi0`
-- `starvla_rl_games_pi05`
-- `starvla_rl_games_gr00t`
-- `starvla_rl_games_wan_oft`
+The environments are `starvla_rl_games_openvla`, `starvla_rl_games_pi0`,
+`starvla_rl_games_pi05`, `starvla_rl_games_gr00t`, and
+`starvla_rl_games_wan_oft`. The default tier is `dev`; pass `--tier use` for
+runtime-only model packages.
 
-Torch is detected automatically. Override it with
-`--torch-profile cpu|cu126|cu128|cu130`. The use tier contains checkpoint
-inference dependencies; dev adds training/data packages and installs flash-attn
-for CUDA profiles. `install_stack.sh <model> <env>` remains as a dev-tier
-compatibility wrapper for existing training scripts.
-
-Available scripts:
-- `examples/rl_games/install/common.sh`
-- `examples/rl_games/install/model/{openvla,pi0,pi05,gr00t,wan_oft}.sh`
-- `examples/rl_games/install/env/{flappy,demon_attack,deadly_corridor}.sh`
-- `examples/rl_games/install/validate/*.sh`
+There is no Torch/CUDA auto-detection or alternate version profile. The
+bootstrap script fixes the CUDA/PyTorch stack in every environment, while
+Transformers, Datasets, Diffusers, JAX, and other model dependencies are
+installed independently by each model installer. No dependency lock file is
+used.
 
 ## Train
 

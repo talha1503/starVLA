@@ -3,18 +3,16 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/run_flappy_wan_oft_curriculum_pipeline.sh [options]
+Usage: bash scripts/run_flappy_wan_oft_pipeline.sh [options]
 
 Runs the fixed-latency-3 Flappy Bird WanOFT pipeline:
-  1. install/update the starvla_wanoft env
+  1. install/update the starvla_rl_games_wan_oft env
   2. download WanOFT checkpoints
   3. convert memory-rollouts row history directly into StarVLA LeRobot data
   4. train WanOFT through commands/wanoft/train_flappy_wan_oft.sh
   5. evaluate only latency 3 and upload the run directory
 
 Options:
-  --conda-env <name>          Conda env name (default: starvla_wanoft)
-  --python-version <ver>      Python version for bootstrap (default: 3.10)
   --context-window <N>        Context window size (default: 5)
   --max-episodes <N>          Maximum source episodes per split (default: 200)
   --max-train-steps <N>       Training steps (default: 2000)
@@ -31,8 +29,7 @@ Options:
 EOF
 }
 
-CONDA_ENV_NAME="${CONDA_ENV_NAME:-starvla_wanoft}"
-PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
+CONDA_ENV_NAME="starvla_rl_games_wan_oft"
 CONTEXT_WINDOW="${CONTEXT_WINDOW:-5}"
 MAX_EPISODES="${MAX_EPISODES:-200}"
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-2000}"
@@ -62,14 +59,6 @@ SKIP_UPLOAD="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --conda-env)
-      CONDA_ENV_NAME="$2"
-      shift 2
-      ;;
-    --python-version)
-      PYTHON_VERSION="$2"
-      shift 2
-      ;;
     --context-window)
       CONTEXT_WINDOW="$2"
       shift 2
@@ -229,10 +218,7 @@ if [[ "${SKIP_ENV_SETUP}" != "true" ]]; then
   echo "[flappy-wanoft-fixed] Installing/updating env: ${CONDA_ENV_NAME}"
   bash examples/rl_games/install/bootstrap.sh \
     --tier dev \
-    --conda-env "${CONDA_ENV_NAME}" \
-    --python-version "${PYTHON_VERSION}" \
-    --model wan_oft \
-    --env flappy
+    --model wan_oft
 fi
 
 activate_conda_env

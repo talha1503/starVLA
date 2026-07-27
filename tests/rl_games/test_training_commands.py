@@ -506,7 +506,7 @@ def test_wan_oft_flappy_curriculum_commands_enable_sequential_sampling() -> None
 
 
 def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path() -> None:
-    script_path = REPO_ROOT / "scripts" / "run_flappy_wan_oft_curriculum_pipeline.sh"
+    script_path = REPO_ROOT / "scripts" / "run_flappy_wan_oft_pipeline.sh"
     script_text = script_path.read_text(encoding="utf-8")
 
     assert "--mode <" not in script_text
@@ -516,6 +516,10 @@ def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path
     assert "LATENCY=3" in script_text
     assert "examples/rl_games/install/bootstrap.sh" in script_text
     assert "--tier dev" in script_text
+    assert "--model wan_oft" in script_text
+    assert 'CONDA_ENV_NAME="starvla_rl_games_wan_oft"' in script_text
+    assert "--conda-env" not in script_text
+    assert "--python-version" not in script_text
     assert "convert_flappy_history_to_starvla_lerobot.py" in script_text
     assert "convert_flappy_to_starvla_lerobot.py" not in script_text
     assert '--dataset-name "${DATASET_REPO}"' in script_text
@@ -561,13 +565,16 @@ def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_histor
     assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
     assert 'DATASET_CONFIG="demon_attack_fixed_latency_6_200ep_7k2steps"' in script_text
     assert "LATENCY_RAW_FRAMES=6" in script_text
-    assert 'BOOTSTRAP_PYTHON_VERSION="${STARVLA_PYTHON_VERSION:-3.10}"' in script_text
+    assert 'CONDA_ENV_NAME="starvla_rl_games_wan_oft"' in script_text
     assert 'BENCHMARK_ROOT="${LATENCY_BENCH_ROOT:-}"' in script_text
     assert "--benchmark-root <path>" in script_text
     assert 'BENCHMARK_ROOT="${BENCHMARK_ROOT:-${REPO_ROOT}/../latency-sensitive-bench}"' in script_text
     assert 'third_party/flappy-bird-gymnasium/setup.py' in script_text
     assert 'LATENCY_BENCH_ROOT="${BENCHMARK_ROOT}" "${BOOTSTRAP_ARGS[@]}"' in script_text
     assert "--tier dev" in script_text
+    assert "--model wan_oft" in script_text
+    assert "--conda-env" not in script_text
+    assert "--python-version" not in script_text
     assert "--accept-rom-license" in script_text
     assert "convert_demon_attack_history_to_starvla_lerobot.py" in script_text
     assert "convert_demon_attack_to_starvla_lerobot.py" not in script_text
@@ -611,6 +618,10 @@ def test_deadly_corridor_wan_oft_pipeline_uses_fixed_latency_history_data_withou
     assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
     assert 'DATASET_CONFIG="deadly_corridor_fixed_latency_6_1000ep_7k2steps"' in script_text
     assert "LATENCY_RAW_FRAMES=6" in script_text
+    assert 'CONDA_ENV_NAME="starvla_rl_games_wan_oft"' in script_text
+    assert "--model wan_oft" in script_text
+    assert "--conda-env" not in script_text
+    assert "--python-version" not in script_text
     assert "convert_deadly_corridor_history_to_starvla_lerobot.py" in script_text
     assert "--dataset-config-name \"${DATASET_CONFIG}\"" in script_text
     assert "--max-episodes \"${MAX_EPISODES}\"" in script_text

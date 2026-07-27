@@ -6,7 +6,7 @@ usage() {
 Usage: bash scripts/run_demon_attack_wan_oft_pipeline.sh [options]
 
 Runs the fixed-raw-frame-latency-6 Demon Attack WanOFT pipeline:
-  1. install/update the starvla_wanoft env
+  1. install/update the starvla_rl_games_wan_oft env
   2. download WanOFT checkpoints
   3. convert memory-rollouts row history directly into StarVLA LeRobot data
   4. train WanOFT through commands/wanoft/train_demon_attack_wan_oft.sh
@@ -17,8 +17,6 @@ frameskip=4. Post-train rollout evaluation is disabled because the current
 integer decision-step queue cannot reproduce a 1.5-step latency.
 
 Options:
-  --conda-env <name>          Conda env name (default: starvla_wanoft)
-  --python-version <ver>      Python version for bootstrap (default: 3.10)
   --context-window <N>        Context window size (default: 5)
   --max-episodes <N>          Maximum source episodes per split (default: 200)
   --max-train-steps <N>       Training steps (default: 2000)
@@ -37,8 +35,7 @@ Options:
 EOF
 }
 
-CONDA_ENV_NAME="${CONDA_ENV_NAME:-starvla_wanoft}"
-BOOTSTRAP_PYTHON_VERSION="${STARVLA_PYTHON_VERSION:-3.10}"
+CONDA_ENV_NAME="starvla_rl_games_wan_oft"
 CONTEXT_WINDOW="${CONTEXT_WINDOW:-5}"
 MAX_EPISODES="${MAX_EPISODES:-200}"
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-2000}"
@@ -69,14 +66,6 @@ SKIP_UPLOAD="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --conda-env)
-      CONDA_ENV_NAME="$2"
-      shift 2
-      ;;
-    --python-version)
-      BOOTSTRAP_PYTHON_VERSION="$2"
-      shift 2
-      ;;
     --context-window)
       CONTEXT_WINDOW="$2"
       shift 2
@@ -261,10 +250,7 @@ if [[ "${SKIP_ENV_SETUP}" != "true" ]]; then
     bash
     examples/rl_games/install/bootstrap.sh
     --tier dev
-    --conda-env "${CONDA_ENV_NAME}"
-    --python-version "${BOOTSTRAP_PYTHON_VERSION}"
     --model wan_oft
-    --env demon_attack
   )
   if [[ "${ACCEPT_ROM_LICENSE}" == "true" ]]; then
     BOOTSTRAP_ARGS+=(--accept-rom-license)

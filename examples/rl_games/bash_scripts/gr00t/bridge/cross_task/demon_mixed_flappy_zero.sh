@@ -1,8 +1,8 @@
 cd starVLA
 
-bash examples/rl_games/install/install_stack.sh openvla cross_task
+bash examples/rl_games/install/install_stack.sh gr00t cross_task
 
-conda activate starvla_rl_games_openvla
+conda activate starvla_rl_games_gr00t
 
 bash examples/rl_games/install/flash_attn.sh --check >/dev/null 2>&1 || bash examples/rl_games/install/flash_attn.sh
 

@@ -6,8 +6,7 @@
 #   pip_install <args> # install into PYTHON_BIN with uv
 
 ensure_uv() {
-    command -v uv >/dev/null 2>&1 && return 0
-    "${PYTHON_BIN:-python}" -m pip install uv
+    "${PYTHON_BIN:-python}" -m pip install uv==0.11.32
 }
 
 _pip_has_explicit_index_arg() {
@@ -27,9 +26,18 @@ pip_install() {
     py="$(command -v "${PYTHON_BIN:-python}")"
     local -a cmd
     if _pip_has_explicit_index_arg "$@"; then
-        cmd=(env -u UV_DEFAULT_INDEX -u UV_INDEX_URL uv pip install --python "${py}" "$@")
+        cmd=(
+            env -u UV_DEFAULT_INDEX -u UV_INDEX_URL
+            uv pip install
+            --python "${py}"
+            "$@"
+        )
     else
-        cmd=(uv pip install --python "${py}" "$@")
+        cmd=(
+            uv pip install
+            --python "${py}"
+            "$@"
+        )
     fi
     "${cmd[@]}"
 }

@@ -26,32 +26,31 @@ def _help_output(script: Path) -> str:
     ).stdout
 
 
-def test_bootstrap_exposes_tiered_single_model_install() -> None:
+def test_bootstrap_requires_an_explicit_model_for_the_fixed_stack() -> None:
     repo_root: Path = _repo_root()
     install_dir: Path = repo_root / "examples" / "rl_games" / "install"
     bootstrap_help: str = _help_output(install_dir / "bootstrap.sh")
 
     assert "--tier <use|dev>" in bootstrap_help
-    assert "openvla|pi0|pi05|gr00t|wan_oft" in bootstrap_help
-    assert "default: openvla" in bootstrap_help
-    assert "--split-envs" not in bootstrap_help
+    assert "Python 3.10" in bootstrap_help
+    assert "CUDA Toolkit 12.8.1" in bootstrap_help
+    assert "PyTorch 2.11.0+cu128" in bootstrap_help
+    assert "openvla|pi0|pi05|gr00t|wan_oft|all" in bootstrap_help
+    assert "--torch-profile" not in bootstrap_help
+    assert "--python-version" not in bootstrap_help
+    assert "--current-env" not in bootstrap_help
 
-    rejected_all = subprocess.run(
+    missing_model = subprocess.run(
         [
             "bash",
             str(install_dir / "bootstrap.sh"),
-            "--model",
-            "all",
-            "--current-env",
-            "--torch-profile",
-            "cpu",
             "--skip-validate",
         ],
         capture_output=True,
         text=True,
     )
-    assert rejected_all.returncode != 0
-    assert "invalid model 'all'" in rejected_all.stderr
+    assert missing_model.returncode != 0
+    assert "--model is required" in missing_model.stderr
 
 
 def test_install_stack_remains_a_training_compatibility_entrypoint(tmp_path: Path) -> None:
@@ -70,11 +69,8 @@ def test_install_stack_remains_a_training_compatibility_entrypoint(tmp_path: Pat
         [
             "bash",
             str(install_stack),
-            "--no-conda",
             "--accept-rom-license",
-            "--torch-profile",
-            "cpu",
-            "gr00t",
+            "openvla",
             "cross_task",
         ],
         check=True,
@@ -82,40 +78,28 @@ def test_install_stack_remains_a_training_compatibility_entrypoint(tmp_path: Pat
         text=True,
     )
 
-    assert "Compatibility entrypoint for a full development/training environment" in install_stack_help
-    assert "openvla|pi0|pi05|gr00t|wan_oft" in install_stack_help
+    assert "fixed PyTorch 2.11/CUDA 12.8 model" in install_stack_help
+    assert "openvla|pi0|pi05|gr00t|wan_oft|all" in install_stack_help
+    assert "--torch-profile" not in install_stack_help
     assert result.stdout.splitlines() == [
+        "[install_stack] legacy env selector 'cross_task' accepted; installing all games",
         "--tier",
         "dev",
         "--model",
-        "gr00t",
-        "--python-version",
-        "3.10",
-        "--torch-profile",
-        "cpu",
-        "--current-env",
+        "openvla",
         "--accept-rom-license",
-        "--env",
-        "flappy",
-        "--env",
-        "demon_attack",
     ]
 
 
-def test_env_all_cannot_hide_an_invalid_repeated_selector() -> None:
+def test_bootstrap_rejects_unknown_model() -> None:
     repo_root: Path = _repo_root()
     bootstrap: Path = repo_root / "examples" / "rl_games" / "install" / "bootstrap.sh"
     result = subprocess.run(
         [
             "bash",
             str(bootstrap),
-            "--env",
-            "all",
-            "--env",
+            "--model",
             "typo",
-            "--current-env",
-            "--torch-profile",
-            "cpu",
             "--skip-validate",
         ],
         capture_output=True,
@@ -123,25 +107,41 @@ def test_env_all_cannot_hide_an_invalid_repeated_selector() -> None:
     )
 
     assert result.returncode != 0
-    assert "--env all cannot be combined with another --env" in result.stderr
+    assert "invalid model 'typo'" in result.stderr
 
 
-def test_bootstrap_creates_model_env_from_conda_forge(tmp_path: Path) -> None:
+def test_bootstrap_all_creates_one_fixed_environment_per_model(tmp_path: Path) -> None:
     source_install_dir = _repo_root() / "examples" / "rl_games" / "install"
     install_dir = tmp_path / "starvla" / "examples" / "rl_games" / "install"
     install_dir.mkdir(parents=True)
-    for name in ("bootstrap.sh", "_host.sh", "_torch_profile.sh"):
+    for name in ("bootstrap.sh", "_host.sh"):
         shutil.copy2(source_install_dir / name, install_dir / name)
+    (install_dir / "_pip.sh").write_text("#!/bin/bash\npip_install() { :; }\n")
 
+    env_order_log = tmp_path / "env-order.log"
     for relative_path in (
         "common.sh",
         "model/openvla.sh",
-        "env/flappy.sh",
+        "model/pi0.sh",
+        "model/pi05.sh",
+        "model/gr00t.sh",
+        "model/wan_oft.sh",
     ):
         script = install_dir / relative_path
         script.parent.mkdir(parents=True, exist_ok=True)
         script.write_text("#!/bin/bash\nexit 0\n")
         script.chmod(0o755)
+    for env_name in ("flappy", "demon_attack", "deadly_corridor"):
+        script = install_dir / "env" / f"{env_name}.sh"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(
+            f'#!/bin/bash\nprintf "%s\\n" "{env_name}" >> "{env_order_log}"\n'
+        )
+        script.chmod(0o755)
+    build_script = tmp_path / "latency-bench" / "scripts" / "bash_scripts" / "build_cuda_extensions.sh"
+    build_script.parent.mkdir(parents=True)
+    build_script.write_text("#!/bin/bash\nexit 0\n")
+    build_script.chmod(0o755)
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -165,9 +165,18 @@ fi
     (profile_dir / "conda.sh").write_text(
         f"""conda() {{
   printf '%s\\n' "$*" >> "{conda_log}"
-  if [[ "$1 $2" == "env list" ]]; then
-    printf '# conda environments:\\n'
-  fi
+  case "$1" in
+    env)
+      [[ "$2" == "list" ]]
+      printf '# conda environments:\\n'
+      ;;
+    activate)
+      export CONDA_PREFIX="{conda_base}/envs/$2"
+      ;;
+    deactivate)
+      unset CONDA_PREFIX
+      ;;
+  esac
 }}
 """
     )
@@ -177,13 +186,7 @@ fi
             "bash",
             str(install_dir / "bootstrap.sh"),
             "--model",
-            "openvla",
-            "--env",
-            "flappy",
-            "--torch-profile",
-            "cpu",
-            "--python-version",
-            "3.10",
+            "all",
             "--skip-validate",
         ],
         capture_output=True,
@@ -196,10 +199,24 @@ fi
     )
 
     assert result.returncode == 0, result.stderr
-    assert (
-        "create -n starvla_rl_games_openvla -c conda-forge --override-channels "
-        "python=3.10 -y"
-    ) in conda_log.read_text()
+    conda_calls = conda_log.read_text()
+    expected_models = ("openvla", "pi0", "pi05", "gr00t", "wan_oft")
+    for model in expected_models:
+        assert f"create -n starvla_rl_games_{model}" in conda_calls
+        assert f"activate starvla_rl_games_{model}" in conda_calls
+    assert "-c nvidia/label/cuda-12.8.1" in conda_calls
+    assert "python=3.10" in conda_calls
+    assert "cuda-toolkit=12.8.1" in conda_calls
+    create_offsets = [
+        conda_calls.index(f"create -n starvla_rl_games_{model}")
+        for model in expected_models
+    ]
+    assert create_offsets == sorted(create_offsets)
+    assert env_order_log.read_text().splitlines() == [
+        game
+        for _model in expected_models
+        for game in ("demon_attack", "deadly_corridor", "flappy")
+    ]
 
 
 def test_training_dependencies_are_not_in_the_use_manifest() -> None:
@@ -213,13 +230,13 @@ def test_training_dependencies_are_not_in_the_use_manifest() -> None:
     assert "pyarrow>=15.0.0" in dev_requirements
 
 
-def test_optional_flash_attention_check_does_not_fail_validation() -> None:
-    repo_root: Path = _repo_root()
-    validator_source = (
-        repo_root / "examples" / "rl_games" / "install" / "validate" / "common.sh"
-    ).read_text()
+def test_flash_attention_validation_is_never_made_nonfatal() -> None:
+    install_dir = _repo_root() / "examples" / "rl_games" / "install"
+    install_sources = "\n".join(
+        script.read_text() for script in install_dir.rglob("*.sh")
+    )
 
-    assert '"${INSTALL_DIR}/flash_attn.sh" --check || true' in validator_source
+    assert "flash_attn.sh\" --check || true" not in install_sources
 
 
 def test_demon_attack_installer_uses_gymnasium_compatible_ale() -> None:
@@ -233,36 +250,74 @@ def test_demon_attack_installer_uses_gymnasium_compatible_ale() -> None:
     assert "ale-py==0.10.2" not in installer_source
 
 
-def test_torch_auto_profile_uses_cpu_without_nvidia_smi() -> None:
+def test_torch_installer_is_fixed_to_cu128() -> None:
     repo_root: Path = _repo_root()
-    resolver: Path = repo_root / "examples" / "rl_games" / "install" / "_torch_profile.sh"
-    result = subprocess.run(
-        ["/bin/bash", "-c", f'source "{resolver}"; resolve_torch_profile auto'],
-        check=True,
-        capture_output=True,
-        text=True,
-        env={"PATH": "/nonexistent"},
+    install_dir: Path = repo_root / "examples" / "rl_games" / "install"
+    torch_source = (install_dir / "torch.sh").read_text()
+
+    assert not (install_dir / "_torch_profile.sh").exists()
+    assert "torch==2.11.0+cu128" in torch_source
+    assert "torchvision==0.26.0+cu128" in torch_source
+    assert "torchaudio==2.11.0+cu128" in torch_source
+    assert "triton==3.6.0" in torch_source
+    assert "https://download.pytorch.org/whl/cu128" in torch_source
+    for removed in ("cu126", "cu130", "resolve_torch_profile", "nvidia-smi"):
+        assert removed not in torch_source
+
+
+def test_model_installers_do_not_select_torch_or_flash_versions() -> None:
+    install_dir = _repo_root() / "examples" / "rl_games" / "install"
+    model_sources = "\n".join(
+        script.read_text() for script in (install_dir / "model").glob("*.sh")
     )
 
-    assert result.stdout.strip() == "cpu"
+    assert "STARVLA_TORCH_PROFILE" not in model_sources
+    assert "flash_attn4" not in model_sources
+    assert not (install_dir / "flash_attn4.sh").exists()
 
 
-def test_torch_auto_profile_does_not_guess_after_query_failure(tmp_path: Path) -> None:
-    repo_root: Path = _repo_root()
-    resolver: Path = repo_root / "examples" / "rl_games" / "install" / "_torch_profile.sh"
-    fake_nvidia_smi = tmp_path / "nvidia-smi"
-    fake_nvidia_smi.write_text("#!/bin/sh\nexit 1\n")
-    fake_nvidia_smi.chmod(0o755)
+def test_flash_attention_build_checks_both_target_architectures() -> None:
+    flash_source = (
+        _repo_root() / "examples" / "rl_games" / "install" / "flash_attn.sh"
+    ).read_text()
 
-    result = subprocess.run(
-        ["/bin/bash", "-c", f'source "{resolver}"; resolve_torch_profile auto'],
-        capture_output=True,
-        text=True,
-        env={"PATH": f"{tmp_path}:/usr/bin:/bin"},
-    )
+    assert 'cuobjdump --list-elf "${extension_path}" | grep -q "sm_90"' in flash_source
+    assert 'cuobjdump --list-elf "${extension_path}" | grep -q "sm_120"' in flash_source
 
-    assert result.returncode != 0
-    assert "unable to query GPU compute capability" in result.stderr
+
+def test_every_model_has_a_validator_for_every_game() -> None:
+    validate_dir = _repo_root() / "examples" / "rl_games" / "install" / "validate"
+    validator_names = {
+        "openvla": {
+            "openvla_flappy.sh",
+            "openvla_demon_attack.sh",
+            "openvla_deadly_corridor.sh",
+        },
+        "pi0": {
+            "pi0_flappy.sh",
+            "pi0_demon.sh",
+            "pi0_deadly_corridor.sh",
+        },
+        "pi05": {
+            "pi05_flappy.sh",
+            "pi05_demon_attack.sh",
+            "pi05_deadly_corridor.sh",
+        },
+        "gr00t": {
+            "gr00t_flappy.sh",
+            "gr00t_demon_attack.sh",
+            "gr00t_deadly_corridor.sh",
+        },
+        "wan_oft": {
+            "wan_oft_flappy.sh",
+            "wan_oft_demon_attack.sh",
+            "wan_oft_deadly_corridor.sh",
+        },
+    }
+
+    for names in validator_names.values():
+        for name in names:
+            assert (validate_dir / name).is_file()
 
 
 def test_wan_oft_install_assets_are_registered() -> None:
@@ -270,14 +325,16 @@ def test_wan_oft_install_assets_are_registered() -> None:
     install_dir: Path = repo_root / "examples" / "rl_games" / "install"
     model_installer: Path = install_dir / "model" / "wan_oft.sh"
     model_installer_source: str = model_installer.read_text()
-    flappy_validator: Path = install_dir / "validate" / "wan_oft_flappy.sh"
-    flappy_validator_source: str = flappy_validator.read_text()
+    wan_validators = [
+        install_dir / "validate" / f"wan_oft_{game}.sh"
+        for game in ("flappy", "demon_attack", "deadly_corridor")
+    ]
+    validator_sources = "\n".join(path.read_text() for path in wan_validators)
 
     assert model_installer.is_file()
     assert os.access(model_installer, os.X_OK)
     assert "pyarrow" in model_installer_source
     assert "huggingface-hub" in model_installer_source
-    assert flappy_validator.is_file()
-    assert os.access(flappy_validator, os.X_OK)
-    assert "from diffusers import AutoencoderKLWan, WanTransformer3DModel" in flappy_validator_source
-    assert "from transformers import UMT5EncoderModel" in flappy_validator_source
+    assert all(path.is_file() for path in wan_validators)
+    assert "from diffusers import AutoencoderKLWan, WanTransformer3DModel" in validator_sources
+    assert "from transformers import UMT5EncoderModel" in validator_sources

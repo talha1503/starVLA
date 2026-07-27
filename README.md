@@ -162,25 +162,27 @@ cd PATH_TO_LATENCY_SENSITIVE_BENCH
 bash install.sh \
   --tier dev \
   --model openvla \
-  --env all \
   --accept-rom-license
 ```
+
+Use `--model all` to create all five model environments.
 
 When developing StarVLA from a standalone checkout, point the installer at a
 separate benchmark checkout explicitly:
 
 ```bash
 LATENCY_BENCH_ROOT=PATH_TO_LATENCY_SENSITIVE_BENCH \
-  bash examples/rl_games/install/bootstrap.sh --tier dev --model openvla --env all
+  bash examples/rl_games/install/bootstrap.sh --tier dev --model openvla
 ```
 
-Each model family has an independent environment. Change `--model` to `pi0`,
-`pi05`, `gr00t`, or `wan_oft` and select tasks with repeatable `--env` options.
+The accepted models are `openvla`, `pi0`, `pi05`, `gr00t`, `wan_oft`, and
+`all`. Each selected model gets a separate `starvla_rl_games_<model>`
+environment containing Flappy, Demon Attack, and Deadly Corridor. The default
+tier is `dev`; `use` omits development-only model packages.
 
-The default is `use`, `openvla`, and all three RL Games environments. `dev`
-adds training, data, test, and CUDA attention dependencies to the same
-model-specific environment. The legacy `install_stack.sh <model> <env>` command
-remains as a development-tier compatibility entrypoint.
+Every environment uses Python 3.10, CUDA Toolkit 12.8.1, and PyTorch
+2.11.0+cu128. Model-specific packages are installed independently, and there
+is no runtime Torch/CUDA profile selection or dependency lock file.
 
 ### 2. Compose a training config
 
