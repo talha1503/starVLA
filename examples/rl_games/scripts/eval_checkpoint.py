@@ -212,24 +212,7 @@ def _flatten_eval_for_wandb(result, stage: str) -> dict:
     return payload
 
 
-def _build_eval_runner(cfg, output_dir: str):
-    backend = str(
-        getattr(cfg.rl_games.env_eval, "eval_backend", "latency_bench") or "latency_bench"
-    ).strip().lower()
-    if backend == "eval_core":
-        from starVLA.training.rl_games import RlGamesEvalRunner
-
-        runner_cls = RlGamesEvalRunner
-    else:
-        from latency_bench.integrations.starvla_rl_games_eval_runner import (
-            LatencyBenchRlGamesEvalRunner,
-        )
-
-        runner_cls = LatencyBenchRlGamesEvalRunner
-    return runner_cls(cfg=cfg, output_dir=output_dir)
-
-
-def _log_eval_to_wandb(*, args, cfg, result, run_dir: Path, step: int) -> None:
+def _log_eval_to_wandb(*, args, cfg, eval_runner, result, run_dir: Path, step: int) -> None:
     import wandb
 
     project = args.wandb_project or str(getattr(cfg, "wandb_project", "starVLA_rl_games"))
@@ -239,17 +222,32 @@ def _log_eval_to_wandb(*, args, cfg, result, run_dir: Path, step: int) -> None:
         "entity": entity,
         "dir": os.path.join(str(run_dir), "wandb"),
     }
+    runner_cls = type(eval_runner)
+    provenance = {
+        "eval_backend": cfg.rl_games.env_eval.eval_backend,
+        "eval_runner": f"{runner_cls.__module__}.{runner_cls.__qualname__}",
+        "checkpoint_step": step,
+        "image_mode": cfg.datasets.vla_data.image_mode,
+        "num_obs_frames": cfg.datasets.vla_data.num_obs_frames,
+        "kv_memory_enabled": cfg.framework.kv_memory.enabled,
+        "attn_implementation": cfg.framework.qwenvl.attn_implementation,
+        "kv_memory_packed_train": cfg.framework.kv_memory.packed_train,
+    }
     if args.wandb_run_id:
         init_kwargs.update(id=args.wandb_run_id, resume="must")
     else:
         init_kwargs.update(
             name=args.wandb_run_name or f"{run_dir.name}__{args.stage}__step_{step}",
             group="rl-games-eval",
+            config=provenance,
         )
 
     wandb_run = wandb.init(**init_kwargs)
     payload = _flatten_eval_for_wandb(result=result, stage=args.stage)
     if args.wandb_run_id:
+        payload.update(
+            {f"eval_provenance/{key}": value for key, value in provenance.items()}
+        )
         wandb_run.log(payload)
     else:
         wandb_run.log(payload, step=step)
@@ -412,7 +410,9 @@ def main():
     print(f"Using checkpoint: {checkpoint_path}")
 
     model = _load_model(cfg=cfg, checkpoint_path=checkpoint_path)
-    eval_runner = _build_eval_runner(cfg=cfg, output_dir=str(run_dir))
+    from starVLA.training.rl_games import build_rl_games_eval_runner
+
+    eval_runner = build_rl_games_eval_runner(cfg=cfg, output_dir=str(run_dir))
     result = eval_runner.run(model=model, step=step, stage=args.stage)
     print(result.aggregate)
 
@@ -420,6 +420,7 @@ def main():
         _log_eval_to_wandb(
             args=args,
             cfg=cfg,
+            eval_runner=eval_runner,
             result=result,
             run_dir=run_dir,
             step=step,
