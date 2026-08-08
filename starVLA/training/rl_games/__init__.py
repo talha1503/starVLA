@@ -1,4 +1,20 @@
-__all__ = ["apply_model_alias", "apply_action_spec", "validate_rl_games_config", "sync_kv_memory_obs_window", "CheckpointSyncManager", "RlGamesEvalRunner"]
+__all__ = ["apply_model_alias", "apply_action_spec", "validate_rl_games_config", "sync_kv_memory_obs_window", "CheckpointSyncManager", "RlGamesEvalRunner", "build_rl_games_eval_runner"]
+
+
+def build_rl_games_eval_runner(cfg, output_dir: str):
+    """Build the eval runner selected by the resolved rl_games config."""
+    backend = cfg.rl_games.env_eval.eval_backend
+    if backend == "eval_core":
+        from . import RlGamesEvalRunner
+
+        return RlGamesEvalRunner(cfg=cfg, output_dir=output_dir)
+    if backend == "latency_bench":
+        from latency_bench.integrations.starvla_rl_games_eval_runner import (
+            LatencyBenchRlGamesEvalRunner,
+        )
+
+        return LatencyBenchRlGamesEvalRunner(cfg=cfg, output_dir=output_dir)
+    raise ValueError(f"Unknown rl_games.env_eval.eval_backend: {backend}")
 
 
 def __getattr__(name):

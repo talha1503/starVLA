@@ -524,6 +524,8 @@ def main() -> None:
     if args.print_plan_only:
         return
 
+    # Replay intentionally stays on eval_core: it supplies video and saved-seed
+    # overrides that the latency_bench runner does not consume.
     from starVLA.training.rl_games import RlGamesEvalRunner
 
     video_output_dir = None

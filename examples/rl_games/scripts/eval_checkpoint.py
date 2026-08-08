@@ -3,11 +3,17 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 OmegaConf = None
 REPO_ROOT = Path(__file__).resolve().parents[3]
+WORKSPACE_ROOT = REPO_ROOT.parents[1]
+
+for import_root in (REPO_ROOT, WORKSPACE_ROOT):
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
 
 
 def _str2bool(value: str) -> bool:
@@ -188,6 +194,12 @@ def _flatten_eval_for_wandb(result, stage: str) -> dict:
     payload[f"{prefix}/mean_length"] = float(aggregate.get("mean_length", 0.0))
     payload[f"{prefix}/std_reward"] = float(aggregate.get("std_reward", 0.0))
     payload[f"{prefix}/std_length"] = float(aggregate.get("std_length", 0.0))
+    payload[f"{prefix}/macro_mean_reward"] = float(
+        aggregate.get("macro_mean_reward", aggregate.get("mean_reward", 0.0))
+    )
+    payload[f"{prefix}/macro_mean_length"] = float(
+        aggregate.get("macro_mean_length", aggregate.get("mean_length", 0.0))
+    )
     payload[f"{prefix}/task_count"] = float(aggregate.get("task_count", 0))
 
     for key, metrics in result.per_latency.items():
@@ -198,6 +210,48 @@ def _flatten_eval_for_wandb(result, stage: str) -> dict:
         payload[f"{prefix}/{key_slug}/std_length"] = float(metrics.get("std_length", 0.0))
         payload[f"{prefix}/{key_slug}/num_episodes"] = float(metrics.get("num_episodes", 0))
     return payload
+
+
+def _log_eval_to_wandb(*, args, cfg, eval_runner, result, run_dir: Path, step: int) -> None:
+    import wandb
+
+    project = args.wandb_project or str(getattr(cfg, "wandb_project", "starVLA_rl_games"))
+    entity = args.wandb_entity if args.wandb_entity is not None else getattr(cfg, "wandb_entity", None)
+    init_kwargs = {
+        "project": project,
+        "entity": entity,
+        "dir": os.path.join(str(run_dir), "wandb"),
+    }
+    runner_cls = type(eval_runner)
+    provenance = {
+        "eval_backend": cfg.rl_games.env_eval.eval_backend,
+        "eval_runner": f"{runner_cls.__module__}.{runner_cls.__qualname__}",
+        "checkpoint_step": step,
+        "image_mode": cfg.datasets.vla_data.image_mode,
+        "num_obs_frames": cfg.datasets.vla_data.num_obs_frames,
+        "kv_memory_enabled": cfg.framework.kv_memory.enabled,
+        "attn_implementation": cfg.framework.qwenvl.attn_implementation,
+        "kv_memory_packed_train": cfg.framework.kv_memory.packed_train,
+    }
+    if args.wandb_run_id:
+        init_kwargs.update(id=args.wandb_run_id, resume="must")
+    else:
+        init_kwargs.update(
+            name=args.wandb_run_name or f"{run_dir.name}__{args.stage}__step_{step}",
+            group="rl-games-eval",
+            config=provenance,
+        )
+
+    wandb_run = wandb.init(**init_kwargs)
+    payload = _flatten_eval_for_wandb(result=result, stage=args.stage)
+    if args.wandb_run_id:
+        payload.update(
+            {f"eval_provenance/{key}": value for key, value in provenance.items()}
+        )
+        wandb_run.log(payload)
+    else:
+        wandb_run.log(payload, step=step)
+    wandb_run.finish()
 
 
 def _resolve_checkpoint(run_dir: Path, checkpoint: str | None, step: int | None) -> tuple[Path, int]:
@@ -317,6 +371,7 @@ def main():
     parser.add_argument("--wandb-project", default=None, type=str)
     parser.add_argument("--wandb-entity", default=None, type=str)
     parser.add_argument("--wandb-run-name", default=None, type=str)
+    parser.add_argument("--wandb-run-id", default=None, type=str)
     args = parser.parse_args()
 
     from omegaconf import OmegaConf as _OmegaConf
@@ -345,7 +400,7 @@ def main():
     if args.print_plan_only:
         return
 
-    from starVLA.training.rl_games import RlGamesEvalRunner, apply_action_spec, apply_model_alias
+    from starVLA.training.rl_games import apply_action_spec, apply_model_alias
 
     apply_model_alias(cfg)
     apply_action_spec(cfg)
@@ -355,25 +410,21 @@ def main():
     print(f"Using checkpoint: {checkpoint_path}")
 
     model = _load_model(cfg=cfg, checkpoint_path=checkpoint_path)
-    runner = RlGamesEvalRunner(cfg=cfg, output_dir=str(run_dir))
-    result = runner.run(model=model, step=step, stage=args.stage)
+    from starVLA.training.rl_games import build_rl_games_eval_runner
+
+    eval_runner = build_rl_games_eval_runner(cfg=cfg, output_dir=str(run_dir))
+    result = eval_runner.run(model=model, step=step, stage=args.stage)
     print(result.aggregate)
 
     if _str2bool(args.wandb_enabled):
-        import wandb
-
-        project = args.wandb_project or str(getattr(cfg, "wandb_project", "starVLA_rl_games"))
-        entity = args.wandb_entity if args.wandb_entity is not None else getattr(cfg, "wandb_entity", None)
-        run_name = args.wandb_run_name or f"{run_dir.name}__{args.stage}__step_{step}"
-        wandb.init(
-            project=project,
-            entity=entity,
-            name=run_name,
-            dir=os.path.join(str(run_dir), "wandb"),
-            group="rl-games-eval",
+        _log_eval_to_wandb(
+            args=args,
+            cfg=cfg,
+            eval_runner=eval_runner,
+            result=result,
+            run_dir=run_dir,
+            step=step,
         )
-        wandb.log(_flatten_eval_for_wandb(result=result, stage=args.stage), step=step)
-        wandb.finish()
 
 
 if __name__ == "__main__":

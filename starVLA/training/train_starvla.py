@@ -40,7 +40,7 @@ from starVLA.dataloader import build_dataloader
 from starVLA.dataloader.worker_context import build_cpu_only_dataloader_kwargs
 from starVLA.model.framework.base_framework import build_framework
 from starVLA.model.framework.share_tools import apply_config_compat
-from starVLA.training.rl_games import CheckpointSyncManager, RlGamesEvalRunner, apply_action_spec, apply_model_alias, sync_kv_memory_obs_window, validate_rl_games_config
+from starVLA.training.rl_games import CheckpointSyncManager, apply_action_spec, apply_model_alias, build_rl_games_eval_runner, sync_kv_memory_obs_window, validate_rl_games_config
 from starVLA.training.rl_games.auth import login_training_services
 from starVLA.training.rl_games.eval_core import EvalResult
 from starVLA.training.rl_games import action_cc_f1
@@ -617,23 +617,10 @@ class VLATrainer(TrainerUtils):
         if hasattr(self.config, "rl_games") and hasattr(self.config.rl_games, "env_eval"):
             enabled = bool(getattr(self.config.rl_games.env_eval, "enabled", False))
             if enabled:
-                # Default to the latency_bench ("corrected") eval; keep eval_core
-                # reachable via rl_games.env_eval.eval_backend=eval_core.
-                backend = str(
-                    getattr(self.config.rl_games.env_eval, "eval_backend", "latency_bench")
-                    or "latency_bench"
-                ).strip().lower()
-                if backend == "eval_core":
-                    runner_cls = RlGamesEvalRunner
-                else:
-                    # latency_bench is importable because the install registers the
-                    # parent repo root via a .pth file (see install/common.sh).
-                    from latency_bench.integrations.starvla_rl_games_eval_runner import (
-                        LatencyBenchRlGamesEvalRunner,
-                    )
-
-                    runner_cls = LatencyBenchRlGamesEvalRunner
-                self._rl_games_eval_runner = runner_cls(cfg=self.config, output_dir=self.config.output_dir)
+                self._rl_games_eval_runner = build_rl_games_eval_runner(
+                    cfg=self.config,
+                    output_dir=self.config.output_dir,
+                )
 
     def _save_periodic_checkpoints_enabled(self) -> bool:
         return not self._save_best_model_enabled
