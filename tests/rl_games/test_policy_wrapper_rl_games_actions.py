@@ -311,6 +311,35 @@ def test_policy_wrapper_gymnasium_mode_decodes_only_action_env_dim_logits():
     assert processor.calls == []
 
 
+def test_policy_wrapper_gymnasium_uses_registered_generic_data_config():
+    policy_wrapper_module = _load_policy_wrapper_module()
+    calls = []
+
+    class CapturingProcessor:
+        def __init__(self, ckpt_path, **kwargs):
+            calls.append((ckpt_path, kwargs))
+
+    policy_wrapper_module.PolicyNormProcessor = CapturingProcessor
+    wrapper = policy_wrapper_module.PolicyServerWrapper.__new__(
+        policy_wrapper_module.PolicyServerWrapper
+    )
+    wrapper._ckpt_path = "checkpoint.safetensors"
+    wrapper._rl_games_env_name = "gymnasium"
+    wrapper._norm_processors = {}
+
+    wrapper._get_processor("new_embodiment")
+
+    assert calls == [
+        (
+            "checkpoint.safetensors",
+            {
+                "unnorm_key": "new_embodiment",
+                "robot_type": "rl_games_gymnasium_discrete",
+            },
+        )
+    ]
+
+
 def test_policy_wrapper_rl_games_mode_uses_deadly_multibinary_layout():
     policy_wrapper_module = _load_policy_wrapper_module()
     processor = FakeProcessor()

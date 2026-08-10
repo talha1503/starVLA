@@ -125,9 +125,18 @@ class PolicyServerWrapper:
     def _get_processor(self, unnorm_key: Optional[str]) -> PolicyNormProcessor:
         cache_key = unnorm_key if unnorm_key is not None else "__default__"
         if cache_key not in self._norm_processors:
-            self._norm_processors[cache_key] = PolicyNormProcessor(
-                self._ckpt_path, unnorm_key=unnorm_key
-            )
+            if self._rl_games_env_name == "gymnasium":
+                processor = PolicyNormProcessor(
+                    self._ckpt_path,
+                    unnorm_key=unnorm_key,
+                    robot_type="rl_games_gymnasium_discrete",
+                )
+            else:
+                processor = PolicyNormProcessor(
+                    self._ckpt_path,
+                    unnorm_key=unnorm_key,
+                )
+            self._norm_processors[cache_key] = processor
         return self._norm_processors[cache_key]
 
     @property

@@ -5,9 +5,9 @@ set -euo pipefail
 # Usage:
 #   bash commands/openvla/train_gymnasium_openvla.sh \
 #     playground/Datasets/rl_games \
-#     mountain_car_fixed_l3 \
-#     playground/Datasets/rl_games/_generated_mixtures/mountain_car_fixed_l3.json \
-#     trainer.max_train_steps=50
+#     air_raid_fixed_l5 \
+#     playground/Datasets/rl_games/_generated_mixtures/air_raid_fixed_l5.json \
+#     trainer.max_train_steps=2
 DATASET_LOCAL_DIR="$1"
 DATA_MIX="$2"
 CUSTOM_MIXTURES_PATH="$3"
