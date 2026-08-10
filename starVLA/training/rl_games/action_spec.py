@@ -36,6 +36,8 @@ def _env_action_dim(cfg):
         return 6
     if task == "deadly_corridor":
         return _deadly_action_dim(cfg)
+    if task == "gymnasium":
+        return cfg.framework.action_model.action_env_dim
     if task == "cross_task":
         return None
     return None
@@ -128,6 +130,6 @@ def apply_action_spec(cfg) -> None:
         return
 
     # openvla and other dense/discrete heads should emit env action space directly.
-    action_cfg.action_dim = int(env_dim)
-    action_cfg.action_env_dim = int(env_dim)
+    action_cfg.action_dim = env_dim
+    action_cfg.action_env_dim = env_dim
     _apply_deadly_loss_spec(cfg, action_cfg)

@@ -95,11 +95,16 @@ def decode_rl_games_actions(
     env_name: str,
     deadly_action_layout: str | None = None,
     deadly_multibinary_threshold: float | None = None,
+    action_env_dim: int | None = None,
 ) -> dict[str, Any]:
     raw_scores = np.asarray(normalized_actions)
     decoder = {
         "flappy": lambda: (_decode_discrete(raw_scores, 2), "rl_games_discrete_id"),
         "demon_attack": lambda: (_decode_discrete(raw_scores, 6), "rl_games_discrete_id"),
+        "gymnasium": lambda: (
+            _decode_discrete_explicit_dim(raw_scores, action_env_dim),
+            "rl_games_discrete_id",
+        ),
         "deadly_corridor": lambda: decode_deadly_corridor_actions(
             raw_scores,
             action_layout=deadly_action_layout,
@@ -172,6 +177,11 @@ def decode_deadly_factorized_11(action_values: Iterable[float]) -> list[int]:
         multibinary_threshold=None,
     )
     return decoded.tolist()
+
+
+def _decode_discrete_explicit_dim(raw_scores: np.ndarray, n_actions: int | None) -> np.ndarray:
+    active_scores = np.take(raw_scores, np.arange(n_actions), axis=-1)
+    return np.argmax(active_scores, axis=-1)[..., None].astype(np.int64)
 
 
 def _decode_discrete(raw_scores: np.ndarray, n_actions: int) -> np.ndarray:

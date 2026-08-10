@@ -4,6 +4,7 @@
 # Modified by [Jinhui YE/ HKUST University] in [2025]. 
 # Modification: [suport topdowm processing, suport param from config].
 
+import json
 from pathlib import Path
 from typing import Sequence
 from omegaconf import OmegaConf
@@ -23,6 +24,64 @@ RL_GAMES_TASK_METADATA = {
     "rl_games_demon_attack": ("demon_attack", 6),
     "rl_games_deadly_corridor": ("deadly_corridor", 7),
 }
+RL_GAMES_GYMNASIUM_DISCRETE_ROBOT_TYPE = "rl_games_gymnasium_discrete"
+GYMNASIUM_TASK_CONTRACT_KEYS = (
+    "task_name",
+    "env_id",
+    "make_kwargs",
+    "registration_imports",
+    "action_labels",
+    "action_values",
+    "noop_action_id",
+    "base_prompt",
+    "env_fps",
+    "obs_fps",
+    "frame_stack",
+)
+
+
+def _gymnasium_task_contract(manifest: dict) -> dict:
+    contract = manifest["gymnasium_task"]
+    return {key: contract[key] for key in GYMNASIUM_TASK_CONTRACT_KEYS}
+
+
+def _configured_gymnasium_task_contract(data_cfg: dict) -> dict:
+    contract = data_cfg["gymnasium_task_contract"]
+    return {key: contract[key] for key in GYMNASIUM_TASK_CONTRACT_KEYS}
+
+
+def _generic_gymnasium_metadata(
+    dataset_path: Path,
+    data_cfg: dict,
+) -> tuple[dict, int]:
+    manifest = json.loads(
+        (dataset_path / "manifest.json").read_text(encoding="utf-8")
+    )
+    manifest_contract = _gymnasium_task_contract(manifest)
+    configured_contract = _configured_gymnasium_task_contract(data_cfg)
+    mismatched_fields = [
+        key
+        for key in GYMNASIUM_TASK_CONTRACT_KEYS
+        if manifest_contract[key] != configured_contract[key]
+    ]
+    if mismatched_fields:
+        mismatch_details = "; ".join(
+            f"{key}: manifest={manifest_contract[key]!r}, config={configured_contract[key]!r}"
+            for key in mismatched_fields
+        )
+        raise ValueError(
+            f"Gymnasium task contract mismatch for dataset {dataset_path}: {mismatch_details}"
+        )
+
+    active_action_dim = manifest["active_action_dim"]
+    configured_action_dim = data_cfg["active_action_dim"]
+    if active_action_dim != configured_action_dim:
+        raise ValueError(
+            f"Gymnasium active_action_dim mismatch for dataset {dataset_path}: "
+            f"manifest={active_action_dim!r}, config={configured_action_dim!r}"
+        )
+    return manifest_contract, active_action_dim
+
 
 def collate_fn(batch):
     return batch
@@ -105,7 +164,15 @@ def make_LeRobotSingleDataset(
         delete_pause_frame=delete_pause_frame,
         data_cfg=data_cfg,
     )
-    if robot_type in RL_GAMES_TASK_METADATA:
+    if robot_type == RL_GAMES_GYMNASIUM_DISCRETE_ROBOT_TYPE:
+        task_contract, active_action_dim = _generic_gymnasium_metadata(
+            dataset_path,
+            data_cfg,
+        )
+        dataset.rl_games_gymnasium_task_contract = task_contract
+        dataset.rl_games_task = task_contract["task_name"]
+        dataset.rl_games_action_env_dim = active_action_dim
+    elif robot_type in RL_GAMES_TASK_METADATA:
         dataset.rl_games_task, dataset.rl_games_action_env_dim = RL_GAMES_TASK_METADATA[robot_type]
     return dataset
 
