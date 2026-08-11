@@ -16,13 +16,13 @@ python examples/rl_games/scripts/launch_train.py \
     env=demon_attack \
     init=bridge \
     mode=single \
-    run_id="gr00t_bridge_demon_attack_single_latency_clean_data_exp3_action_1e-4_backbone_1e-5" \
+    run_id="gr00t_bridge_demon_attack_single_latency_clean_data_exp3_action_1e-5_backbone_1e-6" \
     trainer.distributed_backend=none \
     workspace_dir="$WORKSPACE_DIR" \
     wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/gr00t_bridge_demon_attack_single_latency_clean_data_exp3_action_1e-4_backbone_1e-5" \
+    checkpoint.hf_repo_id="talha15032/gr00t_bridge_demon_attack_single_latency_clean_data_exp3_action_1e-5_backbone_1e-6" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/gr00t_bridge_demon_attack_single_latency_clean_data_exp3_action_1e-4_backbone_1e-5" \
+    checkpoint.sync.repo_id="talha15032/gr00t_bridge_demon_attack_single_latency_clean_data_exp3_action_1e-5_backbone_1e-6" \
     dataset.source_hf="latency-sensitive-bench/demon_attack_200ep" \
     dataset.source_subdir=demon_attack_fix_latency_0_200ep \
     checkpoint.local.keep_last_n=1 \
@@ -44,6 +44,6 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.env_eval.post_train.num_episodes=4 \
     rl_games.env_eval.post_train.max_steps_per_episode=3600 \
     rl_games.env_eval.post_train.enabled=true \
-    rl_games.env_eval.post_train.latencies=[0,1,2,3,4,5] \
+    rl_games.env_eval.post_train.latencies=[0,2,4,6,8] \
     rl_games.env_eval.post_train.num_episodes=20 \
     rl_games.env_eval.post_train.max_steps_per_episode=3600

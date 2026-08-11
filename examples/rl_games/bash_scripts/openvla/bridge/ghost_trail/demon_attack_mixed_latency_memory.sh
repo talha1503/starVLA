@@ -17,13 +17,13 @@ python examples/rl_games/scripts/launch_train.py \
     env=demon_attack \
     init=bridge \
     mode=mixed \
-    run_id="openvla_bridge_demon_attack_mixed_latency_6_ghost_trail_memory_exp1_30" \
+    run_id="openvla_bridge_demon_attack_mixed_latency_6_ghost_trail_memory_exp2_30" \
     trainer.distributed_backend=none \
     workspace_dir="$WORKSPACE_DIR" \
     wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_bridge_demon_attack_mixed_latency_6_ghost_trail_memory_exp1_30" \
+    checkpoint.hf_repo_id="talha15032/openvla_bridge_demon_attack_mixed_latency_6_ghost_trail_memory_exp2_30" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_bridge_demon_attack_mixed_latency_6_ghost_trail_memory_exp1_30" \
+    checkpoint.sync.repo_id="talha15032/openvla_bridge_demon_attack_mixed_latency_6_ghost_trail_memory_exp2_30" \
     dataset.source_hf="latency-sensitive-bench/demon_attack_mixed_0246_ghost30_200ep" \
     dataset.latency_filter=[0,2,4,6] \
     datasets.vla_data.sequential_step_sampling=true \
