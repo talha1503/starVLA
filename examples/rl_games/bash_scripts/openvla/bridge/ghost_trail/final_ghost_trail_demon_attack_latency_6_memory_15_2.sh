@@ -51,8 +51,8 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.env_eval.mid_train.interval_steps=1000 \
     rl_games.env_eval.mid_train.latencies=[6] \
     rl_games.env_eval.mid_train.num_episodes=5 \
-    rl_games.env_eval.mid_train.max_steps_per_episode=3600 \
+    rl_games.env_eval.mid_train.max_steps_per_episode=14400 \
     rl_games.env_eval.post_train.enabled=true \
     rl_games.env_eval.post_train.latencies=[6] \
     rl_games.env_eval.post_train.num_episodes=100 \
-    rl_games.env_eval.post_train.max_steps_per_episode=3600
+    rl_games.env_eval.post_train.max_steps_per_episode=14400
