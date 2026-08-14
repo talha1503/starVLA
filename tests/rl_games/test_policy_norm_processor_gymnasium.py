@@ -27,8 +27,8 @@ def test_legacy_rl_games_resolves_from_static_mixture(
 def test_unknown_static_mixture_still_fails() -> None:
     config = {
         "rl_games": {"task": "flappy"},
-        "datasets": {"vla_data": {"data_mix": "custom_air_raid_mix"}},
+        "datasets": {"vla_data": {"data_mix": "unregistered_custom_mix"}},
     }
 
-    with pytest.raises(KeyError, match="custom_air_raid_mix"):
+    with pytest.raises(KeyError, match="unregistered_custom_mix"):
         _resolve_robot_type(config)
