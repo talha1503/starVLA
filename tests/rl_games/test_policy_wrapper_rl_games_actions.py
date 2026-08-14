@@ -7,6 +7,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import numpy as np
+import pytest
 
 
 STARVLA_ROOT = Path(__file__).resolve().parents[2]
@@ -118,6 +119,33 @@ def test_decode_demon_attack_logits_to_discrete_action_payload():
 
     assert decoded["action_output_type"] == "rl_games_discrete_id"
     assert decoded["actions"].tolist() == [[[2]]]
+
+
+def test_decode_gymnasium_logits_uses_explicit_action_env_dim():
+    from deployment.model_server.rl_games_action_decode import decode_rl_games_actions
+
+    raw = np.zeros((1, 1, 11), dtype=np.float32)
+    raw[0, 0, 8] = 1.0
+    raw[0, 0, 9:] = 99.0
+    decoded = decode_rl_games_actions(
+        normalized_actions=raw,
+        env_name="gymnasium",
+        action_env_dim=9,
+    )
+
+    assert decoded["action_output_type"] == "rl_games_discrete_id"
+    assert decoded["actions"].tolist() == [[[8]]]
+    assert np.array_equal(decoded["raw_action_scores"], raw)
+
+
+def test_decode_gymnasium_requires_explicit_action_env_dim():
+    from deployment.model_server.rl_games_action_decode import decode_rl_games_actions
+
+    with pytest.raises(TypeError):
+        decode_rl_games_actions(
+            normalized_actions=np.asarray([[[0.1, 0.8, 0.2]]], dtype=np.float32),
+            env_name="gymnasium",
+        )
 
 
 def test_decode_deadly_corridor_factorized_logits_to_tuple_payload():
@@ -259,6 +287,57 @@ def test_policy_wrapper_rl_games_mode_returns_decoded_actions_without_unapply():
     assert np.allclose(prediction["raw_action_scores"], [[[0.1, 0.9]]])
     assert prediction["action_output_type"] == "rl_games_discrete_id"
     assert processor.calls == []
+
+
+def test_policy_wrapper_gymnasium_mode_decodes_only_action_env_dim_logits():
+    policy_wrapper_module = _load_policy_wrapper_module()
+    processor = FakeProcessor()
+    wrapper = policy_wrapper_module.PolicyServerWrapper.__new__(policy_wrapper_module.PolicyServerWrapper)
+    wrapper._framework = FakeFramework([[[0.1, 0.8, 0.2, 99.0]]])
+    wrapper._default_unnorm_key = "new_embodiment"
+    wrapper._available_unnorm_keys = ["new_embodiment"]
+    wrapper._action_output_mode = "rl_games"
+    wrapper._rl_games_env_name = "gymnasium"
+    wrapper._rl_games_action_env_dim = 3
+    wrapper._get_processor = lambda unnorm_key: processor
+
+    prediction = wrapper.predict_action(
+        examples=[{"image": [], "lang": ""}],
+        unnorm_key="new_embodiment",
+    )
+
+    assert prediction["actions"].tolist() == [[[1]]]
+    assert prediction["action_output_type"] == "rl_games_discrete_id"
+    assert processor.calls == []
+
+
+def test_policy_wrapper_gymnasium_uses_registered_generic_data_config():
+    policy_wrapper_module = _load_policy_wrapper_module()
+    calls = []
+
+    class CapturingProcessor:
+        def __init__(self, ckpt_path, **kwargs):
+            calls.append((ckpt_path, kwargs))
+
+    policy_wrapper_module.PolicyNormProcessor = CapturingProcessor
+    wrapper = policy_wrapper_module.PolicyServerWrapper.__new__(
+        policy_wrapper_module.PolicyServerWrapper
+    )
+    wrapper._ckpt_path = "checkpoint.safetensors"
+    wrapper._rl_games_env_name = "gymnasium"
+    wrapper._norm_processors = {}
+
+    wrapper._get_processor("new_embodiment")
+
+    assert calls == [
+        (
+            "checkpoint.safetensors",
+            {
+                "unnorm_key": "new_embodiment",
+                "robot_type": "rl_games_gymnasium_discrete",
+            },
+        )
+    ]
 
 
 def test_policy_wrapper_rl_games_mode_uses_deadly_multibinary_layout():

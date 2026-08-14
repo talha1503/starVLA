@@ -36,6 +36,8 @@ def _env_action_dim(cfg):
         return 6
     if task == "deadly_corridor":
         return _deadly_action_dim(cfg)
+    if task == "gymnasium":
+        return cfg.framework.action_model.action_env_dim
     if task == "cross_task":
         return None
     return None
