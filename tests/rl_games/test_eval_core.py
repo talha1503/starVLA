@@ -11,6 +11,8 @@ from starVLA.training.rl_games.eval_core import (
     _resize_rgb,
     decode_deadly_factorized_11,
     decode_deadly_multibinary_7,
+    decode_defend_the_line_multibinary,
+    decode_defend_the_line_tuple,
     decode_discrete_argmax,
 )
 from starVLA.dataloader.gr00t_lerobot.datasets import _apply_prompt_mode as apply_train_prompt_mode
@@ -73,6 +75,22 @@ def test_decode_deadly_factorized_11():
         0.4, 0.6,
     ], dtype=np.float32)
     assert decode_deadly_factorized_11(values) == [1, 2, 1, 1]
+
+
+def test_decode_defend_the_line_tuple():
+    values = np.array([0.1, 0.2, 0.3, 0.4, 0.8, 0.5, 99.0], dtype=np.float32)
+    assert decode_defend_the_line_tuple(values) == [2, 0]
+    assert decode_defend_the_line_multibinary(values) == [0, 1, 0]
+
+
+def test_task_evaluator_decodes_defend_the_line_joint_action():
+    evaluator = object.__new__(_TaskEvaluator)
+    evaluator.task = "defend_the_line"
+
+    action = evaluator._decode_action(np.asarray([0.1, 0.2, 0.3, 0.9, 0.8, 0.5], dtype=np.float32))
+
+    assert action == [1, 0, 1]
+    assert evaluator._queue_default_action() == [0, 0, 0]
 
 
 def test_task_evaluator_uses_shared_deadly_multibinary_decode():

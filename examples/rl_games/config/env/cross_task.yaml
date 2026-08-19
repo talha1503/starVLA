@@ -13,10 +13,12 @@ rl_games:
     loss_by_task:
       flappy: discrete_ce
       demon_attack: discrete_ce
+      defend_the_line: discrete_ce
       deadly_corridor: multibinary_bce
     loss_weight_by_task:
       flappy: 1.0
       demon_attack: 1.0
+      defend_the_line: 1.0
       deadly_corridor: 1.0
     eval_tasks:
       flappy:
@@ -35,6 +37,21 @@ rl_games:
           num_episodes: null
           max_steps_per_episode: null
       demon_attack:
+        prompt_map_path: null
+        frameskip: 4
+        image_size: 224
+        task_description: null
+        mid_train:
+          enabled: true
+          latencies: null
+          num_episodes: null
+          max_steps_per_episode: null
+        post_train:
+          enabled: true
+          latencies: null
+          num_episodes: null
+          max_steps_per_episode: null
+      defend_the_line:
         prompt_map_path: null
         frameskip: 4
         image_size: 224

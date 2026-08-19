@@ -13,6 +13,7 @@ PYTHON_VERSION="3.10"
 CUDA_VERSION="12.8.1"
 MODEL_TARGET=""
 RUN_VALIDATE="true"
+SKIP_FLASH_ATTN="false"
 SUPPORTED_MODELS=(openvla pi0 pi05 gr00t wan_oft)
 GAME_ENVS=(demon_attack deadly_corridor flappy)
 
@@ -27,6 +28,7 @@ Options:
   --tier <use|dev>         Dependency tier (default: ${INSTALL_TIER})
   --model <name|all>       Required: openvla|pi0|pi05|gr00t|wan_oft|all
   --skip-validate          Skip final validation
+  --skip-flash-attn        Skip FlashAttention install/check for model envs
   -h, --help               Show this help
 EOF
 }
@@ -43,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-validate)
       RUN_VALIDATE="false"
+      shift
+      ;;
+    --skip-flash-attn)
+      SKIP_FLASH_ATTN="true"
       shift
       ;;
     -h|--help)
@@ -84,6 +90,7 @@ case "${MODEL_TARGET}" in
 esac
 
 export STARVLA_INSTALL_TIER="${INSTALL_TIER}"
+export STARVLA_SKIP_FLASH_ATTN="${SKIP_FLASH_ATTN}"
 
 ensure_conda_env() {
   local env_name="$1"
@@ -125,7 +132,11 @@ run_validation() {
   PYTHON_BIN=python "${SCRIPT_DIR}/validate/common.sh"
   case "${model}" in
     openvla|pi0|pi05|gr00t)
-      PYTHON_BIN=python "${SCRIPT_DIR}/flash_attn.sh" --check
+      if [[ "${STARVLA_SKIP_FLASH_ATTN}" != "true" ]]; then
+        PYTHON_BIN=python "${SCRIPT_DIR}/flash_attn.sh" --check
+      else
+        echo "[bootstrap] skipping flash-attn validation"
+      fi
       ;;
   esac
 

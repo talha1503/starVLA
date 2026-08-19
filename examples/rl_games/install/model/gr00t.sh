@@ -13,6 +13,10 @@ if [[ "${INSTALL_TIER}" == "dev" ]]; then
   pip_install "ray[default]==2.47.0"
 fi
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN}" "${INSTALL_DIR}/flash_attn.sh"
+if [[ "${STARVLA_SKIP_FLASH_ATTN:-false}" == "true" ]]; then
+  echo "[install/model/gr00t] skipping flash-attn"
+else
+  PYTHON_BIN="${PYTHON_BIN}" "${INSTALL_DIR}/flash_attn.sh"
+fi
 
 echo "[install/model/gr00t] tier=${INSTALL_TIER} done"

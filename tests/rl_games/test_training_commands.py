@@ -685,6 +685,12 @@ def test_cross_task_setup_supports_deadly_corridor_converter() -> None:
     assert robot_type == "rl_games_deadly_corridor"
 
 
+def test_setup_supports_defend_the_line_converter() -> None:
+    _, _, robot_type = _task_converter_and_verifier("defend_the_line")
+
+    assert robot_type == "rl_games_defend_the_line"
+
+
 def test_openvla_deadly_cross_task_setups_compose() -> None:
     for setup_name in OPENVLA_DEADLY_CROSS_TASK_SETUPS:
         cfg = launch_train.compose_training_config(

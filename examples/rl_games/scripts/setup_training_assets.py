@@ -746,6 +746,20 @@ def _ensure_demon_attack_dataset(args) -> dict[str, Any]:
     )
 
 
+def _ensure_defend_the_line_dataset(args) -> dict[str, Any]:
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_defend_the_line_to_starvla_lerobot import convert_dataset
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_defend_the_line_dataset import verify_dataset
+
+    return _ensure_rl_games_lerobot_dataset(
+        args,
+        convert_dataset=convert_dataset,
+        verify_dataset=verify_dataset,
+        env_name="defend_the_line",
+        env_fps=35.0,
+        obs_fps=8.75,
+    )
+
+
 def _task_converter_and_verifier(task: str):
     if task == "flappy":
         from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_flappy_to_starvla_lerobot import convert_dataset
@@ -755,11 +769,18 @@ def _task_converter_and_verifier(task: str):
         from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_demon_attack_to_starvla_lerobot import convert_dataset
         from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_demon_attack_dataset import verify_dataset
         return convert_dataset, verify_dataset, "rl_games_demon_attack"
+    if task == "defend_the_line":
+        from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_defend_the_line_to_starvla_lerobot import convert_dataset
+        from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_defend_the_line_dataset import verify_dataset
+        return convert_dataset, verify_dataset, "rl_games_defend_the_line"
     if task == "deadly_corridor":
         from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_deadly_corridor_to_starvla_lerobot import convert_dataset
         from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_deadly_corridor_dataset import verify_dataset
         return convert_dataset, verify_dataset, "rl_games_deadly_corridor"
-    raise ValueError(f"cross-task rl_games currently supports only flappy, demon_attack, and deadly_corridor, got {task!r}")
+    raise ValueError(
+        "cross-task rl_games currently supports only flappy, demon_attack, "
+        f"defend_the_line, and deadly_corridor, got {task!r}"
+    )
 
 
 def _get_task_value(task_cfg: dict[str, Any], *names: str, default: Any = None) -> Any:
@@ -836,6 +857,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
         task_timing = {
             "flappy": (30.0, 1),
             "demon_attack": (15.0, 4),
+            "defend_the_line": (8.75, 4),
             "deadly_corridor": (8.75, 4),
         }[task_name]
         task_fps, task_obs_stride_raw_frames = task_timing
@@ -1060,6 +1082,8 @@ def setup_assets(args) -> dict[str, Any]:
         result.update(_ensure_flappy_dataset(args))
     elif args.model in supported_models and args.env == "demon_attack":
         result.update(_ensure_demon_attack_dataset(args))
+    elif args.model in supported_models and args.env == "defend_the_line":
+        result.update(_ensure_defend_the_line_dataset(args))
     elif args.model in supported_models and args.env == "deadly_corridor":
         result.update(_ensure_deadly_corridor_dataset(args))
     else:

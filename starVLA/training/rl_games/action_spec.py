@@ -34,6 +34,8 @@ def _env_action_dim(cfg):
         return 2
     if task == "demon_attack":
         return 6
+    if task == "defend_the_line":
+        return 6
     if task == "deadly_corridor":
         return _deadly_action_dim(cfg)
     if task == "cross_task":

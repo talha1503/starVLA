@@ -65,6 +65,15 @@ def test_action_carrier_bridge_is_sufficient_for_demon_attack():
     assert cfg.framework.action_model.action_env_dim == 6
 
 
+def test_action_carrier_bridge_is_sufficient_for_defend_the_line():
+    cfg = _cfg("defend_the_line", init_mode="scratch", action_carrier="bridge", action_dim=7)
+
+    apply_action_spec(cfg)
+
+    assert cfg.framework.action_model.action_dim == 7
+    assert cfg.framework.action_model.action_env_dim == 6
+
+
 def test_pi0_bridge_forces_model_7d_carrier_and_masks_deadly_to_7d():
     cfg = _cfg("deadly_corridor", model_alias="pi0", init_mode="bridge", action_carrier="bridge", action_dim=32)
 

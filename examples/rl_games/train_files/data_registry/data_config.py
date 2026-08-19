@@ -36,6 +36,10 @@ class DemonAttackDataConfig(FlappyDataConfig):
     pass
 
 
+class DefendTheLineDataConfig(FlappyDataConfig):
+    pass
+
+
 class DeadlyCorridorDataConfig(FlappyDataConfig):
     pass
 
@@ -43,12 +47,14 @@ class DeadlyCorridorDataConfig(FlappyDataConfig):
 ROBOT_TYPE_CONFIG_MAP = {
     "rl_games_flappy": FlappyDataConfig(),
     "rl_games_demon_attack": DemonAttackDataConfig(),
+    "rl_games_defend_the_line": DefendTheLineDataConfig(),
     "rl_games_deadly_corridor": DeadlyCorridorDataConfig(),
 }
 
 ROBOT_TYPE_TO_EMBODIMENT_TAG = {
     "rl_games_flappy": EmbodimentTag.NEW_EMBODIMENT,
     "rl_games_demon_attack": EmbodimentTag.NEW_EMBODIMENT,
+    "rl_games_defend_the_line": EmbodimentTag.NEW_EMBODIMENT,
     "rl_games_deadly_corridor": EmbodimentTag.NEW_EMBODIMENT,
 }
 
@@ -64,6 +70,16 @@ DATASET_NAMED_MIXTURES = {
     "demon_attack_mixed_latency_train": [("demon_attack_mixed_latency_train", 1.0, "rl_games_demon_attack")],
     "demon_attack_mixed_latency_train__bridge": [
         ("demon_attack_mixed_latency_train__bridge", 1.0, "rl_games_demon_attack")
+    ],
+    "defend_the_line_train": [("defend_the_line_train", 1.0, "rl_games_defend_the_line")],
+    "defend_the_line_train__bridge": [
+        ("defend_the_line_train__bridge", 1.0, "rl_games_defend_the_line")
+    ],
+    "defend_the_line_mixed_latency_train": [
+        ("defend_the_line_mixed_latency_train", 1.0, "rl_games_defend_the_line")
+    ],
+    "defend_the_line_mixed_latency_train__bridge": [
+        ("defend_the_line_mixed_latency_train__bridge", 1.0, "rl_games_defend_the_line")
     ],
     "deadly_corridor_train": [("deadly_corridor_train", 1.0, "rl_games_deadly_corridor")],
     "deadly_corridor_train__bridge": [("deadly_corridor_train__bridge", 1.0, "rl_games_deadly_corridor")],

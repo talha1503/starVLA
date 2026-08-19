@@ -3,6 +3,7 @@ set -euo pipefail
 
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POSITIONAL=()
+SKIP_FLASH_ATTN="false"
 
 usage() {
   cat <<'EOF'
@@ -15,15 +16,20 @@ three RL games.
 Arguments:
   <model>                   openvla|pi0|pi05|gr00t|wan_oft|all
   [legacy-env]              Accepted for existing launch scripts; installation
-                            still includes all three games
+                            still includes the shared RL-games stack
 
 Options:
+  --skip-flash-attn        Skip FlashAttention install/check for model envs
   -h, --help                Show this help
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --skip-flash-attn)
+      SKIP_FLASH_ATTN="true"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -44,7 +50,7 @@ esac
 
 if [[ ${#POSITIONAL[@]} -eq 2 ]]; then
   case "${POSITIONAL[1]}" in
-    flappy|demon_attack|deadly_corridor|cross_task) ;;
+    flappy|demon_attack|defend_the_line|deadly_corridor|cross_task) ;;
     *) exit 1 ;;
   esac
   echo "[install_stack] legacy env selector '${POSITIONAL[1]}' accepted; installing all games"
@@ -54,5 +60,9 @@ ARGS=(
   --tier dev
   --model "${MODEL_TARGET}"
 )
+
+if [[ "${SKIP_FLASH_ATTN}" == "true" ]]; then
+  ARGS+=(--skip-flash-attn)
+fi
 
 exec "${INSTALL_DIR}/bootstrap.sh" "${ARGS[@]}"

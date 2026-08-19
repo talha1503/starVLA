@@ -189,6 +189,8 @@ def _env_action_dim_from_cfg(cfg: dict[str, Any]) -> int | None:
         return 2
     if task == "demon_attack":
         return 6
+    if task == "defend_the_line":
+        return 6
     if task == "deadly_corridor":
         layout = str(_get(cfg, "rl_games.env_eval.deadly.action_layout", "multibinary_7"))
         if layout == "multibinary_7":
