@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import sys
 from contextlib import contextmanager
 from typing import Iterator
@@ -46,6 +47,7 @@ def _defend_the_line_constants() -> Iterator[None]:
         base.REQUIRED_PROMPT_PARTS = old_required_prompt_parts
 
 
+@functools.wraps(base.verify_dataset)
 def verify_dataset(*args, **kwargs) -> bool:
     with _defend_the_line_constants():
         return base.verify_dataset(*args, **kwargs)
