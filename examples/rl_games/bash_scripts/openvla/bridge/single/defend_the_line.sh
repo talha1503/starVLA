@@ -28,7 +28,7 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="talha15032/openvla_bridge_defend_the_line_single_latency_clean_data_exp1" \
     dataset.source_hf=latency-sensitive-bench/memory-rollouts \
-    dataset.config_name=defend_the_line_fixed_latency_0_1000ep_7k2steps \
+    dataset.source_subdir=defend_the_line_fixed_latency_0_1000ep_7k2steps \
     dataset.latency_filter=[0] \
     checkpoint.local.keep_last_n=1 \
     trainer.max_train_steps=7000 \

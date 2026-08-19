@@ -110,14 +110,11 @@ def decode_rl_games_actions(
     decoder = {
         "flappy": lambda: (_decode_discrete(raw_scores, 2), "rl_games_discrete_id"),
         "demon_attack": lambda: (_decode_discrete(raw_scores, 6), "rl_games_discrete_id"),
-<<<<<<< HEAD
         "defend_the_line": lambda: (_decode_discrete(raw_scores, 6), "rl_games_defend_the_line_joint_6"),
-=======
         "gymnasium": lambda: (
             _decode_discrete_explicit_dim(raw_scores, action_env_dim),
             "rl_games_discrete_id",
         ),
->>>>>>> b144619fadf0b0b29da0fa059ff450542b7035dc
         "deadly_corridor": lambda: decode_deadly_corridor_actions(
             raw_scores,
             action_layout=deadly_action_layout,
