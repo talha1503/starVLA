@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -34,6 +35,7 @@ def _defend_the_line_constants() -> Iterator[None]:
         base.ACTION_DIM = old_action_dim
 
 
+@functools.wraps(base.convert_dataset)
 def convert_dataset(*args, **kwargs):
     with _defend_the_line_constants():
         return base.convert_dataset(*args, **kwargs)
