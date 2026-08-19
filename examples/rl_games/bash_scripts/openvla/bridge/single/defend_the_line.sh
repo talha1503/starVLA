@@ -7,6 +7,7 @@ cd "${WORKSPACE_DIR}/starVLA"
 
 bash examples/rl_games/install/install_stack.sh openvla demon_attack
 bash examples/rl_games/install/install_stack.sh openvla deadly_corridor
+bash examples/rl_games/install/install_stack.sh openvla defend_the_line
 
 conda activate starvla_rl_games_openvla
 
