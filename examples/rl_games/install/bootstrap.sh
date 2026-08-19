@@ -15,7 +15,7 @@ MODEL_TARGET=""
 RUN_VALIDATE="true"
 SKIP_FLASH_ATTN="false"
 SUPPORTED_MODELS=(openvla pi0 pi05 gr00t wan_oft)
-GAME_ENVS=(demon_attack deadly_corridor flappy)
+GAME_ENVS=(demon_attack deadly_corridor defend_the_line flappy)
 
 usage() {
   cat <<EOF
@@ -173,7 +173,7 @@ for model in "${MODELS_TO_INSTALL[@]}"; do
   PYTHON_BIN=python "${SCRIPT_DIR}/common.sh"
   PYTHON_BIN=python "${SCRIPT_DIR}/model/${model}.sh"
 
-  for env_name in demon_attack deadly_corridor; do
+  for env_name in demon_attack deadly_corridor defend_the_line; do
     PYTHON_BIN=python "${SCRIPT_DIR}/env/${env_name}.sh"
   done
 
