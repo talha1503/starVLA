@@ -250,9 +250,16 @@ class PolicyNormProcessor:
             ``config.yaml`` and ``dataset_statistics.json`` two dirs up).
         unnorm_key: Which top-level key in ``dataset_statistics.json`` to use.
             ``None`` → auto-pick the only key.
+        robot_type: Explicit registered DataConfig identity supplied by an
+            integration-specific policy wrapper.
     """
 
-    def __init__(self, ckpt_path: str, unnorm_key: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        ckpt_path: str,
+        unnorm_key: Optional[str] = None,
+        robot_type: Optional[str] = None,
+    ) -> None:
         self._ckpt_path = str(ckpt_path)
         cfg, norm_stats = read_mode_config(self._ckpt_path)
         self._model_cfg = cfg
@@ -271,7 +278,8 @@ class PolicyNormProcessor:
         self._unnorm_key = unnorm_key  # may still be None for multi-key case
 
         # 1) Resolve which DataConfig was used at training.
-        robot_type = _resolve_robot_type(cfg, unnorm_key=unnorm_key)
+        if robot_type is None:
+            robot_type = _resolve_robot_type(cfg, unnorm_key=unnorm_key)
         if robot_type not in ROBOT_TYPE_CONFIG_MAP:
             raise KeyError(
                 f"robot_type={robot_type!r} not in ROBOT_TYPE_CONFIG_MAP "

@@ -44,11 +44,16 @@ class DeadlyCorridorDataConfig(FlappyDataConfig):
     pass
 
 
+class GymnasiumDiscreteDataConfig(FlappyDataConfig):
+    pass
+
+
 ROBOT_TYPE_CONFIG_MAP = {
     "rl_games_flappy": FlappyDataConfig(),
     "rl_games_demon_attack": DemonAttackDataConfig(),
     "rl_games_defend_the_line": DefendTheLineDataConfig(),
     "rl_games_deadly_corridor": DeadlyCorridorDataConfig(),
+    "rl_games_gymnasium_discrete": GymnasiumDiscreteDataConfig(),
 }
 
 ROBOT_TYPE_TO_EMBODIMENT_TAG = {
@@ -56,6 +61,7 @@ ROBOT_TYPE_TO_EMBODIMENT_TAG = {
     "rl_games_demon_attack": EmbodimentTag.NEW_EMBODIMENT,
     "rl_games_defend_the_line": EmbodimentTag.NEW_EMBODIMENT,
     "rl_games_deadly_corridor": EmbodimentTag.NEW_EMBODIMENT,
+    "rl_games_gymnasium_discrete": EmbodimentTag.NEW_EMBODIMENT,
 }
 
 DATASET_NAMED_MIXTURES = {

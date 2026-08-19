@@ -72,6 +72,22 @@ def test_action_carrier_bridge_is_sufficient_for_defend_the_line():
 
     assert cfg.framework.action_model.action_dim == 7
     assert cfg.framework.action_model.action_env_dim == 6
+def test_openvla_native_gymnasium_uses_explicit_action_env_dim():
+    cfg = _cfg("gymnasium", action_dim=2)
+    cfg.framework.action_model.action_env_dim = 9
+
+    apply_action_spec(cfg)
+
+    assert cfg.framework.action_model.action_dim == 9
+    assert cfg.framework.action_model.action_env_dim == 9
+
+
+def test_openvla_native_gymnasium_does_not_fall_back_to_action_dim():
+    cfg = _cfg("gymnasium", action_dim=9)
+    del cfg.framework.action_model.action_env_dim
+
+    with pytest.raises(AttributeError, match="action_env_dim"):
+        apply_action_spec(cfg)
 
 
 def test_pi0_bridge_forces_model_7d_carrier_and_masks_deadly_to_7d():

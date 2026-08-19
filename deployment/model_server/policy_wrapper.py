@@ -53,10 +53,12 @@ class PolicyServerWrapper:
         rl_games_env_name: Optional[str] = None,
         rl_games_action_layout: Optional[str] = None,
         rl_games_multibinary_threshold: Optional[float] = None,
+        rl_games_action_env_dim: Optional[int] = None,
     ) -> None:
         self._ckpt_path = str(ckpt_path)
         self._action_output_mode = action_output_mode
         self._rl_games_env_name = rl_games_env_name
+        self._rl_games_action_env_dim = rl_games_action_env_dim
 
         logging.info("PolicyServerWrapper: loading framework from %s", self._ckpt_path)
         framework = baseframework.from_pretrained(self._ckpt_path)
@@ -123,9 +125,18 @@ class PolicyServerWrapper:
     def _get_processor(self, unnorm_key: Optional[str]) -> PolicyNormProcessor:
         cache_key = unnorm_key if unnorm_key is not None else "__default__"
         if cache_key not in self._norm_processors:
-            self._norm_processors[cache_key] = PolicyNormProcessor(
-                self._ckpt_path, unnorm_key=unnorm_key
-            )
+            if self._rl_games_env_name == "gymnasium":
+                processor = PolicyNormProcessor(
+                    self._ckpt_path,
+                    unnorm_key=unnorm_key,
+                    robot_type="rl_games_gymnasium_discrete",
+                )
+            else:
+                processor = PolicyNormProcessor(
+                    self._ckpt_path,
+                    unnorm_key=unnorm_key,
+                )
+            self._norm_processors[cache_key] = processor
         return self._norm_processors[cache_key]
 
     @property
@@ -193,6 +204,9 @@ class PolicyServerWrapper:
         normalized = np.asarray(out["normalized_actions"])  # (B, T, D)
 
         if self._action_output_mode == "rl_games":
+            decode_kwargs = {}
+            if self._rl_games_env_name == "gymnasium":
+                decode_kwargs["action_env_dim"] = self._rl_games_action_env_dim
             with _stage(profiler, "starvla_wrapper_rl_games_decode_ms"):
                 return decode_rl_games_actions(
                     normalized_actions=normalized,
@@ -207,6 +221,7 @@ class PolicyServerWrapper:
                         if self._rl_games_env_name == "deadly_corridor"
                         else None
                     ),
+                    **decode_kwargs,
                 )
 
         with _stage(profiler, "starvla_wrapper_unnormalize_ms"):
