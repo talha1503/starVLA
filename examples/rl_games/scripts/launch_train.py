@@ -519,6 +519,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if gpus not in (None, ""):
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpus)
 
+    # wandb_entity/wandb_project are launcher-only overrides (see
+    # TRAINER_COMMAND_EXCLUDED_ROOTS): the trainer subprocess resolves them via
+    # ${oc.env:WANDB_ENTITY}/${oc.env:WANDB_PROJECT} instead of a CLI override,
+    # so export whatever value was passed here into the child's environment.
+    wandb_entity = _cfg_get(cfg, "wandb_entity")
+    if wandb_entity not in (None, ""):
+        os.environ["WANDB_ENTITY"] = str(wandb_entity)
+    wandb_project = _cfg_get(cfg, "wandb_project")
+    if wandb_project not in (None, ""):
+        os.environ["WANDB_PROJECT"] = str(wandb_project)
+
     with contextlib.redirect_stdout(sys.stderr):
         setup = setup_assets(setup_namespace_from_cfg(cfg, workspace_dir, run_root_dir))
 
