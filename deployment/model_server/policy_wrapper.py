@@ -41,6 +41,7 @@ from deployment.model_server.rl_games_action_decode import (
 
 
 class PolicyServerWrapper:
+    _rl_games_gymnasium_action_space_type = "discrete"
     """Wraps a `baseframework` for use as a websocket-server policy."""
 
     def __init__(
@@ -54,11 +55,13 @@ class PolicyServerWrapper:
         rl_games_action_layout: Optional[str] = None,
         rl_games_multibinary_threshold: Optional[float] = None,
         rl_games_action_env_dim: Optional[int] = None,
+        rl_games_gymnasium_action_space_type: str = "discrete",
     ) -> None:
         self._ckpt_path = str(ckpt_path)
         self._action_output_mode = action_output_mode
         self._rl_games_env_name = rl_games_env_name
         self._rl_games_action_env_dim = rl_games_action_env_dim
+        self._rl_games_gymnasium_action_space_type = rl_games_gymnasium_action_space_type
 
         logging.info("PolicyServerWrapper: loading framework from %s", self._ckpt_path)
         framework = baseframework.from_pretrained(self._ckpt_path)
@@ -207,6 +210,7 @@ class PolicyServerWrapper:
             decode_kwargs = {}
             if self._rl_games_env_name == "gymnasium":
                 decode_kwargs["action_env_dim"] = self._rl_games_action_env_dim
+                decode_kwargs["gymnasium_action_space_type"] = self._rl_games_gymnasium_action_space_type
             with _stage(profiler, "starvla_wrapper_rl_games_decode_ms"):
                 return decode_rl_games_actions(
                     normalized_actions=normalized,

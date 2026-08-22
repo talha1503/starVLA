@@ -23,20 +23,7 @@ from examples.rl_games.scripts.launch_train import _hydra_value
 
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 contract = manifest["gymnasium_task"]
-keys = (
-    "task_name",
-    "env_id",
-    "make_kwargs",
-    "registration_imports",
-    "action_labels",
-    "action_values",
-    "noop_action_id",
-    "base_prompt",
-    "env_fps",
-    "obs_fps",
-    "frame_stack",
-)
-print(_hydra_value({key: contract[key] for key in keys}))
+print(_hydra_value(contract))
 ' "${MANIFEST_PATH}"
 )"
 ACTION_ENV_DIM="$(
@@ -48,6 +35,29 @@ manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 print(manifest["active_action_dim"])
 ' "${MANIFEST_PATH}"
 )"
+ACTION_DIM="$(
+  python -c '
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+print(manifest["action_dim"])
+' "${MANIFEST_PATH}"
+)"
+ACTION_CARRIER="$(
+  python -c '
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+print(manifest["action_carrier"])
+' "${MANIFEST_PATH}"
+)"
+if [[ "${ACTION_CARRIER}" == "bridge" ]]; then
+  INIT_MODE="bridge"
+else
+  INIT_MODE="scratch"
+fi
 
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-2000}"
 PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-4}"
@@ -58,7 +68,7 @@ RUN_ID="${RUN_ID:-${DATA_MIX}_openvla_sft}"
 python examples/rl_games/scripts/launch_train.py \
   --model openvla \
   --env gymnasium \
-  --init scratch \
+  --init "${INIT_MODE}" \
   --mode single \
   run_id="${RUN_ID}" \
   paths.dataset_local_dir="${DATASET_LOCAL_DIR}" \
@@ -66,7 +76,10 @@ python examples/rl_games/scripts/launch_train.py \
   datasets.vla_data.data_mix="${DATA_MIX}" \
   datasets.vla_data.custom_mixtures_path="${CUSTOM_MIXTURES_PATH}" \
   rl_games.gymnasium.task_contract="${TASK_CONTRACT}" \
+  rl_games.action_carrier="${ACTION_CARRIER}" \
+  framework.action_model.action_dim="${ACTION_DIM}" \
   framework.action_model.action_env_dim="${ACTION_ENV_DIM}" \
+  datasets.vla_data.include_state=false \
   datasets.vla_data.num_obs_frames=1 \
   datasets.vla_data.image_mode=single \
   framework.kv_memory.enabled=false \

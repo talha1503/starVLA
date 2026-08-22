@@ -25,29 +25,12 @@ RL_GAMES_TASK_METADATA = {
     "rl_games_deadly_corridor": ("deadly_corridor", 7),
 }
 RL_GAMES_GYMNASIUM_DISCRETE_ROBOT_TYPE = "rl_games_gymnasium_discrete"
-GYMNASIUM_TASK_CONTRACT_KEYS = (
-    "task_name",
-    "env_id",
-    "make_kwargs",
-    "registration_imports",
-    "action_labels",
-    "action_values",
-    "noop_action_id",
-    "base_prompt",
-    "env_fps",
-    "obs_fps",
-    "frame_stack",
-)
-
-
 def _gymnasium_task_contract(manifest: dict) -> dict:
-    contract = manifest["gymnasium_task"]
-    return {key: contract[key] for key in GYMNASIUM_TASK_CONTRACT_KEYS}
+    return dict(manifest["gymnasium_task"])
 
 
 def _configured_gymnasium_task_contract(data_cfg: dict) -> dict:
-    contract = data_cfg["gymnasium_task_contract"]
-    return {key: contract[key] for key in GYMNASIUM_TASK_CONTRACT_KEYS}
+    return dict(data_cfg["gymnasium_task_contract"])
 
 
 def _generic_gymnasium_metadata(
@@ -61,7 +44,7 @@ def _generic_gymnasium_metadata(
     configured_contract = _configured_gymnasium_task_contract(data_cfg)
     mismatched_fields = [
         key
-        for key in GYMNASIUM_TASK_CONTRACT_KEYS
+        for key in configured_contract
         if manifest_contract[key] != configured_contract[key]
     ]
     if mismatched_fields:
