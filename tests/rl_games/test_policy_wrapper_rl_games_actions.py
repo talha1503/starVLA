@@ -334,7 +334,7 @@ def test_policy_wrapper_gymnasium_uses_registered_generic_data_config():
             "checkpoint.safetensors",
             {
                 "unnorm_key": "new_embodiment",
-                "robot_type": "rl_games_gymnasium_discrete",
+                "robot_type": "rl_games_gymnasium",
             },
         )
     ]

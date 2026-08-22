@@ -132,7 +132,7 @@ class PolicyServerWrapper:
                 processor = PolicyNormProcessor(
                     self._ckpt_path,
                     unnorm_key=unnorm_key,
-                    robot_type="rl_games_gymnasium_discrete",
+                    robot_type="rl_games_gymnasium",
                 )
             else:
                 processor = PolicyNormProcessor(

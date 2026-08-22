@@ -10,7 +10,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-GENERIC_ROBOT_TYPE = "rl_games_gymnasium_discrete"
+GENERIC_ROBOT_TYPE = "rl_games_gymnasium"
 GYMNASIUM_TASK_CONTRACT_KEYS = (
     "task_name",
     "env_id",
@@ -172,7 +172,7 @@ def test_generic_robot_type_reuses_rl_games_modality_contract(
 
     generic = data_config.ROBOT_TYPE_CONFIG_MAP[GENERIC_ROBOT_TYPE]
 
-    assert isinstance(generic, data_config.GymnasiumDiscreteDataConfig)
+    assert isinstance(generic, data_config.GymnasiumDataConfig)
     assert isinstance(generic, data_config.FlappyDataConfig)
     assert data_config.ROBOT_TYPE_TO_EMBODIMENT_TAG[GENERIC_ROBOT_TYPE] == "new"
     assert generic.video_keys == ["video.image"]

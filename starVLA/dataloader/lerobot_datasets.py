@@ -24,7 +24,10 @@ RL_GAMES_TASK_METADATA = {
     "rl_games_demon_attack": ("demon_attack", 6),
     "rl_games_deadly_corridor": ("deadly_corridor", 7),
 }
-RL_GAMES_GYMNASIUM_DISCRETE_ROBOT_TYPE = "rl_games_gymnasium_discrete"
+RL_GAMES_GYMNASIUM_ROBOT_TYPES = {
+    "rl_games_gymnasium",
+    "rl_games_gymnasium_discrete",
+}
 def _gymnasium_task_contract(manifest: dict) -> dict:
     return dict(manifest["gymnasium_task"])
 
@@ -147,7 +150,7 @@ def make_LeRobotSingleDataset(
         delete_pause_frame=delete_pause_frame,
         data_cfg=data_cfg,
     )
-    if robot_type == RL_GAMES_GYMNASIUM_DISCRETE_ROBOT_TYPE:
+    if robot_type in RL_GAMES_GYMNASIUM_ROBOT_TYPES:
         task_contract, active_action_dim = _generic_gymnasium_metadata(
             dataset_path,
             data_cfg,
