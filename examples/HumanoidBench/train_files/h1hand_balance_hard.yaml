@@ -1,0 +1,329 @@
+run_id: h1hand_balance_hard_qwen_gr00t
+run_root_dir: results/Checkpoints
+seed: 42
+wandb_entity: your_wandb_entity
+wandb_project: starVLA
+is_debug: false
+version_id: "0.21"
+
+framework:
+  name: QwenGR00T
+  action_model:
+    action_dim: 61
+    action_env_dim: 61
+    state_dim: 177
+    action_horizon: 1
+
+datasets:
+  vla_data:
+    dataset_py: lerobot_datasets
+    include_state: true
+    gymnasium_task_contract:
+      task_name: h1hand_balance_hard
+      env_id: LatencyBench/H1HandBalanceHard-v0
+      make_kwargs:
+        render_mode: rgb_array
+        width: 256
+        height: 256
+      registration_imports:
+        - latency_bench.envs.humanoidbench
+      base_prompt: >-
+        Keep the H1Hand humanoid balanced on the rolling support board. Maintain an
+        upright torso and avoid falling or contacting the floor.
+      env_fps: 50.0
+      obs_fps: 25.0
+      frame_stack: 1
+      action_space:
+        type: box
+        labels:
+          - left_hip_yaw
+          - left_hip_roll
+          - left_hip_pitch
+          - left_knee
+          - left_ankle
+          - right_hip_yaw
+          - right_hip_roll
+          - right_hip_pitch
+          - right_knee
+          - right_ankle
+          - torso
+          - left_shoulder_pitch
+          - left_shoulder_roll
+          - left_shoulder_yaw
+          - left_elbow
+          - left_wrist_yaw
+          - right_shoulder_pitch
+          - right_shoulder_roll
+          - right_shoulder_yaw
+          - right_elbow
+          - right_wrist_yaw
+          - lh_A_WRJ2
+          - lh_A_WRJ1
+          - lh_A_THJ5
+          - lh_A_THJ4
+          - lh_A_THJ3
+          - lh_A_THJ2
+          - lh_A_THJ1
+          - lh_A_FFJ4
+          - lh_A_FFJ3
+          - lh_A_FFJ0
+          - lh_A_MFJ4
+          - lh_A_MFJ3
+          - lh_A_MFJ0
+          - lh_A_RFJ4
+          - lh_A_RFJ3
+          - lh_A_RFJ0
+          - lh_A_LFJ5
+          - lh_A_LFJ4
+          - lh_A_LFJ3
+          - lh_A_LFJ0
+          - rh_A_WRJ2
+          - rh_A_WRJ1
+          - rh_A_THJ5
+          - rh_A_THJ4
+          - rh_A_THJ3
+          - rh_A_THJ2
+          - rh_A_THJ1
+          - rh_A_FFJ4
+          - rh_A_FFJ3
+          - rh_A_FFJ0
+          - rh_A_MFJ4
+          - rh_A_MFJ3
+          - rh_A_MFJ0
+          - rh_A_RFJ4
+          - rh_A_RFJ3
+          - rh_A_RFJ0
+          - rh_A_LFJ5
+          - rh_A_LFJ4
+          - rh_A_LFJ3
+          - rh_A_LFJ0
+        low:
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+          - -1.0
+        high:
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+          - 1.0
+        dtype: float32
+      noop_action:
+        - 0
+        - 0
+        - -0.03350967541337013
+        - -0.08225106447935104
+        - -0.32374098896980286
+        - 0
+        - 0
+        - -0.03350967541337013
+        - -0.08225106447935104
+        - -0.32374098896980286
+        - 0
+        - 0
+        - -0.8028985261917114
+        - -0.5478261113166809
+        - -0.35233157873153687
+        - -0.8255813717842102
+        - 0
+        - 0.8028985857963562
+        - 0.5478259921073914
+        - -0.35233157873153687
+        - -0.8255813717842102
+        - 0.5
+        - 0.17647098004817963
+        - 0
+        - -1
+        - 0
+        - 0
+        - -0.7142866253852844
+        - 0
+        - -0.7142866253852844
+        - -1
+        - 0
+        - -0.7142866253852844
+        - -1
+        - 0
+        - -0.7142866253852844
+        - -1
+        - -1
+        - 0
+        - -0.7142866253852844
+        - -1
+        - 0.5
+        - 0.17647098004817963
+        - 0
+        - -1
+        - 0
+        - 0
+        - -0.7142866253852844
+        - 0
+        - -0.7142866253852844
+        - -1
+        - 0
+        - -0.7142866253852844
+        - -1
+        - 0
+        - -0.7142866253852844
+        - -1
+        - -1
+        - 0
+        - -0.7142866253852844
+        - -1
+    data_root_dir: playground/Datasets/rl_games
+    data_mix: h1hand_balance_hard
+    eval_data_mix: h1hand_balance_hard__val
+    pin_memory: true
+    persistent_workers: true
+    obs_image_size: [224, 224]
+    video_backend: torchvision_av
+    per_device_batch_size: 4
+
+trainer:
+  max_train_steps: 100000
+  num_warmup_steps: 5000
+  save_interval: 5000
+  eval_interval: 100
+  learning_rate:
+    base: 1.0e-05
+    qwen_vl_interface: 1.0e-05
+    action_model: 1.0e-04
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 5.0e-07
+  freeze_modules: ""
+  loss_scale:
+    vla: 1.0
+    vlm: 0.1
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+  logging_frequency: 10
+  freeze_vit: false
+  freeze_tied_embedding: false
+  freeze_llm_layers: []
+  gradient_clipping: 1.0
+  gradient_accumulation_steps: 1
+  optimizer:
+    name: AdamW
+    betas: [0.9, 0.95]
+    eps: 1.0e-08
+    weight_decay: 1.0e-08
+
+checkpoint:
+  save_best_model: false
+  save_final_model: true
+  save_training_state: true

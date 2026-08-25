@@ -27,6 +27,7 @@ RL_GAMES_TASK_METADATA = {
 RL_GAMES_GYMNASIUM_ROBOT_TYPES = {
     "rl_games_gymnasium",
     "rl_games_gymnasium_discrete",
+    "rl_games_gymnasium_native",
 }
 def _gymnasium_task_contract(manifest: dict) -> dict:
     return dict(manifest["gymnasium_task"])
