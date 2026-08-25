@@ -53,6 +53,24 @@ manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 print(manifest["action_carrier"])
 ' "${MANIFEST_PATH}"
 )"
+INCLUDE_STATE="$(
+  python -c '
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+print(str(manifest.get("uses_state", False)).lower())
+' "${MANIFEST_PATH}"
+)"
+STATE_DIM="$(
+  python -c '
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+print(manifest.get("state_dim", 1))
+' "${MANIFEST_PATH}"
+)"
 if [[ "${ACTION_CARRIER}" == "bridge" ]]; then
   INIT_MODE="bridge"
 else
@@ -79,7 +97,8 @@ python examples/rl_games/scripts/launch_train.py \
   rl_games.action_carrier="${ACTION_CARRIER}" \
   framework.action_model.action_dim="${ACTION_DIM}" \
   framework.action_model.action_env_dim="${ACTION_ENV_DIM}" \
-  datasets.vla_data.include_state=false \
+  framework.action_model.state_dim="${STATE_DIM}" \
+  datasets.vla_data.include_state="${INCLUDE_STATE}" \
   datasets.vla_data.num_obs_frames=1 \
   datasets.vla_data.image_mode=single \
   framework.kv_memory.enabled=false \
