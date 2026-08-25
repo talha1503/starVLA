@@ -53,6 +53,7 @@ def _load_policy_wrapper_module():
 class FakeProcessor:
     def __init__(self):
         self.calls = []
+        self.state_calls = []
         self.unnorm_key = "new_embodiment"
         self.available_unnorm_keys = ["new_embodiment"]
         self.action_keys = ["action"]
@@ -61,6 +62,10 @@ class FakeProcessor:
     def unapply_actions(self, values):
         self.calls.append(np.asarray(values).copy())
         return np.asarray(values) + 10.0
+
+    def apply_state(self, values):
+        self.state_calls.append(np.asarray(values).copy())
+        return np.asarray(values) + 1.0
 
 
 class FakeFramework:
@@ -146,6 +151,20 @@ def test_decode_gymnasium_requires_explicit_action_env_dim():
             normalized_actions=np.asarray([[[0.1, 0.8, 0.2]]], dtype=np.float32),
             env_name="gymnasium",
         )
+def test_decode_gymnasium_box_uses_env_actions_and_keeps_normalized_scores():
+    from deployment.model_server.rl_games_action_decode import decode_rl_games_actions
+
+    decoded = decode_rl_games_actions(
+        normalized_actions=np.asarray([[[0.1, 0.2, 0.3]]], dtype=np.float32),
+        action_values=np.asarray([[[10.0, 20.0, 30.0]]], dtype=np.float32),
+        env_name="gymnasium",
+        action_env_dim=2,
+        gymnasium_action_space_type="box",
+    )
+
+    assert decoded["action_output_type"] == "rl_games_continuous"
+    assert decoded["actions"].tolist() == [[[10.0, 20.0]]]
+    assert np.allclose(decoded["raw_action_scores"], [[[0.1, 0.2, 0.3]]])
 
 
 def test_decode_deadly_corridor_factorized_logits_to_tuple_payload():
@@ -311,6 +330,57 @@ def test_policy_wrapper_gymnasium_mode_decodes_only_action_env_dim_logits():
     assert processor.calls == []
 
 
+def test_policy_wrapper_gymnasium_box_normalizes_state_and_unnormalizes_actions():
+    policy_wrapper_module = _load_policy_wrapper_module()
+    processor = FakeProcessor()
+    framework = FakeFramework([[[0.1, 0.2, 0.3]]])
+    wrapper = policy_wrapper_module.PolicyServerWrapper.__new__(policy_wrapper_module.PolicyServerWrapper)
+    wrapper._framework = framework
+    wrapper._default_unnorm_key = "new_embodiment"
+    wrapper._available_unnorm_keys = ["new_embodiment"]
+    wrapper._action_output_mode = "rl_games"
+    wrapper._rl_games_env_name = "gymnasium"
+    wrapper._rl_games_action_env_dim = 2
+    wrapper._rl_games_gymnasium_action_space_type = "box"
+    wrapper._get_processor = lambda unnorm_key: processor
+
+    prediction = wrapper.predict_action(
+        examples=[{"image": [], "lang": "", "state": np.asarray([[1.0, 2.0]])}],
+        unnorm_key="new_embodiment",
+    )
+
+    assert framework.calls[0]["examples"][0]["state"].tolist() == [[2.0, 3.0]]
+    assert processor.state_calls[0].tolist() == [[1.0, 2.0]]
+    assert np.allclose(prediction["actions"], [[[10.1, 10.2]]])
+    assert np.allclose(prediction["raw_action_scores"], [[[0.1, 0.2, 0.3]]])
+    assert prediction["action_output_type"] == "rl_games_continuous"
+
+
+def test_policy_wrapper_gymnasium_stateless_example_skips_state_normalization():
+    policy_wrapper_module = _load_policy_wrapper_module()
+    processor = FakeProcessor()
+    framework = FakeFramework([[[0.1, 0.9]]])
+    wrapper = policy_wrapper_module.PolicyServerWrapper.__new__(policy_wrapper_module.PolicyServerWrapper)
+    wrapper._framework = framework
+    wrapper._default_unnorm_key = "new_embodiment"
+    wrapper._available_unnorm_keys = ["new_embodiment"]
+    wrapper._action_output_mode = "rl_games"
+    wrapper._rl_games_env_name = "gymnasium"
+    wrapper._rl_games_action_env_dim = 2
+    wrapper._rl_games_gymnasium_action_space_type = "discrete"
+    wrapper._get_processor = lambda unnorm_key: processor
+    example = {"image": [], "lang": ""}
+
+    prediction = wrapper.predict_action(
+        examples=[example],
+        unnorm_key="new_embodiment",
+    )
+
+    assert framework.calls[0]["examples"] == [example]
+    assert processor.state_calls == []
+    assert prediction["actions"].tolist() == [[[1]]]
+
+
 def test_policy_wrapper_gymnasium_uses_registered_generic_data_config():
     policy_wrapper_module = _load_policy_wrapper_module()
     calls = []
@@ -337,6 +407,33 @@ def test_policy_wrapper_gymnasium_uses_registered_generic_data_config():
                 "robot_type": "rl_games_gymnasium",
             },
         )
+    ]
+
+
+def test_policy_wrapper_gymnasium_uses_registered_native_data_config():
+    policy_wrapper_module = _load_policy_wrapper_module()
+    calls = []
+
+    class CapturingProcessor:
+        def __init__(self, ckpt_path, **kwargs):
+            calls.append(kwargs)
+
+    policy_wrapper_module.PolicyNormProcessor = CapturingProcessor
+    wrapper = policy_wrapper_module.PolicyServerWrapper.__new__(
+        policy_wrapper_module.PolicyServerWrapper
+    )
+    wrapper._ckpt_path = "checkpoint.safetensors"
+    wrapper._rl_games_env_name = "gymnasium"
+    wrapper._rl_games_gymnasium_robot_type = "rl_games_gymnasium_native"
+    wrapper._norm_processors = {}
+
+    wrapper._get_processor("new_embodiment")
+
+    assert calls == [
+        {
+            "unnorm_key": "new_embodiment",
+            "robot_type": "rl_games_gymnasium_native",
+        }
     ]
 
 

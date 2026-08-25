@@ -125,6 +125,7 @@ def _load_lerobot_datasets(monkeypatch: pytest.MonkeyPatch):
         "rl_games_demon_attack",
         "rl_games_deadly_corridor",
         GENERIC_ROBOT_TYPE,
+        "rl_games_gymnasium_native",
     }
     datasets_module = ModuleType(
         "starVLA.dataloader.gr00t_lerobot.datasets"
@@ -179,12 +180,22 @@ def test_generic_robot_type_reuses_rl_games_modality_contract(
     assert generic.state_keys == ["state.game_state"]
     assert generic.action_keys == ["action.button"]
 
+    native = data_config.ROBOT_TYPE_CONFIG_MAP["rl_games_gymnasium_native"]
+    assert isinstance(native, data_config.GymnasiumNativeDataConfig)
+    assert native.state_keys == ["state.native"]
+    assert native.action_keys == ["action.native"]
+
 
 @pytest.mark.parametrize("task_name", ["custom_balance", "flappy"])
+@pytest.mark.parametrize(
+    "robot_type",
+    [GENERIC_ROBOT_TYPE, "rl_games_gymnasium_native"],
+)
 def test_generic_dataset_uses_manifest_task_and_active_action_dimension(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     task_name: str,
+    robot_type: str,
 ) -> None:
     lerobot_datasets = _load_lerobot_datasets(monkeypatch)
     dataset_path = tmp_path / "custom_balance_train"
@@ -194,7 +205,7 @@ def test_generic_dataset_uses_manifest_task_and_active_action_dimension(
     dataset = lerobot_datasets.make_LeRobotSingleDataset(
         data_root_dir=tmp_path,
         data_name=dataset_path.name,
-        robot_type=GENERIC_ROBOT_TYPE,
+        robot_type=robot_type,
         data_cfg=_data_cfg(task_contract),
     )
 

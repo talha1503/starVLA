@@ -402,3 +402,21 @@ class PolicyNormProcessor:
                 v = v.detach().cpu().numpy()
             parts.append(np.asarray(v))
         return np.concatenate(parts, axis=-1)
+
+    def apply_state(self, state: np.ndarray) -> np.ndarray:
+        """Apply the training-time state transform to an environment state."""
+        data: Dict[str, np.ndarray] = {}
+        cursor = 0
+        for full_key in self._state_keys:
+            dim_k = self._state_key_dims[full_key]
+            data[full_key] = state[..., cursor : cursor + dim_k]
+            cursor += dim_k
+
+        out = self._transform.apply(data)
+        parts: List[np.ndarray] = []
+        for full_key in self._state_keys:
+            value = out[full_key]
+            if isinstance(value, torch.Tensor):
+                value = value.detach().cpu().numpy()
+            parts.append(np.asarray(value))
+        return np.concatenate(parts, axis=-1)
