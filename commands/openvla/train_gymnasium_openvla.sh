@@ -59,7 +59,7 @@ import json
 import sys
 
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
-print(str(manifest.get("uses_state", False)).lower())
+print(str(manifest["include_state"]).lower())
 ' "${MANIFEST_PATH}"
 )"
 STATE_DIM="$(
@@ -68,7 +68,7 @@ import json
 import sys
 
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
-print(manifest.get("state_dim", 1))
+print(manifest["state_dim"])
 ' "${MANIFEST_PATH}"
 )"
 if [[ "${ACTION_CARRIER}" == "bridge" ]]; then

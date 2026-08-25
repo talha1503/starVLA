@@ -262,6 +262,41 @@ class PolicyNormProcessor:
     ) -> None:
         self._ckpt_path = str(ckpt_path)
         cfg, norm_stats = read_mode_config(self._ckpt_path)
+        self._initialize(
+            model_cfg=cfg,
+            norm_stats=norm_stats,
+            unnorm_key=unnorm_key,
+            robot_type=robot_type,
+        )
+
+    @classmethod
+    def from_config(
+        cls,
+        *,
+        model_cfg: dict,
+        norm_stats: dict,
+        unnorm_key: Optional[str] = None,
+        robot_type: Optional[str] = None,
+    ) -> "PolicyNormProcessor":
+        """Build the training-time transform for an in-memory model."""
+        processor = cls.__new__(cls)
+        processor._initialize(
+            model_cfg=model_cfg,
+            norm_stats=norm_stats,
+            unnorm_key=unnorm_key,
+            robot_type=robot_type,
+        )
+        return processor
+
+    def _initialize(
+        self,
+        *,
+        model_cfg: dict,
+        norm_stats: dict,
+        unnorm_key: Optional[str],
+        robot_type: Optional[str],
+    ) -> None:
+        cfg = model_cfg
         self._model_cfg = cfg
         self._norm_stats = norm_stats
 

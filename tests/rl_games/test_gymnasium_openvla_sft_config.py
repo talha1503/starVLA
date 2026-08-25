@@ -195,7 +195,6 @@ def test_generic_gymnasium_openvla_command_reads_handoff_contract_from_manifest(
     assert 'framework.action_model.action_env_dim="${ACTION_ENV_DIM}"' in command_text
     assert 'framework.action_model.action_dim="${ACTION_DIM}"' in command_text
     assert 'rl_games.action_carrier="${ACTION_CARRIER}"' in command_text
-    assert "datasets.vla_data.include_state=false" in command_text
     assert "rl_games.env_eval.enabled=false" in command_text
     assert "rl_games.env_eval.mid_train.enabled=false" in command_text
     assert "rl_games.env_eval.post_train.enabled=false" in command_text
@@ -217,6 +216,8 @@ def test_generic_gymnasium_openvla_command_reads_handoff_contract_from_manifest(
                     "active_action_dim": 3,
                     "action_dim": 3,
                     "action_carrier": "native",
+                    "include_state": True,
+                    "state_dim": 4,
                 }
         ),
         encoding="utf-8",
@@ -265,6 +266,8 @@ def test_generic_gymnasium_openvla_command_reads_handoff_contract_from_manifest(
     assert "framework.action_model.action_env_dim=3" in launched_args
     assert "framework.action_model.action_dim=3" in launched_args
     assert "rl_games.action_carrier=native" in launched_args
+    assert "framework.action_model.state_dim=4" in launched_args
+    assert "datasets.vla_data.include_state=true" in launched_args
     assert launched_args[launched_args.index("--init") + 1] == "scratch"
     assert f"paths.dataset_local_dir={dataset_root}" in launched_args
     assert f"dataset.single_converted_name={data_mix}" in launched_args
@@ -306,6 +309,8 @@ def test_generic_gymnasium_openvla_command_accepts_continuous_bridge_contract(
                 "active_action_dim": 6,
                 "action_dim": 7,
                 "action_carrier": "bridge",
+                "include_state": False,
+                "state_dim": 7,
             }
         ),
         encoding="utf-8",
@@ -348,4 +353,5 @@ def test_generic_gymnasium_openvla_command_accepts_continuous_bridge_contract(
     assert "rl_games.action_carrier=bridge" in launched_args
     assert "framework.action_model.action_dim=7" in launched_args
     assert "framework.action_model.action_env_dim=6" in launched_args
+    assert "framework.action_model.state_dim=7" in launched_args
     assert "datasets.vla_data.include_state=false" in launched_args
