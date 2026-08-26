@@ -44,8 +44,36 @@ class DeadlyCorridorDataConfig(FlappyDataConfig):
     pass
 
 
-class GymnasiumDiscreteDataConfig(FlappyDataConfig):
+class GymnasiumDataConfig(FlappyDataConfig):
     pass
+
+
+class GymnasiumNativeDataConfig(FlappyDataConfig):
+    """Configure native Gymnasium state and action vectors."""
+
+    state_keys = ["state.native"]
+    action_keys = ["action.native"]
+
+    def transform(self):
+        from starVLA.dataloader.gr00t_lerobot.transform.base import ComposedModalityTransform
+        from starVLA.dataloader.gr00t_lerobot.transform.state_action import (
+            StateActionToTensor,
+            StateActionTransform,
+        )
+
+        keys = [*self.state_keys, *self.action_keys]
+        return ComposedModalityTransform(
+            transforms=[
+                StateActionToTensor(apply_to=keys),
+                StateActionTransform(
+                    apply_to=keys,
+                    normalization_modes={
+                        "state.native": "q99",
+                        "action.native": "q99",
+                    },
+                ),
+            ]
+        )
 
 
 ROBOT_TYPE_CONFIG_MAP = {
@@ -53,7 +81,9 @@ ROBOT_TYPE_CONFIG_MAP = {
     "rl_games_demon_attack": DemonAttackDataConfig(),
     "rl_games_defend_the_line": DefendTheLineDataConfig(),
     "rl_games_deadly_corridor": DeadlyCorridorDataConfig(),
-    "rl_games_gymnasium_discrete": GymnasiumDiscreteDataConfig(),
+    "rl_games_gymnasium": GymnasiumDataConfig(),
+    "rl_games_gymnasium_discrete": GymnasiumDataConfig(),
+    "rl_games_gymnasium_native": GymnasiumNativeDataConfig(),
 }
 
 ROBOT_TYPE_TO_EMBODIMENT_TAG = {
@@ -61,7 +91,9 @@ ROBOT_TYPE_TO_EMBODIMENT_TAG = {
     "rl_games_demon_attack": EmbodimentTag.NEW_EMBODIMENT,
     "rl_games_defend_the_line": EmbodimentTag.NEW_EMBODIMENT,
     "rl_games_deadly_corridor": EmbodimentTag.NEW_EMBODIMENT,
+    "rl_games_gymnasium": EmbodimentTag.NEW_EMBODIMENT,
     "rl_games_gymnasium_discrete": EmbodimentTag.NEW_EMBODIMENT,
+    "rl_games_gymnasium_native": EmbodimentTag.NEW_EMBODIMENT,
 }
 
 DATASET_NAMED_MIXTURES = {
@@ -95,4 +127,5 @@ DATASET_NAMED_MIXTURES = {
     "deadly_corridor_mixed_latency_train__bridge": [
         ("deadly_corridor_mixed_latency_train__bridge", 1.0, "rl_games_deadly_corridor")
     ],
+    "h1hand_balance_hard": [("h1hand_balance_hard", 1.0, "rl_games_gymnasium_native")],
 }

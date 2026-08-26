@@ -158,7 +158,7 @@ unset UV_NO_CACHE UV_LINK_MODE
 ORIGINAL_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 
 for model in "${MODELS_TO_INSTALL[@]}"; do
-  CONDA_ENV_NAME="starvla_rl_games_${model}"
+  CONDA_ENV_NAME="${STARVLA_CONDA_ENV_NAME:-starvla_rl_games_${model}}"
   ensure_conda_env "${CONDA_ENV_NAME}"
   set +u
   conda activate "${CONDA_ENV_NAME}"

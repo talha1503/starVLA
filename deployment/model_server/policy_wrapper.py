@@ -41,6 +41,8 @@ from deployment.model_server.rl_games_action_decode import (
 
 
 class PolicyServerWrapper:
+    _rl_games_gymnasium_action_space_type = "discrete"
+    _rl_games_gymnasium_robot_type = "rl_games_gymnasium"
     """Wraps a `baseframework` for use as a websocket-server policy."""
 
     def __init__(
@@ -54,11 +56,15 @@ class PolicyServerWrapper:
         rl_games_action_layout: Optional[str] = None,
         rl_games_multibinary_threshold: Optional[float] = None,
         rl_games_action_env_dim: Optional[int] = None,
+        rl_games_gymnasium_action_space_type: str = "discrete",
+        rl_games_gymnasium_robot_type: str = "rl_games_gymnasium",
     ) -> None:
         self._ckpt_path = str(ckpt_path)
         self._action_output_mode = action_output_mode
         self._rl_games_env_name = rl_games_env_name
         self._rl_games_action_env_dim = rl_games_action_env_dim
+        self._rl_games_gymnasium_action_space_type = rl_games_gymnasium_action_space_type
+        self._rl_games_gymnasium_robot_type = rl_games_gymnasium_robot_type
 
         logging.info("PolicyServerWrapper: loading framework from %s", self._ckpt_path)
         framework = baseframework.from_pretrained(self._ckpt_path)
@@ -129,7 +135,7 @@ class PolicyServerWrapper:
                 processor = PolicyNormProcessor(
                     self._ckpt_path,
                     unnorm_key=unnorm_key,
-                    robot_type="rl_games_gymnasium_discrete",
+                    robot_type=self._rl_games_gymnasium_robot_type,
                 )
             else:
                 processor = PolicyNormProcessor(
@@ -197,6 +203,13 @@ class PolicyServerWrapper:
                     f"Pass one of {self._available_unnorm_keys}."
                 )
         proc = self._get_processor(effective_key)
+        if self._rl_games_env_name == "gymnasium":
+            examples = [
+                {**example, "state": proc.apply_state(example["state"])}
+                if "state" in example
+                else example
+                for example in examples
+            ]
         # Forwarded to the framework via **kwargs as well; both layers profile.
         profiler = kwargs.get("profiler")
 
@@ -204,10 +217,21 @@ class PolicyServerWrapper:
         normalized = np.asarray(out["normalized_actions"])  # (B, T, D)
 
         if self._action_output_mode == "rl_games":
-            decode_kwargs = {}
-            if self._rl_games_env_name == "gymnasium":
-                decode_kwargs["action_env_dim"] = self._rl_games_action_env_dim
             with _stage(profiler, "starvla_wrapper_rl_games_decode_ms"):
+                action_values = None
+                if self._rl_games_env_name == "gymnasium":
+                    if self._rl_games_gymnasium_action_space_type == "box":
+                        action_values = np.stack(
+                            [proc.unapply_actions(normalized[b]) for b in range(normalized.shape[0])],
+                            axis=0,
+                        )
+                decode_kwargs = {}
+                if self._rl_games_env_name == "gymnasium":
+                    decode_kwargs = {
+                        "action_env_dim": self._rl_games_action_env_dim,
+                        "gymnasium_action_space_type": self._rl_games_gymnasium_action_space_type,
+                        "action_values": action_values,
+                    }
                 return decode_rl_games_actions(
                     normalized_actions=normalized,
                     env_name=self._rl_games_env_name,
