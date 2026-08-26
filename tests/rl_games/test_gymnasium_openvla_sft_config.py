@@ -185,7 +185,7 @@ def test_generic_gymnasium_openvla_command_reads_handoff_contract_from_manifest(
     assert 'print(manifest["active_action_dim"])' in command_text
     assert "--model openvla" in command_text
     assert "--env gymnasium" in command_text
-    assert "--init scratch" in command_text
+    assert '--init "${INIT_MODE}"' in command_text
     assert "--mode single" in command_text
     assert 'paths.dataset_local_dir="${DATASET_LOCAL_DIR}"' in command_text
     assert 'dataset.single_converted_name="${DATA_MIX}"' in command_text
@@ -193,6 +193,9 @@ def test_generic_gymnasium_openvla_command_reads_handoff_contract_from_manifest(
     assert 'datasets.vla_data.custom_mixtures_path="${CUSTOM_MIXTURES_PATH}"' in command_text
     assert 'rl_games.gymnasium.task_contract="${TASK_CONTRACT}"' in command_text
     assert 'framework.action_model.action_env_dim="${ACTION_ENV_DIM}"' in command_text
+    assert 'framework.action_model.action_dim="${ACTION_DIM}"' in command_text
+    assert 'rl_games.action_carrier="${ACTION_CARRIER}"' in command_text
+    assert "datasets.vla_data.include_state=false" in command_text
     assert "rl_games.env_eval.enabled=false" in command_text
     assert "rl_games.env_eval.mid_train.enabled=false" in command_text
     assert "rl_games.env_eval.post_train.enabled=false" in command_text
@@ -209,10 +212,12 @@ def test_generic_gymnasium_openvla_command_reads_handoff_contract_from_manifest(
     task_contract = _gymnasium_task_contract()
     (dataset_path / "manifest.json").write_text(
         json.dumps(
-            {
-                "gymnasium_task": task_contract,
-                "active_action_dim": 3,
-            }
+                {
+                    "gymnasium_task": task_contract,
+                    "active_action_dim": 3,
+                    "action_dim": 3,
+                    "action_carrier": "native",
+                }
         ),
         encoding="utf-8",
     )
@@ -258,7 +263,89 @@ def test_generic_gymnasium_openvla_command_reads_handoff_contract_from_manifest(
         + launch_train._hydra_value(task_contract)
     ) in launched_args
     assert "framework.action_model.action_env_dim=3" in launched_args
+    assert "framework.action_model.action_dim=3" in launched_args
+    assert "rl_games.action_carrier=native" in launched_args
+    assert launched_args[launched_args.index("--init") + 1] == "scratch"
     assert f"paths.dataset_local_dir={dataset_root}" in launched_args
     assert f"dataset.single_converted_name={data_mix}" in launched_args
     assert f"datasets.vla_data.custom_mixtures_path={mixture_path}" in launched_args
     assert "trainer.max_train_steps=17" in launched_args
+
+
+def test_generic_gymnasium_openvla_command_accepts_continuous_bridge_contract(
+    tmp_path: Path,
+) -> None:
+    dataset_root = tmp_path / "datasets"
+    data_mix = "walker2d_continuous"
+    dataset_path = dataset_root / data_mix
+    dataset_path.mkdir(parents=True)
+    task_contract = {
+        "task_name": "walker2d_continuous_torque",
+        "env_id": "LatencyBench/Walker2dContinuous-v0",
+        "make_kwargs": {"render_mode": "rgb_array"},
+        "registration_imports": ["latency_bench.envs.gymnasium_walker2d"],
+        "action_space": {
+            "type": "box",
+            "labels": [f"torque_{index}" for index in range(6)],
+            "low": [-1.0] * 6,
+            "high": [1.0] * 6,
+            "dtype": "float32",
+            "openvla_carrier_dim": 7,
+            "openvla_padding": [0.0],
+        },
+        "noop_action": [0.0] * 6,
+        "base_prompt": "Walk forward.",
+        "env_fps": 125,
+        "obs_fps": 125,
+        "frame_stack": 1,
+    }
+    (dataset_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "gymnasium_task": task_contract,
+                "active_action_dim": 6,
+                "action_dim": 7,
+                "action_carrier": "bridge",
+            }
+        ),
+        encoding="utf-8",
+    )
+    mixture_path = dataset_root / "_generated_mixtures" / f"{data_mix}.json"
+    capture_path = tmp_path / "launch_args.bin"
+    shim_dir = tmp_path / "bin"
+    shim_dir.mkdir()
+    python_shim = shim_dir / "python"
+    python_shim.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1\" == \"-c\" ]]; then\n"
+        f'  exec "{sys.executable}" "$@"\n'
+        "fi\n"
+        "printf '%s\\0' \"$@\" > \"${CAPTURE_PATH}\"\n",
+        encoding="utf-8",
+    )
+    python_shim.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = f"{shim_dir}{os.pathsep}{env['PATH']}"
+    env["CAPTURE_PATH"] = str(capture_path)
+
+    subprocess.run(
+        ["bash", str(COMMAND_PATH), str(dataset_root), data_mix, str(mixture_path)],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+    launched_args = [
+        value.decode()
+        for value in capture_path.read_bytes().split(b"\0")
+        if value
+    ]
+
+    assert (
+        "rl_games.gymnasium.task_contract="
+        + launch_train._hydra_value(task_contract)
+    ) in launched_args
+    assert launched_args[launched_args.index("--init") + 1] == "bridge"
+    assert "rl_games.action_carrier=bridge" in launched_args
+    assert "framework.action_model.action_dim=7" in launched_args
+    assert "framework.action_model.action_env_dim=6" in launched_args
+    assert "datasets.vla_data.include_state=false" in launched_args

@@ -14,6 +14,8 @@ rl_games:
   env_eval:
     enabled: false
     task_description: ""
+    gymnasium:
+      make_kwargs: {}
     mid_train:
       enabled: false
     post_train:
