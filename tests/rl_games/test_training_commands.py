@@ -19,6 +19,7 @@ OPENVLA_DEADLY_CROSS_TASK_SETUPS = (
     "demon_zero_deadly_mixed",
     "deadly_zero_demon_mixed",
     "flappy_demon_deadly_024",
+    "defendtheline_zero_deadly_zero",
 )
 OPENVLA_DEADLY_CROSS_TASK_SCRIPTS = (
     "flappy_deadly/flappy_zero_deadly_mixed",
@@ -26,6 +27,7 @@ OPENVLA_DEADLY_CROSS_TASK_SCRIPTS = (
     "demon_zero_deadly_mixed",
     "deadly_zero_demon_mixed",
     "flappy_demon_deadly_024",
+    "defendtheline_deadly/defendtheline_zero_deadly_zero",
 )
 
 
@@ -734,6 +736,34 @@ def test_openvla_three_env_cross_task_setup_uses_024_latencies() -> None:
     for task_name in ("flappy", "demon_attack", "deadly_corridor"):
         post_train = getattr(cfg.rl_games.cross_task.eval_tasks, task_name).post_train
         assert list(post_train.latencies) == [0, 2, 4]
+
+
+def test_openvla_defendtheline_deadly_zero_setup_matches_competitor_budget() -> None:
+    cfg = launch_train.compose_training_config(
+        config_name="train",
+        model="openvla",
+        env="cross_task",
+        init="bridge",
+        mode="cross_task",
+        overrides=["cross_task_setup=defendtheline_zero_deadly_zero"],
+    )
+    train_tasks = OmegaConf.to_container(cfg.rl_games.cross_task.train_tasks, resolve=True)
+
+    assert [task["name"] for task in train_tasks] == ["defend_the_line", "deadly_corridor"]
+    assert train_tasks[0]["train_source_hf"] == "latency-sensitive-bench/memory-rollouts"
+    assert train_tasks[0]["train_source_subdir"] == "defend_the_line_fixed_latency_0_1000ep_7k2steps"
+    assert train_tasks[0]["train_latency_filter"] == [0]
+    assert train_tasks[0]["eval_latency_filter"] == [0]
+    assert train_tasks[0]["episodes_per_latency"] == 40
+    assert train_tasks[1]["train_source_hf"] == "latency-sensitive-bench/deadly_1000ep"
+    assert train_tasks[1]["train_latency_filter"] == [0]
+    assert train_tasks[1]["eval_latency_filter"] == [0, 2, 4]
+    assert train_tasks[1]["episodes_per_latency"] == 1000
+    assert cfg.rl_games.cross_task.loss_by_task.defend_the_line == "discrete_ce"
+    assert cfg.rl_games.cross_task.loss_by_task.deadly_corridor == "multibinary_bce"
+    assert cfg.rl_games.env_eval.deadly.multibinary_threshold == 0.0
+    assert list(cfg.rl_games.cross_task.eval_tasks.defend_the_line.post_train.latencies) == [0, 2, 4]
+    assert list(cfg.rl_games.cross_task.eval_tasks.deadly_corridor.post_train.latencies) == [0, 2, 4]
 
 
 def test_default_training_config_disables_held_out_action_classification() -> None:

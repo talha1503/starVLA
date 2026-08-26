@@ -199,6 +199,44 @@ def test_task_evaluator_latency_neutral_prompt_mode_strips_prompt_map_prompts(tm
     assert evaluator._resolve_prompt(latency=0, mapping={0: {"prompt": "zero Current action latency is 0 raw frames (0.00 ms)."}}, task="flappy") == "zero"
 
 
+def test_cross_task_prompt_resolution_uses_task_description_for_unmapped_latency(tmp_path):
+    prompt_map = tmp_path / "defend_prompt_map.json"
+    prompt_map.write_text(
+        '{"0": {"latency": 0, "latency_ms": 0.0, "prompt": "zero latency prompt"}}',
+        encoding="utf-8",
+    )
+    cfg = OmegaConf.create(
+        {
+            "rl_games": {
+                "task": "cross_task",
+                "env_eval": {
+                    "prompt_mode": "default",
+                    "latency": {
+                        "prompt_map_path": None,
+                    },
+                },
+                "cross_task": {
+                    "eval_tasks": {
+                        "defend_the_line": {
+                            "prompt_map_path": str(prompt_map),
+                            "task_description": "Defend the line fallback prompt.",
+                        },
+                    },
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+    evaluator = _TaskEvaluator(task="defend_the_line", cfg=cfg)
+
+    assert evaluator._resolve_prompt(latency=2, mapping={0: {"prompt": "zero latency prompt"}}, task="defend_the_line") == "Defend the line fallback prompt."
+
+
 def test_task_evaluator_reuses_episode_seeds_across_tasks_and_latencies_by_default():
     cfg = OmegaConf.create(
         {

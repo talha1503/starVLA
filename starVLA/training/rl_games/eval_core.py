@@ -1204,13 +1204,13 @@ class RlGamesEvalRunner:
             prompt = str(mapping[latency]["prompt"])
             return _apply_prompt_mode(prompt, self.prompt_mode)
         task_cfg = self._cross_task_cfg(task) if task is not None else None
-        if task_cfg is not None and self._prompt_map_path(task):
-            raise ValueError(f"No eval prompt found for task={task!r}, latency={latency} in {self._prompt_map_path(task)}")
         prompt = str(getattr(task_cfg, "task_description", "") or "") if task_cfg is not None else ""
         if not prompt:
             prompt = str(getattr(self.cfg.rl_games.env_eval, "task_description", "") or "")
         if prompt:
             return _apply_prompt_mode(prompt, self.prompt_mode)
+        if task_cfg is not None and self._prompt_map_path(task):
+            raise ValueError(f"No eval prompt found for task={task!r}, latency={latency} in {self._prompt_map_path(task)}")
         task = task or str(getattr(self.cfg.rl_games, "task", "flappy"))
         if task == "flappy":
             return _apply_prompt_mode(
