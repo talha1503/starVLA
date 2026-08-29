@@ -28,7 +28,7 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="talha15032/openvla_bridge_cross_defendtheline_zero_deadly_zero_exp3" \
     checkpoint.save_best_model=false \
-    trainer.max_train_steps=2000 \
+    trainer.max_train_steps=4000 \
     datasets.vla_data.sequential_step_sampling=true \
     datasets.vla_data.shuffle=true \
     trainer.num_warmup_steps=0 \
