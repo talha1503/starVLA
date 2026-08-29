@@ -257,10 +257,16 @@ class Qwenvl_OFT(baseframework):
             targets = (actions_target[..., :effective_dim] > 0).to(dtype=logits.dtype)
             return F.binary_cross_entropy_with_logits(logits, targets)
 
+        if loss_type in {"mse", "l2"}:
+            return F.mse_loss(
+                pred_actions[..., :effective_dim],
+                actions_target[..., :effective_dim],
+            )
+
         if loss_type not in {"l1", "mae"}:
             raise ValueError(
                 f"Unsupported action_model.loss_type={loss_type!r}; "
-                "expected one of: l1, discrete_ce, multibinary_bce"
+                "expected one of: l1, mse, discrete_ce, multibinary_bce"
             )
 
         return self.l1_loss(
