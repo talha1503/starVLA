@@ -89,6 +89,8 @@ class QwenOFTDefaultConfig:
             # Loss over predicted actions. Supported: "l1", "discrete_ce", "multibinary_bce".
             # "multibinary_ce" is accepted as a CLI alias for "multibinary_bce".
             "loss_type": "l1",
+            # State conditioning: preserve the existing text-bin path by default.
+            "state_encoding": "discretized_text",
         }
     )
 
@@ -135,6 +137,14 @@ class Qwenvl_OFT(baseframework):
         self.action_dim = int(self.config.framework.action_model.action_dim)
         self.action_env_dim = int(getattr(self.config.framework.action_model, "action_env_dim", self.action_dim))
         self.action_loss_type = str(getattr(self.config.framework.action_model, "loss_type", "l1")).lower()
+        self.state_encoding = str(self.config.framework.action_model.state_encoding)
+        if self.state_encoding not in {"discretized_text", "continuous_projector"}:
+            raise ValueError(f"Unsupported state_encoding: {self.state_encoding}")
+        if self.state_encoding == "continuous_projector":
+            self.action_model.state_projector = nn.Linear(
+                int(self.config.framework.action_model.state_dim),
+                int(self.config.framework.action_model.action_hidden_dim),
+            )
         cross_task_cfg = getattr(getattr(self.config, "rl_games", None), "cross_task", None)
         self.loss_by_task = self._to_plain_dict(getattr(cross_task_cfg, "loss_by_task", None))
         self.loss_weight_by_task = self._to_plain_dict(getattr(cross_task_cfg, "loss_weight_by_task", None))
@@ -162,6 +172,8 @@ class Qwenvl_OFT(baseframework):
         # the train/eval forward mismatch behind the packed run's eval collapse.
         # Set false to fall back to the single global sink for A/B.
         self.kv_rebased_sink = bool(getattr(kv_cfg, "rebased_sink", True)) if kv_cfg is not None else True
+        if self.state_encoding == "continuous_projector" and self.kv_memory_enabled:
+            raise ValueError("continuous_projector requires framework.kv_memory.enabled=false")
         # Per-stream (eval slot) memories; rebuilt per sample during training.
         self._kv_memories: dict = {}
 
@@ -339,6 +351,19 @@ class Qwenvl_OFT(baseframework):
         )
         return qwenvl_outputs.hidden_states[-1]
 
+    def _state_conditioned_instructions(self, instructions, state):
+        if state is not None and self.state_encoding == "discretized_text":
+            return self.add_discretized_state_to_instruction(instructions, state)
+        return instructions
+
+    def _condition_action_queries(self, action_queries, state):
+        if self.state_encoding == "discretized_text":
+            return action_queries
+        state_tensor = torch.as_tensor(
+            np.stack(state), device=action_queries.device, dtype=action_queries.dtype
+        ).squeeze(1)
+        return action_queries + self.action_model.state_projector(state_tensor).unsqueeze(1)
+
     def forward(
         self,
         examples: List[dict] = None,
@@ -379,10 +404,7 @@ class Qwenvl_OFT(baseframework):
             [example["state"] for example in examples] if "state" in examples[0] else None
         )  # List[ndarray (1, state_dim)] or None
 
-        # Optionally prepend discretised proprioceptive state tokens to each instruction (π₀.5 style).
-        instructions = (
-            self.add_discretized_state_to_instruction(instructions, state) if state is not None else instructions
-        )
+        instructions = self._state_conditioned_instructions(instructions, state)
 
         # step 0: add special action token to instruction
         action_tokens = (
@@ -428,6 +450,7 @@ class Qwenvl_OFT(baseframework):
             action_queries = self._gather_action_token_embeddings(
                 last_hidden, input_ids, action_token_id=self.action_token_id
             )  # [B, chunk_len, H]
+            action_queries = self._condition_action_queries(action_queries, state)
             pred_actions = self.action_model.predict_action(action_queries)  # (B, chunk_len, action_dim)
 
             # Label alignment: take the last chunk_len segment
@@ -474,10 +497,7 @@ class Qwenvl_OFT(baseframework):
             [example["state"] for example in examples] if "state" in examples[0] else None
         )  # List[ndarray (1, state_dim)] or None
 
-        # Optionally prepend discretised proprioceptive state tokens to each instruction (π₀.5 style).
-        instructions = (
-            self.add_discretized_state_to_instruction(instructions, state) if state is not None else instructions
-        )
+        instructions = self._state_conditioned_instructions(instructions, state)
 
         train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
         if train_obs_image_size:
@@ -502,6 +522,7 @@ class Qwenvl_OFT(baseframework):
             action_queries = self._gather_action_token_embeddings(
                 last_hidden, input_ids, action_token_id=self.action_token_id
             )  # [B, chunk_len, H]
+            action_queries = self._condition_action_queries(action_queries, state)
             pred_actions = self.action_model.predict_action(action_queries)  # (B, chunk_len, action_dim)
 
         normalized_actions = pred_actions.detach().cpu().numpy()
