@@ -41,3 +41,8 @@ class MikasaFrankaH1DataConfig:
 
 ROBOT_TYPE_CONFIG_MAP = {"mikasa_franka_h1": MikasaFrankaH1DataConfig()}
 ROBOT_TYPE_TO_EMBODIMENT_TAG = {"mikasa_franka_h1": EmbodimentTag.NEW_EMBODIMENT}
+DATASET_NAMED_MIXTURES = {
+    "local/intercept_grab_fast_vla_v0_h1_train": [
+        ("local/intercept_grab_fast_vla_v0_h1_train", 1.0, "mikasa_franka_h1")
+    ]
+}
