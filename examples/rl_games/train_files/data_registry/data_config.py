@@ -44,6 +44,14 @@ class DeadlyCorridorDataConfig(FlappyDataConfig):
     pass
 
 
+class AsterixDataConfig(FlappyDataConfig):
+    pass
+
+
+class AtlantisDataConfig(FlappyDataConfig):
+    pass
+
+
 class GymnasiumDataConfig(FlappyDataConfig):
     pass
 
@@ -81,6 +89,8 @@ ROBOT_TYPE_CONFIG_MAP = {
     "rl_games_demon_attack": DemonAttackDataConfig(),
     "rl_games_defend_the_line": DefendTheLineDataConfig(),
     "rl_games_deadly_corridor": DeadlyCorridorDataConfig(),
+    "rl_games_asterix": AsterixDataConfig(),
+    "rl_games_atlantis": AtlantisDataConfig(),
     "rl_games_gymnasium": GymnasiumDataConfig(),
     "rl_games_gymnasium_discrete": GymnasiumDataConfig(),
     "rl_games_gymnasium_native": GymnasiumNativeDataConfig(),
@@ -91,6 +101,8 @@ ROBOT_TYPE_TO_EMBODIMENT_TAG = {
     "rl_games_demon_attack": EmbodimentTag.NEW_EMBODIMENT,
     "rl_games_defend_the_line": EmbodimentTag.NEW_EMBODIMENT,
     "rl_games_deadly_corridor": EmbodimentTag.NEW_EMBODIMENT,
+    "rl_games_asterix": EmbodimentTag.NEW_EMBODIMENT,
+    "rl_games_atlantis": EmbodimentTag.NEW_EMBODIMENT,
     "rl_games_gymnasium": EmbodimentTag.NEW_EMBODIMENT,
     "rl_games_gymnasium_discrete": EmbodimentTag.NEW_EMBODIMENT,
     "rl_games_gymnasium_native": EmbodimentTag.NEW_EMBODIMENT,
@@ -126,6 +138,18 @@ DATASET_NAMED_MIXTURES = {
     ],
     "deadly_corridor_mixed_latency_train__bridge": [
         ("deadly_corridor_mixed_latency_train__bridge", 1.0, "rl_games_deadly_corridor")
+    ],
+    "asterix_train": [("asterix_train", 1.0, "rl_games_asterix")],
+    "asterix_train__bridge": [("asterix_train__bridge", 1.0, "rl_games_asterix")],
+    "asterix_mixed_latency_train": [("asterix_mixed_latency_train", 1.0, "rl_games_asterix")],
+    "asterix_mixed_latency_train__bridge": [
+        ("asterix_mixed_latency_train__bridge", 1.0, "rl_games_asterix")
+    ],
+    "atlantis_train": [("atlantis_train", 1.0, "rl_games_atlantis")],
+    "atlantis_train__bridge": [("atlantis_train__bridge", 1.0, "rl_games_atlantis")],
+    "atlantis_mixed_latency_train": [("atlantis_mixed_latency_train", 1.0, "rl_games_atlantis")],
+    "atlantis_mixed_latency_train__bridge": [
+        ("atlantis_mixed_latency_train__bridge", 1.0, "rl_games_atlantis")
     ],
     "h1hand_balance_hard": [("h1hand_balance_hard", 1.0, "rl_games_gymnasium_native")],
 }

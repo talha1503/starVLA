@@ -313,11 +313,32 @@ class Wan_OFT(baseframework):
                 weight=class_weights,
             )
 
+        if self.action_loss_type in {"asterix_factorized_ce", "factorized_6_ce", "factorized_ce"}:
+            if effective_dim < 6:
+                raise ValueError(
+                    f"action_model.loss_type={self.action_loss_type!r} requires at least 6 action logits, "
+                    f"got effective_dim={effective_dim}"
+                )
+            vertical_logits = pred_actions[..., 0:3]
+            vertical_target = actions_target[..., 0:3].argmax(dim=-1).long()
+            horizontal_logits = pred_actions[..., 3:6]
+            horizontal_target = actions_target[..., 3:6].argmax(dim=-1).long()
+            vertical_loss = F.cross_entropy(
+                vertical_logits.reshape(-1, 3),
+                vertical_target.reshape(-1),
+            )
+            horizontal_loss = F.cross_entropy(
+                horizontal_logits.reshape(-1, 3),
+                horizontal_target.reshape(-1),
+            )
+            return 0.5 * (vertical_loss + horizontal_loss)
+
         if self.action_loss_type not in {"l1", "mae"}:
             raise ValueError(
                 f"Unsupported action_model.loss_type={self.action_loss_type!r}; "
                 "expected one of: l1, discrete_ce, current_discrete_ce, "
-                "current_plus_future_discrete_ce, multibinary_bce, current_multibinary_bce"
+                "current_plus_future_discrete_ce, multibinary_bce, current_multibinary_bce, "
+                "asterix_factorized_ce"
             )
 
         return self.l1_loss(pred_actions[..., :effective_dim], actions_target[..., :effective_dim])

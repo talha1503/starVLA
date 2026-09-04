@@ -191,6 +191,25 @@ def _env_action_dim_from_cfg(cfg: dict[str, Any]) -> int | None:
         return 6
     if task == "defend_the_line":
         return 6
+    if task == "asterix":
+        layout = str(_get(cfg, "rl_games.env_eval.asterix.action_layout", "discrete_9")).strip().lower()
+        aliases = {
+            "discrete_9": "discrete_9",
+            "joint_9": "discrete_9",
+            "asterix_discrete_9": "discrete_9",
+            "factorized_6": "factorized_6",
+            "factorized6": "factorized_6",
+            "asterix_factorized_6": "factorized_6",
+            "asterix_factorized6": "factorized_6",
+        }
+        layout = aliases.get(layout, layout)
+        if layout == "discrete_9":
+            return 9
+        if layout == "factorized_6":
+            return 6
+        raise ValueError(f"Unsupported Asterix action layout: {layout}")
+    if task == "atlantis":
+        return 4
     if task == "deadly_corridor":
         layout = str(_get(cfg, "rl_games.env_eval.deadly.action_layout", "multibinary_7"))
         if layout == "multibinary_7":
@@ -236,7 +255,8 @@ def _validate_bridge_cfg(cfg: dict[str, Any], config_path: Path) -> None:
     if env_dim > 7:
         raise ValueError(
             f"{config_path}: bridge configs use a 7D action carrier, but this task resolves "
-            f"active action dim={env_dim}. Use the 7D multibinary layout for bridge mode."
+            f"active action dim={env_dim}. Use native/scratch initialization, or a task layout "
+            "that fits the 7D bridge carrier."
         )
 
     model = str(_get(cfg, "model", "") or "")

@@ -232,6 +232,15 @@ def _setup_eval_latencies(cfg: Any) -> list[int] | None:
     return sorted(latencies) or None
 
 
+def _task_action_layout(cfg: Any) -> str:
+    task = str(_cfg_get(cfg, "env") or _cfg_get(cfg, "rl_games.task") or "")
+    if task == "deadly_corridor":
+        return str(_cfg_get(cfg, "rl_games.env_eval.deadly.action_layout") or "")
+    if task == "asterix":
+        return str(_cfg_get(cfg, "rl_games.env_eval.asterix.action_layout") or "")
+    return ""
+
+
 def _checkpoint_request(load_value: Any) -> tuple[str, str]:
     raw_value = str(load_value or "auto")
     if raw_value in {"auto", "none", "local", "hf"}:
@@ -283,6 +292,7 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         mode=str(_cfg_get(cfg, "mode")),
         initialization_mode=str(_cfg_get(cfg, "rl_games.initialization_mode") or ""),
         action_carrier=str(_cfg_get(cfg, "rl_games.action_carrier") or ""),
+        action_layout=_task_action_layout(cfg),
         deadly_action_layout=str(_cfg_get(cfg, "rl_games.env_eval.deadly.action_layout") or ""),
         latency_mode=str(_cfg_get(cfg, "rl_games.env_eval.latency.mode") or ""),
         eval_latencies=_setup_eval_latencies(cfg),

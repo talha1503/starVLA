@@ -21,6 +21,7 @@ from starVLA.training.rl_games.action_decode import (
     decode_deadly_multibinary_7,
     decode_discrete_argmax,
     decode_rl_games_actions,
+    resolve_asterix_action_decode_spec,
     resolve_deadly_action_decode_spec,
 )
 
@@ -29,6 +30,8 @@ TASK_SEED_INDEX = {
     "demon_attack": 1,
     "deadly_corridor": 2,
     "defend_the_line": 3,
+    "asterix": 4,
+    "atlantis": 5,
 }
 
 DEFAULT_VIDEO_FPS = 30
@@ -454,6 +457,25 @@ class _TaskEvaluator:
     def _make_image_transform(self) -> _LiveImageTransform:
         return _LiveImageTransform(task=self.task, config=self.image_transform_config)
 
+    def _make_atari_env(self, default_env_id: str):
+        import ale_py  # noqa: F401
+        import gymnasium as gym
+
+        atari_cfg = getattr(self.env_eval_cfg, "atari", None)
+        env_id = str(getattr(atari_cfg, "env_id", None) or default_env_id)
+        noop_max = _as_int(getattr(atari_cfg, "noop_max", None), 30)
+        env = gym.make(
+            env_id,
+            obs_type="rgb",
+            frameskip=self.frameskip,
+            repeat_action_probability=0.0,
+            full_action_space=False,
+            mode=0,
+            difficulty=0,
+            render_mode="rgb_array",
+        )
+        return DemonAttackNoopResetWrapper(env=env, noop_max=noop_max)
+
     def _make_env(self):
         if self.task == "flappy":
             import flappy_bird_gymnasium  # noqa: F401
@@ -532,6 +554,12 @@ class _TaskEvaluator:
                     last_exc = exc
             raise RuntimeError(f"Failed to create Defend the Line env: {last_exc}")
 
+        if self.task == "asterix":
+            return self._make_atari_env("ALE/Asterix-v5")
+
+        if self.task == "atlantis":
+            return self._make_atari_env("ALE/Atlantis-v5")
+
         raise ValueError(f"Unsupported task: {self.task}")
 
     def _is_demon_ghost_trail(self) -> bool:
@@ -546,21 +574,40 @@ class _TaskEvaluator:
         # action repetition manually so all 4 raw frames are captured per decision.
         if self._is_demon_ghost_trail():
             return False
-        return self.task in {"demon_attack", "deadly_corridor", "defend_the_line"}
+        return self.task in {"demon_attack", "deadly_corridor", "defend_the_line", "asterix", "atlantis"}
 
     def _model_observation(self, env, obs):
-        if self.task != "flappy":
-            return obs
-        frame = env.render()
-        if frame is None:
-            return obs
-        return frame
+        if self.task == "flappy":
+            frame = env.render()
+            if frame is None:
+                return obs
+            return frame
+        if self.task in {"asterix", "atlantis"}:
+            frame = env.render()
+            if frame is None:
+                frame = obs
+            return _resize_rgb(frame, image_size=84, prefer_area=True)
+        return obs
 
     def _decode_action(self, raw_action: np.ndarray, runtime_button_order: Optional[List[str]] = None):
         if self.task == "flappy":
             return decode_discrete_argmax(raw_action, 2)
         if self.task == "demon_attack":
             return decode_discrete_argmax(raw_action, 6)
+        if self.task == "asterix":
+            asterix_cfg = getattr(self.env_eval_cfg, "asterix", None)
+            action_layout = resolve_asterix_action_decode_spec(
+                self.cfg,
+                action_layout=str(getattr(asterix_cfg, "action_layout", "discrete_9")),
+            )
+            decoded = decode_rl_games_actions(
+                normalized_actions=raw_action,
+                env_name=self.task,
+                asterix_action_layout=action_layout,
+            )
+            return int(np.asarray(decoded["actions"]).reshape(-1)[0])
+        if self.task == "atlantis":
+            return decode_discrete_argmax(raw_action, 4)
         if self.task == "defend_the_line":
             return decode_defend_the_line_multibinary(raw_action)
         if self.task == "deadly_corridor":
@@ -1229,6 +1276,16 @@ class RlGamesEvalRunner:
                     "fight enemies, and reach the green armor vest at the far end. The available actions are: "
                     "MOVE_FORWARD, MOVE_BACKWARD, MOVE_LEFT, MOVE_RIGHT, TURN_LEFT, TURN_RIGHT, and ATTACK."
                 ),
+                self.prompt_mode,
+            )
+        if task == "asterix":
+            return _apply_prompt_mode(
+                "Collect useful objects and avoid lyres. Choose exactly one action from: noop, up, right, left, down, upright, upleft, downright, downleft.",
+                self.prompt_mode,
+            )
+        if task == "atlantis":
+            return _apply_prompt_mode(
+                "Defend Atlantis by firing at descending enemies. Choose exactly one action from: noop, fire, rightfire, leftfire.",
                 self.prompt_mode,
             )
         return _apply_prompt_mode("Act optimally in the current environment.", self.prompt_mode)

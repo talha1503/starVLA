@@ -13,6 +13,15 @@ DEADLY_LOSS_TYPE_ALIASES = {
     "bce": "multibinary_bce",
     "binary_cross_entropy": "multibinary_bce",
 }
+ASTERIX_ACTION_LAYOUT_ALIASES = {
+    "discrete_9": "discrete_9",
+    "joint_9": "discrete_9",
+    "asterix_discrete_9": "discrete_9",
+    "factorized_6": "factorized_6",
+    "factorized6": "factorized_6",
+    "asterix_factorized_6": "factorized_6",
+    "asterix_factorized6": "factorized_6",
+}
 
 
 def _deadly_action_dim(cfg) -> int:
@@ -23,6 +32,17 @@ def _deadly_action_dim(cfg) -> int:
     if layout == "factorized_11":
         return 11
     raise ValueError(f"Unsupported deadly action layout: {layout}")
+
+
+def _asterix_action_dim(cfg) -> int:
+    asterix_cfg = getattr(getattr(cfg.rl_games, "env_eval", None), "asterix", None)
+    layout = str(getattr(asterix_cfg, "action_layout", "discrete_9")).strip().lower()
+    layout = ASTERIX_ACTION_LAYOUT_ALIASES.get(layout, layout)
+    if layout == "discrete_9":
+        return 9
+    if layout == "factorized_6":
+        return 6
+    raise ValueError(f"Unsupported Asterix action layout: {layout}")
 
 
 def _env_action_dim(cfg):
@@ -36,6 +56,10 @@ def _env_action_dim(cfg):
         return 6
     if task == "defend_the_line":
         return 6
+    if task == "asterix":
+        return _asterix_action_dim(cfg)
+    if task == "atlantis":
+        return 4
     if task == "deadly_corridor":
         return _deadly_action_dim(cfg)
     if task == "gymnasium":
@@ -105,7 +129,7 @@ def apply_action_spec(cfg) -> None:
             raise ValueError(
                 f"Bridge initialization uses a {carrier_dim}D action carrier, but task="
                 f"{getattr(rl_games, 'task', None)} resolved active action dim={env_dim}. "
-                "Use the 7D native/semantic layout for bridge-mode RL-games."
+                "Use native/scratch initialization, or a task layout that fits the 7D bridge carrier."
             )
         if model_alias not in BRIDGE_CHUNK_PRESERVING_MODEL_ALIASES:
             action_cfg.action_horizon = 1

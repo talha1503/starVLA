@@ -36,6 +36,7 @@ from starVLA.model.profiling import stage_timer as _stage
 from deployment.model_server.policy_norm_processor import PolicyNormProcessor
 from deployment.model_server.rl_games_action_decode import (
     decode_rl_games_actions,
+    resolve_asterix_action_decode_spec,
     resolve_deadly_action_decode_spec,
 )
 
@@ -65,6 +66,8 @@ class PolicyServerWrapper:
         self._rl_games_action_env_dim = rl_games_action_env_dim
         self._rl_games_gymnasium_action_space_type = rl_games_gymnasium_action_space_type
         self._rl_games_gymnasium_robot_type = rl_games_gymnasium_robot_type
+        self._rl_games_action_layout = rl_games_action_layout
+        self._rl_games_multibinary_threshold = rl_games_multibinary_threshold
 
         logging.info("PolicyServerWrapper: loading framework from %s", self._ckpt_path)
         framework = baseframework.from_pretrained(self._ckpt_path)
@@ -84,6 +87,11 @@ class PolicyServerWrapper:
                 model_cfg,
                 action_layout=rl_games_action_layout,
                 multibinary_threshold=rl_games_multibinary_threshold,
+            )
+        elif self._rl_games_env_name == "asterix":
+            self._rl_games_action_layout = resolve_asterix_action_decode_spec(
+                model_cfg,
+                action_layout=rl_games_action_layout,
             )
 
         # action_chunk_size = future_action_window_size + 1 (matches old client).
@@ -243,6 +251,11 @@ class PolicyServerWrapper:
                     deadly_multibinary_threshold=(
                         self._rl_games_multibinary_threshold
                         if self._rl_games_env_name == "deadly_corridor"
+                        else None
+                    ),
+                    asterix_action_layout=(
+                        self._rl_games_action_layout
+                        if self._rl_games_env_name == "asterix"
                         else None
                     ),
                     **decode_kwargs,

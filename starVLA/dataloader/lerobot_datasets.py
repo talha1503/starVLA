@@ -22,7 +22,10 @@ from starVLA.training.rl_games.temporal_clip import resolve_modality_indices
 RL_GAMES_TASK_METADATA = {
     "rl_games_flappy": ("flappy", 2),
     "rl_games_demon_attack": ("demon_attack", 6),
+    "rl_games_defend_the_line": ("defend_the_line", 6),
     "rl_games_deadly_corridor": ("deadly_corridor", 7),
+    "rl_games_asterix": ("asterix", 9),
+    "rl_games_atlantis": ("atlantis", 4),
 }
 RL_GAMES_GYMNASIUM_ROBOT_TYPES = {
     "rl_games_gymnasium",
@@ -68,6 +71,14 @@ def _generic_gymnasium_metadata(
             f"manifest={active_action_dim!r}, config={configured_action_dim!r}"
         )
     return manifest_contract, active_action_dim
+
+
+def _manifest_action_dim(dataset_path: Path, fallback: int) -> int:
+    manifest_path = dataset_path / "manifest.json"
+    if not manifest_path.exists():
+        return int(fallback)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return int(manifest.get("active_action_dim", fallback))
 
 
 def collate_fn(batch):
@@ -160,7 +171,9 @@ def make_LeRobotSingleDataset(
         dataset.rl_games_task = task_contract["task_name"]
         dataset.rl_games_action_env_dim = active_action_dim
     elif robot_type in RL_GAMES_TASK_METADATA:
-        dataset.rl_games_task, dataset.rl_games_action_env_dim = RL_GAMES_TASK_METADATA[robot_type]
+        task_name, fallback_action_dim = RL_GAMES_TASK_METADATA[robot_type]
+        dataset.rl_games_task = task_name
+        dataset.rl_games_action_env_dim = _manifest_action_dim(dataset_path, fallback_action_dim)
     return dataset
 
 def get_vla_dataset(

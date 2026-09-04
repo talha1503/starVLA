@@ -525,7 +525,11 @@ def _ensure_rl_games_lerobot_dataset(
 ) -> dict[str, Any]:
     data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
     action_carrier = _action_carrier(args)
-    action_layout = str(getattr(args, "deadly_action_layout", "") or "")
+    action_layout = str(
+        getattr(args, "action_layout", "")
+        or getattr(args, "deadly_action_layout", "")
+        or ""
+    )
     source_dataset = str(getattr(args, "source_dataset_hf", "") or "")
     source_config_name = getattr(args, "source_dataset_config_name", None)
     source_config_name = None if source_config_name in (None, "") else str(source_config_name)
@@ -760,6 +764,34 @@ def _ensure_defend_the_line_dataset(args) -> dict[str, Any]:
     )
 
 
+def _ensure_asterix_dataset(args) -> dict[str, Any]:
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_asterix_to_starvla_lerobot import convert_dataset
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_asterix_dataset import verify_dataset
+
+    return _ensure_rl_games_lerobot_dataset(
+        args,
+        convert_dataset=convert_dataset,
+        verify_dataset=verify_dataset,
+        env_name="asterix",
+        env_fps=60.0,
+        obs_fps=15.0,
+    )
+
+
+def _ensure_atlantis_dataset(args) -> dict[str, Any]:
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_atlantis_to_starvla_lerobot import convert_dataset
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_atlantis_dataset import verify_dataset
+
+    return _ensure_rl_games_lerobot_dataset(
+        args,
+        convert_dataset=convert_dataset,
+        verify_dataset=verify_dataset,
+        env_name="atlantis",
+        env_fps=60.0,
+        obs_fps=15.0,
+    )
+
+
 def _task_converter_and_verifier(task: str):
     if task == "flappy":
         from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_flappy_to_starvla_lerobot import convert_dataset
@@ -777,9 +809,17 @@ def _task_converter_and_verifier(task: str):
         from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_deadly_corridor_to_starvla_lerobot import convert_dataset
         from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_deadly_corridor_dataset import verify_dataset
         return convert_dataset, verify_dataset, "rl_games_deadly_corridor"
+    if task == "asterix":
+        from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_asterix_to_starvla_lerobot import convert_dataset
+        from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_asterix_dataset import verify_dataset
+        return convert_dataset, verify_dataset, "rl_games_asterix"
+    if task == "atlantis":
+        from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_atlantis_to_starvla_lerobot import convert_dataset
+        from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_atlantis_dataset import verify_dataset
+        return convert_dataset, verify_dataset, "rl_games_atlantis"
     raise ValueError(
         "cross-task rl_games currently supports only flappy, demon_attack, "
-        f"defend_the_line, and deadly_corridor, got {task!r}"
+        f"defend_the_line, deadly_corridor, asterix, and atlantis, got {task!r}"
     )
 
 
@@ -859,6 +899,8 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
             "demon_attack": (15.0, 4),
             "defend_the_line": (8.75, 4),
             "deadly_corridor": (8.75, 4),
+            "asterix": (15.0, 4),
+            "atlantis": (15.0, 4),
         }[task_name]
         task_fps, task_obs_stride_raw_frames = task_timing
 
@@ -1084,6 +1126,10 @@ def setup_assets(args) -> dict[str, Any]:
         result.update(_ensure_demon_attack_dataset(args))
     elif args.model in supported_models and args.env == "defend_the_line":
         result.update(_ensure_defend_the_line_dataset(args))
+    elif args.model in supported_models and args.env == "asterix":
+        result.update(_ensure_asterix_dataset(args))
+    elif args.model in supported_models and args.env == "atlantis":
+        result.update(_ensure_atlantis_dataset(args))
     elif args.model in supported_models and args.env == "deadly_corridor":
         result.update(_ensure_deadly_corridor_dataset(args))
     else:
@@ -1273,6 +1319,7 @@ def main() -> int:
     parser.add_argument("--mode", required=True)
     parser.add_argument("--initialization-mode", default="")
     parser.add_argument("--action-carrier", choices=["", "native", "bridge"], default="")
+    parser.add_argument("--action-layout", default="")
     parser.add_argument("--deadly-action-layout", default="")
     parser.add_argument("--latency-mode", default="")
     parser.add_argument("--source-dataset-hf", default="")

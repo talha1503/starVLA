@@ -86,7 +86,8 @@ class QwenOFTDefaultConfig:
             "future_action_window_size": 8,
             # How many past steps included in action chunk (usually 0)
             "past_action_window_size": 0,
-            # Loss over predicted actions. Supported: "l1", "discrete_ce", "multibinary_bce".
+            # Loss over predicted actions. Supported: "l1", "discrete_ce",
+            # "multibinary_bce", "asterix_factorized_ce".
             # "multibinary_ce" is accepted as a CLI alias for "multibinary_bce".
             "loss_type": "l1",
         }
@@ -252,6 +253,26 @@ class Qwenvl_OFT(baseframework):
                 target_class.reshape(-1),
             )
 
+        if loss_type in {"asterix_factorized_ce", "factorized_6_ce", "factorized_ce"}:
+            if effective_dim < 6:
+                raise ValueError(
+                    f"action_model.loss_type={loss_type!r} requires at least 6 action logits, "
+                    f"got effective_dim={effective_dim}"
+                )
+            vertical_logits = pred_actions[..., 0:3]
+            vertical_target = actions_target[..., 0:3].argmax(dim=-1).long()
+            horizontal_logits = pred_actions[..., 3:6]
+            horizontal_target = actions_target[..., 3:6].argmax(dim=-1).long()
+            vertical_loss = F.cross_entropy(
+                vertical_logits.reshape(-1, 3),
+                vertical_target.reshape(-1),
+            )
+            horizontal_loss = F.cross_entropy(
+                horizontal_logits.reshape(-1, 3),
+                horizontal_target.reshape(-1),
+            )
+            return 0.5 * (vertical_loss + horizontal_loss)
+
         if loss_type in {"multibinary_bce", "multibinary_ce", "bce", "binary_cross_entropy"}:
             logits = pred_actions[..., :effective_dim]
             targets = (actions_target[..., :effective_dim] > 0).to(dtype=logits.dtype)
@@ -260,7 +281,7 @@ class Qwenvl_OFT(baseframework):
         if loss_type not in {"l1", "mae"}:
             raise ValueError(
                 f"Unsupported action_model.loss_type={loss_type!r}; "
-                "expected one of: l1, discrete_ce, multibinary_bce"
+                "expected one of: l1, discrete_ce, multibinary_bce, asterix_factorized_ce"
             )
 
         return self.l1_loss(

@@ -50,6 +50,25 @@ _ZERO_LOGIT_THRESHOLD_LOSS_TYPES = {
     "binary_cross_entropy",
 }
 
+_ASTERIX_ACTION_LAYOUT_ALIASES = {
+    "discrete_9": "discrete_9",
+    "joint_9": "discrete_9",
+    "asterix_discrete_9": "discrete_9",
+    "factorized_6": "factorized_6",
+    "factorized6": "factorized_6",
+    "asterix_factorized_6": "factorized_6",
+    "asterix_factorized6": "factorized_6",
+}
+
+_ASTERIX_FACTORIZED_6_TO_ACTION_ID = np.asarray(
+    (
+        (0, 2, 3),
+        (1, 5, 6),
+        (4, 7, 8),
+    ),
+    dtype=np.int64,
+)
+
 
 def _optional_config_value(config: Mapping[str, Any], keys: tuple[str, ...]) -> Any | None:
     value: Any = config
@@ -104,6 +123,7 @@ def decode_rl_games_actions(
     env_name: str,
     deadly_action_layout: str | None = None,
     deadly_multibinary_threshold: float | None = None,
+    asterix_action_layout: str | None = None,
     action_env_dim: int | None = None,
     gymnasium_action_space_type: str = "discrete",
     action_values: np.ndarray | None = None,
@@ -114,6 +134,8 @@ def decode_rl_games_actions(
         "flappy": lambda: (_decode_discrete(raw_scores, 2), "rl_games_discrete_id"),
         "demon_attack": lambda: (_decode_discrete(raw_scores, 6), "rl_games_discrete_id"),
         "defend_the_line": lambda: (_decode_discrete(raw_scores, 6), "rl_games_defend_the_line_joint_6"),
+        "asterix": lambda: decode_asterix_actions(raw_scores, action_layout=asterix_action_layout),
+        "atlantis": lambda: (_decode_discrete(raw_scores, 4), "rl_games_discrete_id"),
         "gymnasium": lambda: (
             (values[..., :action_env_dim], "rl_games_continuous")
             if gymnasium_action_space_type == "box"
@@ -131,6 +153,45 @@ def decode_rl_games_actions(
         "raw_action_scores": raw_scores,
         "action_output_type": action_output_type,
     }
+
+
+def resolve_asterix_action_decode_spec(
+    model_config: Mapping[str, Any],
+    *,
+    action_layout: str | None = None,
+) -> str:
+    if action_layout is not None:
+        return _ASTERIX_ACTION_LAYOUT_ALIASES[str(action_layout).strip().lower()]
+    saved_layout = _optional_config_value(
+        model_config,
+        ("rl_games", "env_eval", "asterix", "action_layout"),
+    )
+    if saved_layout is None:
+        saved_layout = _optional_config_value(
+            model_config,
+            ("framework", "action_model", "action_layout"),
+        )
+    if saved_layout is None:
+        return "discrete_9"
+    return _ASTERIX_ACTION_LAYOUT_ALIASES[str(saved_layout).strip().lower()]
+
+
+def decode_asterix_actions(
+    raw_scores: np.ndarray,
+    *,
+    action_layout: str | None,
+) -> tuple[np.ndarray, str]:
+    values = np.asarray(raw_scores)
+    layout = "discrete_9" if action_layout is None else _ASTERIX_ACTION_LAYOUT_ALIASES[str(action_layout).strip().lower()]
+    if layout == "discrete_9":
+        return _decode_discrete(values, 9), "rl_games_discrete_id"
+    if layout == "factorized_6":
+        if values.shape[-1] < 6:
+            raise ValueError(f"Asterix factorized_6 decode requires at least 6 logits, got {values.shape[-1]}")
+        vertical = np.argmax(values[..., 0:3], axis=-1)
+        horizontal = np.argmax(values[..., 3:6], axis=-1)
+        return _ASTERIX_FACTORIZED_6_TO_ACTION_ID[vertical, horizontal][..., None].astype(np.int64), "rl_games_discrete_id"
+    raise ValueError(f"Unsupported Asterix action layout: {action_layout!r}")
 
 
 def decode_deadly_corridor_actions(
