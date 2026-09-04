@@ -31,7 +31,7 @@ def _gymnasium_task_contract() -> dict:
     }
 
 
-def _compose_gymnasium_openvla(tmp_path: Path):
+def _compose_gymnasium_openvla(tmp_path: Path, extra_overrides=()):
     dataset_root = tmp_path / "datasets"
     mixture_path = dataset_root / "_generated_mixtures" / "mountain_car_fixed_l3.json"
     task_contract = _gymnasium_task_contract()
@@ -52,6 +52,7 @@ def _compose_gymnasium_openvla(tmp_path: Path):
             "rl_games.env_eval.enabled=false",
             "rl_games.env_eval.mid_train.enabled=false",
             "rl_games.env_eval.post_train.enabled=false",
+            *extra_overrides,
         ],
     )
     return cfg, dataset_root, mixture_path, task_contract
@@ -103,6 +104,15 @@ def test_generic_gymnasium_openvla_sft_is_basic_single_image_and_has_no_env_eval
     assert cfg.rl_games.env_eval.enabled is False
     assert cfg.rl_games.env_eval.mid_train.enabled is False
     assert cfg.rl_games.env_eval.post_train.enabled is False
+
+
+def test_generic_gymnasium_openvla_can_opt_into_continuous_state_projection(tmp_path: Path) -> None:
+    cfg, _, _, _ = _compose_gymnasium_openvla(
+        tmp_path,
+        ["framework.action_model.state_encoding=continuous_projector"],
+    )
+
+    assert cfg.framework.action_model.state_encoding == "continuous_projector"
 
 
 def test_launcher_forwards_generic_gymnasium_openvla_contract(tmp_path: Path, monkeypatch) -> None:
