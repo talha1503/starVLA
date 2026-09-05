@@ -2,19 +2,18 @@
 set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
-FLASH_ATTN_VERSION="2.8.3.post1"
+FLASH_ATTN_VERSION="2.8.3"
+FLASH_ATTN_WHEEL_URL="https://github.com/lesj0610/flash-attention/releases/download/v2.8.3-cu12-torch2.11/flash_attn-2.8.3%2Bcu12torch2.11cxx11abiTRUE-cp310-cp310-linux_x86_64.whl#sha256=9001c730642cdc1ea44ed8130b0dc80e763519d6efc01e4de44b0700a0dfa13d"
 export CUDA_HOME="${CONDA_PREFIX}"
 export PATH="${CUDA_HOME}/bin:${PATH}"
 export LD_LIBRARY_PATH="${CUDA_HOME}/lib:${CUDA_HOME}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-export TORCH_CUDA_ARCH_LIST="9.0;12.0"
-export FLASH_ATTN_CUDA_ARCHS="90;120"
 
 usage() {
   cat <<'EOF'
 Usage: bash examples/rl_games/install/flash_attn.sh [--check]
 
-Builds flash-attn 2.8.3.post1 from source for sm_90 and sm_120 against the
-fixed PyTorch 2.11.0/CUDA 12.8 environment. Installation and smoke-test
+Installs the pinned community flash-attn 2.8.3 wheel for sm_80, sm_90, and
+sm_120 against the fixed PyTorch 2.11.0/CUDA 12.8 environment. Installation and smoke-test
 failures are fatal.
 
 Options:
@@ -54,6 +53,7 @@ print(flash_attn_2_cuda.__file__)
 PY
 )"
   code_objects="$(cuobjdump --list-elf "${extension_path}")"
+  grep -q "sm_80" <<<"${code_objects}"
   grep -q "sm_90" <<<"${code_objects}"
   grep -q "sm_120" <<<"${code_objects}"
 }
@@ -77,17 +77,10 @@ case "${1:-}" in
     ;;
 esac
 
-echo "[install/flash_attn] Building flash-attn==${FLASH_ATTN_VERSION} from source"
+echo "[install/flash_attn] Installing flash-attn==${FLASH_ATTN_VERSION} wheel"
 "$PYTHON_BIN" -m pip install \
-  ninja==1.13.0 \
-  packaging==26.2 \
-  wheel==0.47.0
-"$PYTHON_BIN" -m pip install \
-  "flash-attn==${FLASH_ATTN_VERSION}" \
+  "${FLASH_ATTN_WHEEL_URL}" \
   --force-reinstall \
-  --no-cache-dir \
-  --no-binary=flash-attn \
-  --no-build-isolation \
   --no-deps
 run_arch_check
 run_check

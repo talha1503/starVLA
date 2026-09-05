@@ -254,6 +254,7 @@ def test_training_dependencies_are_not_in_the_use_manifest() -> None:
     repo_root: Path = _repo_root()
     use_requirements = (repo_root / "requirements.txt").read_text().splitlines()
     dev_requirements = (repo_root / "requirements-dev.txt").read_text().splitlines()
+    common_install = (repo_root / "examples/rl_games/install/common.sh").read_text()
 
     for dependency in ("datasets", "deepspeed", "hydra-core", "wandb"):
         assert not any(line.startswith(dependency) for line in use_requirements)
@@ -261,6 +262,7 @@ def test_training_dependencies_are_not_in_the_use_manifest() -> None:
 
     assert "decord==0.6.0" not in dev_requirements
     assert "eva-decord==0.6.1" in dev_requirements
+    assert "eva-decord==0.6.1" in common_install
     assert "pyarrow>=15.0.0" in dev_requirements
 
 
@@ -315,15 +317,16 @@ def test_model_installers_do_not_select_torch_or_flash_versions() -> None:
     assert "openvla|pi0|pi05|gr00t)" in bootstrap_source
 
 
-def test_flash_attention_build_checks_both_target_architectures() -> None:
+def test_flash_attention_wheel_is_hash_pinned_and_checks_target_architectures() -> None:
     flash_source = (
         _repo_root() / "examples" / "rl_games" / "install" / "flash_attn.sh"
     ).read_text()
 
     assert "--force-reinstall" in flash_source
-    assert "--no-cache-dir" in flash_source
-    assert "--no-binary=flash-attn" in flash_source
+    assert "flash_attn-2.8.3%2Bcu12torch2.11cxx11abiTRUE-cp310-cp310-linux_x86_64.whl" in flash_source
+    assert "9001c730642cdc1ea44ed8130b0dc80e763519d6efc01e4de44b0700a0dfa13d" in flash_source
     assert 'code_objects="$(cuobjdump --list-elf "${extension_path}")"' in flash_source
+    assert 'grep -q "sm_80" <<<"${code_objects}"' in flash_source
     assert 'grep -q "sm_90" <<<"${code_objects}"' in flash_source
     assert 'grep -q "sm_120" <<<"${code_objects}"' in flash_source
 

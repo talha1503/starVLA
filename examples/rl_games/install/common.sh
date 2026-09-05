@@ -32,11 +32,10 @@ pip_install -e "$REPO_ROOT"
 pip_install -e "$LATENCY_BENCH_ROOT"
 pip_install --no-deps -e "$LATENCY_BENCH_ROOT/third_party/flappy-bird-gymnasium"
 pip_install -e "$LATENCY_BENCH_ROOT/third_party/sample-factory"
+"$PYTHON_BIN" -m pip install --force-reinstall --no-deps eva-decord==0.6.1
 
 if [[ "${INSTALL_TIER}" == "dev" ]]; then
     pip_install -r "$REPO_ROOT/requirements-dev.txt"
-    "$PYTHON_BIN" -m pip uninstall -y decord
-    "$PYTHON_BIN" -m pip install --force-reinstall --no-deps eva-decord==0.6.1
     pip_install -e "$REPO_ROOT[dev]"
 fi
 
