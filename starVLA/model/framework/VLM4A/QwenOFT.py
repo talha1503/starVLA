@@ -80,6 +80,8 @@ class QwenOFTDefaultConfig:
             "action_model_type": "MLP",
             # Dimensionality of each action vector (e.g., 7 for 6-DoF + gripper)
             "action_dim": 7,
+            # Proprioceptive state dimension for continuous_projector mode
+            "state_dim": 7,
             # Hidden dim for the action MLP (auto-set from VLM hidden_size at runtime)
             "action_hidden_dim": 2560,
             # How many future steps to predict
@@ -92,6 +94,7 @@ class QwenOFTDefaultConfig:
             "loss_type": "l1",
             # State conditioning: preserve the existing text-bin path by default.
             "state_encoding": "discretized_text",
+            "task_objective": None,
         }
     )
 
@@ -146,6 +149,13 @@ class Qwenvl_OFT(baseframework):
                 int(self.config.framework.action_model.state_dim),
                 int(self.config.framework.action_model.action_hidden_dim),
             )
+        task_objective_config = self.config.framework.action_model.task_objective
+        if task_objective_config is None:
+            self.task_objective = None
+        else:
+            from latency_bench.policy.starvla_task_objective import TaskActionObjective
+
+            self.task_objective = TaskActionObjective(task_objective_config)
         cross_task_cfg = getattr(getattr(self.config, "rl_games", None), "cross_task", None)
         self.loss_by_task = self._to_plain_dict(getattr(cross_task_cfg, "loss_by_task", None))
         self.loss_weight_by_task = self._to_plain_dict(getattr(cross_task_cfg, "loss_weight_by_task", None))
@@ -486,6 +496,8 @@ class Qwenvl_OFT(baseframework):
                 action_env_dims=action_env_dims,
                 rl_games_tasks=rl_games_tasks,
             )
+            if self.task_objective is not None:
+                action_loss = action_loss + self.task_objective(pred_actions, examples)
         if profile_timing:
             timing_metrics["timing/action_head_loss"] = self._profile_elapsed(t_action)
 

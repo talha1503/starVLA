@@ -166,8 +166,7 @@ for model in "${MODELS_TO_INSTALL[@]}"; do
 
   export CUDA_HOME="${CONDA_PREFIX}"
   export LD_LIBRARY_PATH="${CUDA_HOME}/lib:${CUDA_HOME}/lib64${ORIGINAL_LD_LIBRARY_PATH:+:${ORIGINAL_LD_LIBRARY_PATH}}"
-  export TORCH_CUDA_ARCH_LIST="9.0;12.0"
-  export FLASH_ATTN_CUDA_ARCHS="90;120"
+  export TORCH_CUDA_ARCH_LIST="8.6;9.0;12.0"
 
   echo "[bootstrap] tier=${INSTALL_TIER} model=${model} envs=${GAME_ENVS[*]}"
   PYTHON_BIN=python "${SCRIPT_DIR}/common.sh"

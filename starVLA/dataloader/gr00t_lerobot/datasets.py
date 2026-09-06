@@ -1388,8 +1388,15 @@ class LeRobotSingleDataset(Dataset):
         """
         trajectory_id, base_index = self.all_steps[index]
         raw_data = self.get_step_data(trajectory_id, base_index)
+        raw_action_target = None
+        if self.data_cfg is not None and self.data_cfg.get("include_action_target", False):
+            raw_action_target = np.concatenate(
+                [raw_data[key] for key in self.modality_keys["action"]], axis=1
+            ).astype(np.float32)
         data = self.transforms(raw_data)
         sample = self._pack_sample(data, trajectory_id=trajectory_id, base_index=base_index)
+        if raw_action_target is not None:
+            sample["action_target"] = raw_action_target
         self._attach_rl_games_metadata(sample, base_index)
         return sample
 
@@ -1405,9 +1412,10 @@ class LeRobotSingleDataset(Dataset):
         kv_memory = bool(self.data_cfg.get("kv_memory", False)) if self.data_cfg is not None else False
 
         step_images = []
+        view_frames = []
         for video_key in self.modality_keys["video"]:
             frames = data[video_key]  # (T, H, W, C), chronological (oldest .. newest)
-            if image_mode == "single":
+            if image_mode in {"single", "stitch_views"}:
                 selected = [frames[-1]]
             else:
                 n = min(num_obs_frames, len(frames))
@@ -1415,8 +1423,15 @@ class LeRobotSingleDataset(Dataset):
             pil_frames = [Image.fromarray(f) for f in selected]
             if image_mode == "stitch":
                 step_images.append(stitch_frames(pil_frames, grid=stitch_grid, size=(224, 224)))
+            elif image_mode == "stitch_views":
+                view_frames.append(pil_frames[-1])
             else:  # "single" or "multiframe": each frame tokenized independently
                 step_images.extend(p.resize((224, 224)) for p in pil_frames)
+
+        if image_mode == "stitch_views":
+            step_images.append(
+                stitch_frames(view_frames, grid=(1, len(view_frames)), size=(224, 224))
+            )
 
         language = data[self.modality_keys["language"][0]][0]
         language = _apply_prompt_mode(language, self.data_cfg.get("prompt_mode") if self.data_cfg is not None else None)
@@ -1474,6 +1489,13 @@ class LeRobotSingleDataset(Dataset):
                 state.append(data[state_key])
             state = np.concatenate(state, axis=1).astype(np.float16)
             sample["state"] = state
+
+        auxiliary_fields = self.data_cfg.get("auxiliary_fields", {}) if self.data_cfg is not None else {}
+        if auxiliary_fields:
+            row = self.curr_traj_data.iloc[base_index]
+            for output_key, column in auxiliary_fields.items():
+                # Arrow nested lists arrive as object arrays of per-substep arrays.
+                sample[output_key] = np.stack(row[column])
 
         return sample
 
@@ -1878,7 +1900,7 @@ class LeRobotSingleDataset(Dataset):
                 )
             return np.stack([_decode_image_entry(item) for item in [*context_values, row[original_key]]])
 
-        if self.curr_traj_data is not None and original_key in self.curr_traj_data.columns:
+        if self.lerobot_info_meta["features"][original_key]["dtype"] == "image":
             image_entries = self.curr_traj_data[original_key].tolist()
 
             frames = []
@@ -2846,9 +2868,16 @@ class LeRobotMixtureDataset(Dataset):
                         break
                     index = random.randint(0, len(self) - 1)
                     
-                raw_data = dataset.get_step_data(trajectory_id, step)    
+                raw_data = dataset.get_step_data(trajectory_id, step)
+                raw_action_target = None
+                if dataset.data_cfg is not None and dataset.data_cfg.get("include_action_target", False):
+                    raw_action_target = np.concatenate(
+                        [raw_data[key] for key in dataset.modality_keys["action"]], axis=1
+                    ).astype(np.float32)
                 data = dataset.transforms(raw_data)
                 sample = dataset._pack_sample(data, trajectory_id=trajectory_id, base_index=step)
+                if raw_action_target is not None:
+                    sample["action_target"] = raw_action_target
                 dataset._attach_rl_games_metadata(sample, step)
                 
                 return sample
