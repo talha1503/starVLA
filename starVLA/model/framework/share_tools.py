@@ -124,7 +124,7 @@ def _to_omegaconf(x: Any):
 
 
 def resolve_pretrained_checkpoint_path(pretrained_checkpoint: str | os.PathLike[str]) -> tuple[Path, Path]:
-    checkpoint_path = Path(pretrained_checkpoint).expanduser().resolve()
+    checkpoint_path = Path(os.path.abspath(Path(pretrained_checkpoint).expanduser()))
     if checkpoint_path.is_dir():
         for candidate_name in ("model.safetensors", "pytorch_model.bin"):
             candidate_path = checkpoint_path / candidate_name

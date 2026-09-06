@@ -40,6 +40,21 @@ def test_resolve_pretrained_checkpoint_accepts_standalone_pt(tmp_path: Path) -> 
     checkpoint = run_dir / "checkpoints" / "steps_5_pytorch_model.pt"
     checkpoint.write_text("weights", encoding="utf-8")
 
+    checkpoint_with_parent_segment = checkpoint.parent / ".." / "checkpoints" / checkpoint.name
+    resolved_checkpoint, resolved_run_dir = resolve_pretrained_checkpoint_path(checkpoint_with_parent_segment)
+
+    assert resolved_checkpoint == checkpoint
+    assert resolved_run_dir == run_dir
+
+
+def test_resolve_pretrained_checkpoint_preserves_hf_snapshot_symlink(tmp_path: Path) -> None:
+    run_dir = _make_run_dir(tmp_path)
+    blob = tmp_path / "blobs" / "checkpoint"
+    blob.parent.mkdir()
+    blob.write_text("weights", encoding="utf-8")
+    checkpoint = run_dir / "checkpoints" / "steps_5_pytorch_model.pt"
+    checkpoint.symlink_to(blob)
+
     resolved_checkpoint, resolved_run_dir = resolve_pretrained_checkpoint_path(checkpoint)
 
     assert resolved_checkpoint == checkpoint

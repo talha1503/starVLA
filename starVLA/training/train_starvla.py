@@ -627,6 +627,9 @@ class VLATrainer(TrainerUtils):
 
     def prepare_training(self):
         _configure_torch_dynamo_recompile_limits()
+        if "stop_after_steps" in self.config.trainer:
+            # Round-boundary resumes must restore the same LR schedule position.
+            self.accelerator.register_for_checkpointing(self.lr_scheduler)
 
         rank = dist.get_rank() if dist.is_initialized() else 0
         seed = self.config.seed + rank if hasattr(self.config, "seed") else rank + 3047
@@ -1439,14 +1442,20 @@ class VLATrainer(TrainerUtils):
         self._log_training_config()
         self._create_data_iterators()
         self._apply_latency_curriculum(force=True)
+        # DAgger pauses at round boundaries without shortening the LR schedule.
+        stop_step = (
+            self.config.trainer.stop_after_steps
+            if "stop_after_steps" in self.config.trainer
+            else self.config.trainer.max_train_steps
+        )
         progress_bar = tqdm(
-            total=self.config.trainer.max_train_steps,
+            total=stop_step,
             initial=self.completed_steps,
             disable=not self.accelerator.is_local_main_process,
         )
 
         try:
-            while self.completed_steps < self.config.trainer.max_train_steps:
+            while self.completed_steps < stop_step:
                 if self._refresh_graceful_stop_requested():
                     self._save_interrupt_checkpoint()
                     break
@@ -1597,7 +1606,7 @@ class VLATrainer(TrainerUtils):
                             step=self.completed_steps,
                         )
 
-                if self.completed_steps >= self.config.trainer.max_train_steps:
+                if self.completed_steps >= stop_step:
                     break
         finally:
             progress_bar.close()

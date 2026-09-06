@@ -90,6 +90,15 @@ def build_dataloader(
             output_dir = Path(cfg.output_dir)
             vla_dataset.save_dataset_statistics(output_dir / save_statistics_filename)
         return vla_train_dataloader
+    elif dataset_py == "latency_bench_tasks":
+        from starVLA.dataloader.latency_bench_tasks import build_dataloader as build_latency_bench_dataloader
+
+        return build_latency_bench_dataloader(
+            cfg,
+            data_mix=data_mix,
+            mode=mode,
+            save_statistics_filename=save_statistics_filename,
+        )
     elif dataset_py == "vlm_datasets":
         vlm_data_module = make_vlm_dataloader(cfg)
         vlm_train_dataloader = vlm_data_module["train_dataloader"]

@@ -248,6 +248,7 @@ class baseframework(PreTrainedModel):
     def from_pretrained(
         cls,
         pretrained_checkpoint: str,
+        backbone_path: str | None = None,
         **kwargs,
     ) -> None:
         """
@@ -276,6 +277,10 @@ class baseframework(PreTrainedModel):
 
         config = dict_to_namespace(model_config)
         model_config = config
+        if backbone_path is not None:
+            model_config.framework.qwenvl.base_vlm = backbone_path
+            if "world_model" in model_config.framework:
+                model_config.framework.world_model.base_wm = backbone_path
         model_config.trainer.pretrained_checkpoint = None
 
         FrameworkModel = build_framework(cfg=model_config)

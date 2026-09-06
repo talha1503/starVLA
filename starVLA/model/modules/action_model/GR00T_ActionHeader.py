@@ -314,7 +314,12 @@ class FlowmatchingActionHead(nn.Module):
         return BatchFeature(data=batch)
 
     def forward(
-        self, vl_embs: torch.Tensor, actions: torch.Tensor, state: torch.Tensor = None, encoder_attention_mask=None
+        self,
+        vl_embs: torch.Tensor,
+        actions: torch.Tensor,
+        state: torch.Tensor = None,
+        encoder_attention_mask=None,
+        return_clean_actions: bool = False,
     ):
         """
         vl_embs: shape (B, seq_length, feature_dim)
@@ -374,6 +379,9 @@ class FlowmatchingActionHead(nn.Module):
         pred_loss = pred_actions[..., :effective_dim]
         target_loss = velocity[..., :effective_dim]
         loss = ((pred_loss - target_loss) ** 2).mean()
+        if return_clean_actions:
+            clean_actions = noisy_trajectory + (1 - t) * pred_actions
+            return loss, clean_actions
         return loss
 
     @torch.no_grad()

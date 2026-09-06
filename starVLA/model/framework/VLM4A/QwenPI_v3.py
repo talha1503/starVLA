@@ -21,11 +21,10 @@ Key improvements over QwenPI
    action head parameter count by ~(vl_hidden / dit_hidden)² while keeping
    the full layer-wise cross-attention structure.
 
-2. **Discretised-state language injection** (`add_discretized_state_to_instruction`)
-   Proprioceptive state is quantised into 256 bins and appended to the
-   language instruction as plain tokens (``[STATE] <bins> [ACTION]``),
-   following the π₀.5 design.  This lets the VLM attend to state without
-   any extra encoder module.
+2. **Configurable state conditioning**
+   The released default quantises proprioceptive state into 256 bins and
+   appends it to the language instruction.  Task configs can instead pass
+   the real continuous state to LayerwiseFM's native state encoder.
 
 Together these two features bring QwenPI_v3 close to all the core
 capabilities of π₀.5 within a single open-weight VLM framework.
@@ -108,6 +107,10 @@ class QwenPI_v3DefaultConfig:
             "action_model_type": "LayerwiseFM",
             "action_dim": 7,
             "state_dim": 7,
+            # Keep the released text-bin path as the default; task configs can
+            # use the action head's native continuous state encoder instead.
+            "state_encoding": "discretized_text",
+            "task_objective": None,
             # Canonical chunk length (number of action steps the head predicts).
             # Legacy YAMLs may use future_action_window_size = action_horizon - 1;
             # apply_config_compat normalises both directions.
@@ -235,6 +238,14 @@ class Qwen_PI_v3(baseframework):
         # are normalised upstream by `share_tools.apply_config_compat`, so we
         # only ever read `action_horizon` here.
         self.action_horizon = int(self.config.framework.action_model.action_horizon)
+        self.state_encoding = self.config.framework.action_model.state_encoding
+        task_objective_config = self.config.framework.action_model.task_objective
+        if task_objective_config is None:
+            self.task_objective = None
+        else:
+            from latency_bench.policy.starvla_task_objective import TaskActionObjective
+
+            self.task_objective = TaskActionObjective(task_objective_config)
 
     def _project_vl_hidden_for_action(self, vl_embs_list: List[torch.Tensor]) -> List[torch.Tensor]:
         """Project layer-wise VL hidden states to the hidden space expected by Action DiT."""
@@ -289,11 +300,9 @@ class Qwen_PI_v3(baseframework):
             [example["state"] for example in examples] if "state" in examples[0] else None
         )  # List[ndarray (1, state_dim)] or None
 
-        # Prepend discretised proprioceptive state to each instruction string.
-        instructions = (
-            self.add_discretized_state_to_instruction(instructions, state) if state is not None else instructions
-        )
-        state = None  # state is now encoded in the instruction tokens
+        if self.state_encoding == "discretized_text":
+            instructions = self._state_conditioned_instructions(instructions, state)
+            state = None
 
         # Step 1: encode through QwenVL
         vl_embs_list = self._encode_vl_hidden_states(batch_images, instructions)
@@ -320,11 +329,20 @@ class Qwen_PI_v3(baseframework):
                 state = torch.tensor(np.array(state), device=base_hidden.device, dtype=base_hidden.dtype)
                 state_repeated = state.repeat(repeated_diffusion_steps, 1, 1)
 
-            action_loss = self.action_model(
+            action_result = self.action_model(
                 vl_embs_list_repeated,
                 actions_target_repeated,
                 state_repeated,
+                return_clean_actions=self.task_objective is not None,
             )
+            if self.task_objective is None:
+                action_loss = action_result
+            else:
+                action_loss, clean_actions = action_result
+                action_loss = action_loss + self.task_objective(
+                    clean_actions,
+                    examples * repeated_diffusion_steps,
+                )
 
         return {"action_loss": action_loss, "loss_weight": float(len(examples))}
 
@@ -362,12 +380,11 @@ class Qwen_PI_v3(baseframework):
         instructions = [example["lang"] for example in examples]  # List[str]
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # List[ndarray] or None
 
-        # Encode proprioceptive state into the instruction string, then discard raw state.
         with _stage(profiler, "starvla_state_instruction_ms"):
-            instructions = (
-                self.add_discretized_state_to_instruction(instructions, state) if state is not None else instructions
-            )
-        state = None
+            if self.state_encoding == "discretized_text":
+                instructions = self._state_conditioned_instructions(instructions, state)
+        if self.state_encoding == "discretized_text":
+            state = None
 
         # Optionally resize images to the resolution used during training.
         train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
@@ -416,6 +433,11 @@ class Qwen_PI_v3(baseframework):
             state_str = self.state2str_transform(state[0])
             updated_instructions.append(f"{instr} [STATE] {state_str} [ACTION]")
         return updated_instructions
+
+    def _state_conditioned_instructions(self, instructions: List[str], state: Optional[List[np.ndarray]]) -> List[str]:
+        if state is None or self.state_encoding != "discretized_text":
+            return instructions
+        return self.add_discretized_state_to_instruction(instructions, state)
 
 
 if __name__ == "__main__":

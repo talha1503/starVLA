@@ -126,11 +126,14 @@ class WanOFTDefaultConfig:
         default_factory=lambda: {
             "action_model_type": "MLP",
             "action_dim": 7,
+            "state_dim": 7,
             "action_hidden_dim": 3072,
             "action_horizon": 8,
             "future_action_window_size": 7,
             "past_action_window_size": 0,
             "loss_type": "l1",
+            "state_encoding": "discretized_text",
+            "task_objective": None,
             "class_weights": None,
             "future_loss_weight": None,
             "action_query_source": "mean",
@@ -169,6 +172,19 @@ class Wan_OFT(baseframework):
         self.action_dim = int(self.config.framework.action_model.action_dim)
         self.action_env_dim = int(getattr(self.config.framework.action_model, "action_env_dim", self.action_dim))
         self.action_loss_type = str(getattr(self.config.framework.action_model, "loss_type", "l1")).lower()
+        self.state_encoding = self.config.framework.action_model.state_encoding
+        if self.state_encoding == "continuous_projector":
+            self.action_model.state_projector = nn.Linear(
+                self.config.framework.action_model.state_dim,
+                wm_hidden,
+            )
+        task_objective_config = self.config.framework.action_model.task_objective
+        if task_objective_config is None:
+            self.task_objective = None
+        else:
+            from latency_bench.policy.starvla_task_objective import TaskActionObjective
+
+            self.task_objective = TaskActionObjective(task_objective_config)
         self.action_query_source = str(self.config.framework.action_model.action_query_source).strip().lower()
 
         self.action_query_proj = nn.Linear(wm_hidden, self.chunk_len * wm_hidden)  # Project into a two-layer MLP
@@ -195,9 +211,22 @@ class Wan_OFT(baseframework):
         if values.shape[-1] != self.action_dim:
             raise ValueError(
                 f"WanOFT expected action dim={self.action_dim}, got action shape={values.shape}. "
-                "Use the explicit 7D bridge action carrier for released WanOFT checkpoints."
+                "Set framework.action_model.action_dim to match the task action carrier."
             )
         return values
+
+    def _state_conditioned_instructions(self, instructions, state):
+        if state is not None and self.state_encoding == "discretized_text":
+            return add_discretized_state_to_instruction(instructions, state)
+        return instructions
+
+    def _condition_action_queries(self, action_queries, state):
+        if self.state_encoding == "discretized_text":
+            return action_queries
+        state_tensor = torch.as_tensor(
+            np.stack(state), device=action_queries.device, dtype=action_queries.dtype
+        ).squeeze(1)
+        return action_queries + self.action_model.state_projector(state_tensor).unsqueeze(1)
 
     def _action_model_config_value(self, key: str):
         action_model_cfg = getattr(getattr(self.config, "framework", None), "action_model", None)
@@ -365,10 +394,7 @@ class Wan_OFT(baseframework):
         if train_obs_image_size:
             batch_images = resize_images(batch_images, target_size=train_obs_image_size)
 
-        # Optionally prepend discretised proprioceptive state tokens (π₀.5 style).
-        instructions = (
-            add_discretized_state_to_instruction(instructions, state) if state is not None else instructions
-        )
+        instructions = self._state_conditioned_instructions(instructions, state)
 
         wm_inputs = self.backbone.build_inputs(images=batch_images, instructions=instructions)
 
@@ -382,12 +408,15 @@ class Wan_OFT(baseframework):
 
         with torch.autocast("cuda", dtype=torch.float32):
             action_queries = self._pool_to_action_queries(last_hidden)  # B, chunk_len, hidden_dim
+            action_queries = self._condition_action_queries(action_queries, state)
             pred_actions = self.action_model.predict_action(action_queries)
 
             actions = torch.tensor(np.array(actions), device=pred_actions.device, dtype=pred_actions.dtype)
             actions_target = actions[:, -self.action_horizon :, :]
 
             action_loss = self._compute_action_loss(pred_actions, actions_target)
+            if self.task_objective is not None:
+                action_loss = action_loss + self.task_objective(pred_actions, examples)
 
         return {"action_loss": action_loss, "loss_weight": float(len(examples))}
 
@@ -399,9 +428,7 @@ class Wan_OFT(baseframework):
         instructions = [example["lang"] for example in examples]
         state = [example["state"] for example in examples] if "state" in examples[0] else None
 
-        instructions = (
-            add_discretized_state_to_instruction(instructions, state) if state is not None else instructions
-        )
+        instructions = self._state_conditioned_instructions(instructions, state)
 
         train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
         if train_obs_image_size:
@@ -418,6 +445,7 @@ class Wan_OFT(baseframework):
 
         with torch.autocast("cuda", dtype=torch.float32):
             action_queries = self._pool_to_action_queries(last_hidden)
+            action_queries = self._condition_action_queries(action_queries, state)
             pred_actions = self.action_model.predict_action(action_queries)
 
         normalized_actions = pred_actions.detach().cpu().numpy()

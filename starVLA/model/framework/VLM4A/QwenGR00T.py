@@ -89,6 +89,7 @@ class QwenGR00TDefaultConfig:
             "action_dim": 7,
             # State dimension (proprioception input)
             "state_dim": 7,
+            "task_objective": None,
             # Canonical chunk length (number of action steps the head predicts).
             # Legacy YAMLs may use future_action_window_size = action_horizon - 1;
             # apply_config_compat normalises both directions.
@@ -164,6 +165,13 @@ class Qwen_GR00T(baseframework):
         # only ever read `action_horizon` here.
         self.action_horizon = int(self.config.framework.action_model.action_horizon)
         self.action_dim = int(self.config.framework.action_model.action_dim)
+        task_objective_config = self.config.framework.action_model.task_objective
+        if task_objective_config is None:
+            self.task_objective = None
+        else:
+            from latency_bench.policy.starvla_task_objective import TaskActionObjective
+
+            self.task_objective = TaskActionObjective(task_objective_config)
 
     def _pad_actions_to_model_dim(self, actions: torch.Tensor) -> torch.Tensor:
         if actions.shape[-1] == self.action_dim:
@@ -219,9 +227,20 @@ class Qwen_GR00T(baseframework):
                 state = torch.tensor(np.array(state), device=last_hidden.device, dtype=last_hidden.dtype)
                 state_repeated = state.repeat(repeated_diffusion_steps, 1, 1)
 
-            action_loss = self.action_model(
-                last_hidden_repeated, actions_target_repeated, state_repeated
+            action_result = self.action_model(
+                last_hidden_repeated,
+                actions_target_repeated,
+                state_repeated,
+                return_clean_actions=self.task_objective is not None,
             )  # (B, chunk_len, action_dim)
+            if self.task_objective is None:
+                action_loss = action_result
+            else:
+                action_loss, clean_actions = action_result
+                action_loss = action_loss + self.task_objective(
+                    clean_actions,
+                    examples * repeated_diffusion_steps,
+                )
 
         return {"action_loss": action_loss, "loss_weight": float(len(examples))}
 
