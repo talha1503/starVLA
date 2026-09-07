@@ -685,8 +685,9 @@ class VLATrainer(TrainerUtils):
     def _init_wandb(self):
         """Initialize Weights & Biases."""
         if self.accelerator.is_main_process:
+            wandb_name = self.config.wandb_name if "wandb_name" in self.config else self.config.run_id
             wandb.init(
-                name=self.config.run_id,
+                name=wandb_name,
                 dir=os.path.join(self.config.output_dir, "wandb"),
                 project=self.config.wandb_project,
                 entity=self.config.wandb_entity,

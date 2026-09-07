@@ -8,6 +8,7 @@ from omegaconf import OmegaConf
 
 torch = pytest.importorskip("torch")
 
+from starVLA.training import train_starvla
 from starVLA.training.train_starvla import VLATrainer
 
 
@@ -31,6 +32,30 @@ class _FakeAccelerator:
 
     def get_state_dict(self, model: torch.nn.Module) -> dict[str, torch.Tensor]:
         return model.state_dict()
+
+
+@pytest.mark.parametrize(
+    ("wandb_name", "expected"),
+    [("mikasa-bootstrap-qwenoft", "mikasa-bootstrap-qwenoft"), (None, "bootstrap")],
+)
+def test_init_wandb_uses_explicit_name_or_run_id(tmp_path, monkeypatch, wandb_name, expected):
+    config = {
+        "output_dir": str(tmp_path),
+        "run_id": "bootstrap",
+        "wandb_project": "starvla_tasks",
+        "wandb_entity": None,
+    }
+    if wandb_name is not None:
+        config["wandb_name"] = wandb_name
+    trainer = VLATrainer.__new__(VLATrainer)
+    trainer.config = OmegaConf.create(config)
+    trainer.accelerator = _FakeAccelerator()
+    init_calls = []
+    monkeypatch.setattr(train_starvla.wandb, "init", lambda **kwargs: init_calls.append(kwargs))
+
+    trainer._init_wandb()
+
+    assert init_calls[0]["name"] == expected
 
 
 def test_model_only_checkpoint_does_not_save_full_training_state(tmp_path: Path) -> None:
