@@ -32,6 +32,8 @@ python examples/rl_games/scripts/launch_train.py \
     trainer.max_train_steps=7000 \
     trainer.num_warmup_steps=0 \
     trainer.eval_interval=7000 \
+    trainer.save_interval=7000 \
+    checkpoint.save_best_model=false \
     trainer.logging_frequency=1 \
     trainer.gradient_accumulation_steps=4 \
     datasets.vla_data.per_device_batch_size=32 \
