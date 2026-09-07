@@ -4,6 +4,7 @@ set -euo pipefail
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POSITIONAL=()
 SKIP_FLASH_ATTN="false"
+SKIP_VALIDATE="false"
 
 usage() {
   cat <<'EOF'
@@ -20,6 +21,7 @@ Arguments:
 
 Options:
   --skip-flash-attn        Skip FlashAttention install/check for model envs
+  --skip-validate          Skip final validation
   -h, --help                Show this help
 EOF
 }
@@ -28,6 +30,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-flash-attn)
       SKIP_FLASH_ATTN="true"
+      shift
+      ;;
+    --skip-validate)
+      SKIP_VALIDATE="true"
       shift
       ;;
     -h|--help)
@@ -63,6 +69,10 @@ ARGS=(
 
 if [[ "${SKIP_FLASH_ATTN}" == "true" ]]; then
   ARGS+=(--skip-flash-attn)
+fi
+
+if [[ "${SKIP_VALIDATE}" == "true" ]]; then
+  ARGS+=(--skip-validate)
 fi
 
 exec "${INSTALL_DIR}/bootstrap.sh" "${ARGS[@]}"
