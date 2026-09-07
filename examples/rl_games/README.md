@@ -134,6 +134,27 @@ online evaluator accepts integer decision-step latency only, so both core
 environment evaluation and post-train evaluation are disabled by default
 instead of silently changing the latency.
 
+Asterix, Atlantis, and Defend the Line use the same source-preserving WanOFT
+context conversion path. By default these commands convert every episode in the
+selected `memory-rollouts` config and only add previous-frame context images:
+
+```bash
+python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_asterix_history_to_starvla_lerobot.py \
+  --image-sequence-length 5
+
+python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_atlantis_history_to_starvla_lerobot.py \
+  --image-sequence-length 5
+
+python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_defend_the_line_history_to_starvla_lerobot.py \
+  --image-sequence-length 5
+```
+
+Asterix and Atlantis preserve the Atari timing used by their VLA datasets:
+15 FPS observations, 60 FPS environment frames, and raw-frame frameskip four.
+Defend the Line preserves the VizDoom timing used by its VLA dataset: 8.75 FPS
+observations, 35 FPS environment frames, and raw-frame frameskip four. Asterix
+defaults to the Bridge-compatible `factorized_6` action layout.
+
 Single-latency Deadly Corridor with bridge initialization:
 
 ```bash
