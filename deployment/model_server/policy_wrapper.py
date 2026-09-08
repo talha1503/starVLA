@@ -59,6 +59,7 @@ class PolicyServerWrapper:
         rl_games_action_env_dim: Optional[int] = None,
         rl_games_gymnasium_action_space_type: str = "discrete",
         rl_games_gymnasium_robot_type: str = "rl_games_gymnasium",
+        backbone_path: Optional[str] = None,
     ) -> None:
         self._ckpt_path = str(ckpt_path)
         self._action_output_mode = action_output_mode
@@ -70,7 +71,10 @@ class PolicyServerWrapper:
         self._rl_games_multibinary_threshold = rl_games_multibinary_threshold
 
         logging.info("PolicyServerWrapper: loading framework from %s", self._ckpt_path)
-        framework = baseframework.from_pretrained(self._ckpt_path)
+        framework = baseframework.from_pretrained(
+            self._ckpt_path,
+            backbone_path=backbone_path,
+        )
         if use_bf16:
             framework = framework.to(torch.bfloat16)
         framework = framework.to(device).eval()
