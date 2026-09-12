@@ -3,6 +3,9 @@
 # Implemented by [Jinhui YE / HKUST University] in [2025].
 
 import time
+from collections import OrderedDict
+from functools import wraps
+from inspect import signature
 from typing import Optional
 
 import torch
@@ -101,6 +104,42 @@ def _patch_qwen3vl_flex_attention_support() -> None:
     ALL_ATTENTION_FUNCTIONS["flex_attention"] = flex_attention_with_kernel_options
 
 
+def _position_tensor_key(tensor):
+    if tensor is None:
+        return None
+    return (tensor.device, tensor.dtype, tuple(tensor.shape),
+            tuple(tensor.detach().cpu().reshape(-1).tolist()))
+
+
+def _cache_position_method(module, name, weight):
+    """Cache layout-only outputs on one native model instance, never image features."""
+    original = getattr(module, name)
+    parameters = signature(original)
+    cache = OrderedDict()
+
+    @wraps(original)
+    def cached(*args, **kwargs):
+        if module.training or torch.is_grad_enabled():
+            cache.clear()
+            return original(*args, **kwargs)
+        arguments = parameters.bind(*args, **kwargs)
+        arguments.apply_defaults()
+        parameter = weight()
+        key = (
+            parameter.device, parameter.dtype, parameter._version,
+            tuple(_position_tensor_key(value) for value in arguments.arguments.values()),
+        )
+        if key not in cache:
+            cache[key] = original(*args, **kwargs)
+            if len(cache) > 8:
+                cache.popitem(last=False)
+        cache.move_to_end(key)
+        return cache[key]
+
+    setattr(module, name, cached)
+    return cache
+
+
 class _QWen3_VL_Interface(nn.Module):
     """
     This exists because of the diversity of VLMs, so we encapsulate the changes here.
@@ -166,11 +205,33 @@ class _QWen3_VL_Interface(nn.Module):
         # align qwen3 with qwen2.5
         self.model.config.hidden_size = self.model.config.text_config.hidden_size
         self._last_build_timing = {}
+        visual = model.model.visual
+        self._position_caches = [
+            _cache_position_method(model.model, "get_rope_index", lambda: visual.rotary_pos_emb.inv_freq),
+            _cache_position_method(visual, "rot_pos_emb", lambda: visual.rotary_pos_emb.inv_freq),
+            _cache_position_method(visual, "fast_pos_embed_interpolate", lambda: visual.pos_embed.weight),
+        ]
 
         # only for fast base model
         if "-Action" in model_id:
             self._ACTION_TOKEN_MIN = _ACTION_TOKEN_MIN
             self._ACTION_TOKEN_MAX = _ACTION_TOKEN_MAX
+
+    def _clear_position_caches(self):
+        for cache in self._position_caches:
+            cache.clear()
+
+    def train(self, mode=True):
+        self._clear_position_caches()
+        return super().train(mode)
+
+    def _apply(self, fn, recurse=True):
+        self._clear_position_caches()
+        return super()._apply(fn, recurse=recurse)
+
+    def _load_from_state_dict(self, *args, **kwargs):
+        self._clear_position_caches()
+        return super()._load_from_state_dict(*args, **kwargs)
 
     def _profile_timing_enabled(self) -> bool:
         return self.config.trainer.profile_timing.enabled
