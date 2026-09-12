@@ -646,6 +646,8 @@ class LeRobotSingleDataset(Dataset):
         # self._episodes = self._get_episode_info() # TODO why we need this func
         self.curr_traj_data = None
         self.curr_traj_id = None
+        # ponytail: retain visited immutable tables; use a bounded cache if datasets outgrow RAM.
+        self._parquet_cache: dict[Path, pd.DataFrame] = {}
 
         self._trajectory_ids, self._trajectory_lengths = self._get_trajectories()
         self._modality_keys = self._get_modality_keys()
@@ -1561,6 +1563,11 @@ class LeRobotSingleDataset(Dataset):
         data = self._apply_action_mode(data)
         return data
 
+    def _read_trajectory_parquet(self, parquet_path: Path) -> pd.DataFrame:
+        if parquet_path not in self._parquet_cache:
+            self._parquet_cache[parquet_path] = pd.read_parquet(parquet_path)
+        return self._parquet_cache[parquet_path]
+
     def get_trajectory_data(self, trajectory_id: int) -> pd.DataFrame:
         """Get the data for a trajectory."""
         if self._lerobot_version == "v2.0":
@@ -1572,9 +1579,8 @@ class LeRobotSingleDataset(Dataset):
                 parquet_path = self.dataset_path / self.data_path_pattern.format(
                     episode_chunk=chunk_index, episode_index=trajectory_id
                 )
-                assert parquet_path.exists(), f"Parquet file not found at {parquet_path}"
+                self.curr_traj_data = self._read_trajectory_parquet(parquet_path)
                 self.curr_traj_id = trajectory_id
-                self.curr_traj_data = pd.read_parquet(parquet_path)
                 return self.curr_traj_data
         elif self._lerobot_version == "v3.0":
             return self.get_trajectory_data_lerobot_v3(trajectory_id)
@@ -1593,8 +1599,7 @@ class LeRobotSingleDataset(Dataset):
             parquet_path = self.dataset_path / self.data_path_pattern.format(
                 chunk_index=chunk_index, file_index=file_index
             )
-            assert parquet_path.exists(), f"Parquet file not found at {parquet_path}"
-            file_data = pd.read_parquet(parquet_path)
+            file_data = self._read_trajectory_parquet(parquet_path)
             
             # filter by trajectory_id
             episode_data = file_data.loc[file_data["episode_index"] == trajectory_id].copy()
@@ -2531,6 +2536,8 @@ class LeRobotMixtureDataset(Dataset):
         self._flap_step_order: np.ndarray = np.array([], dtype=np.int64)
         self._other_step_order: np.ndarray = np.array([], dtype=np.int64)
 
+        # Persistent spawn workers share the epoch but retain their own tables and sample order.
+        self._shared_epoch = torch.zeros((), dtype=torch.int64, device="cpu").share_memory_()
         # Set the epoch after initializing sequential sampling state.
         self.set_epoch(0)
 
@@ -2574,6 +2581,7 @@ class LeRobotMixtureDataset(Dataset):
         """
         self.epoch = epoch
         self._rebuild_step_order(epoch)
+        self._shared_epoch.fill_(epoch)
 
     def set_active_latency_filter(self, latencies: Sequence[int] | None) -> None:
         """Restrict sequential step sampling to the provided latency IDs."""
@@ -2797,6 +2805,11 @@ class LeRobotMixtureDataset(Dataset):
     def sample_step(self, index: int) -> tuple[LeRobotSingleDataset, int, int]:
         """Sample a single step from the dataset."""
         # return self.sampled_steps[index]
+
+        epoch = self._shared_epoch.item()
+        if self.epoch != epoch:
+            self.epoch = epoch
+            self._rebuild_step_order(epoch)
 
         if self._sequential_step_sampling:
             if len(self._step_order) == 0:
