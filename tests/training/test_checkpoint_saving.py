@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from omegaconf import OmegaConf
@@ -38,24 +39,52 @@ class _FakeAccelerator:
     ("wandb_name", "expected"),
     [("mikasa-bootstrap-qwenoft", "mikasa-bootstrap-qwenoft"), (None, "bootstrap")],
 )
-def test_init_wandb_uses_explicit_name_or_run_id(tmp_path, monkeypatch, wandb_name, expected):
+def test_wandb_reports_name_batch_and_optimizer_step(tmp_path, monkeypatch, wandb_name, expected):
     config = {
         "output_dir": str(tmp_path),
         "run_id": "bootstrap",
         "wandb_project": "starvla_tasks",
         "wandb_entity": None,
+        "datasets": {"vla_data": {"per_device_batch_size": 16}},
+        "trainer": {"logging_frequency": 5},
     }
     if wandb_name is not None:
         config["wandb_name"] = wandb_name
     trainer = VLATrainer.__new__(VLATrainer)
     trainer.config = OmegaConf.create(config)
     trainer.accelerator = _FakeAccelerator()
+    trainer.accelerator.gradient_accumulation_steps = 8
+    trainer.total_batch_size = 128
     init_calls = []
+    config_updates = []
+    metric_definitions = []
+    history = []
     monkeypatch.setattr(train_starvla.wandb, "init", lambda **kwargs: init_calls.append(kwargs))
+    monkeypatch.setattr(train_starvla.wandb, "config", SimpleNamespace(
+        update=lambda values, **kwargs: config_updates.append((values, kwargs)),
+    ))
+    monkeypatch.setattr(train_starvla.wandb, "define_metric", lambda name, **kwargs:
+                        metric_definitions.append((name, kwargs)))
+    monkeypatch.setattr(train_starvla.wandb, "log", lambda values, **kwargs:
+                        history.append((values, kwargs)))
 
     trainer._init_wandb()
 
     assert init_calls[0]["name"] == expected
+    assert config_updates == [({
+        "micro_batch": 16, "gradient_accumulation_steps": 8, "global_batch": 128,
+    }, {"allow_val_change": True})]
+    assert metric_definitions == [("global_step", {}), ("*", {"step_metric": "global_step"})]
+
+    trainer.optimizer = SimpleNamespace(param_groups=[{"name": "base"}])
+    trainer.lr_scheduler = SimpleNamespace(get_last_lr=lambda: [3e-5])
+    trainer.vla_train_dataloader = SimpleNamespace(dataset=range(1280))
+    for step in (150, 155):
+        trainer.completed_steps = step
+        trainer._log_metrics({"train/loss": 0.25})
+    assert [values["global_step"] for values, _ in history] == [150, 155]
+    assert [kwargs["step"] for _, kwargs in history] == [150, 155]
+    assert all(values["train/loss"] == 0.25 for values, _ in history)
 
 
 def test_model_only_checkpoint_does_not_save_full_training_state(tmp_path: Path) -> None:
