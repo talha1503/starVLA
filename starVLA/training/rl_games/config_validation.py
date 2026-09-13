@@ -96,15 +96,11 @@ def sync_kv_memory_obs_window(cfg: Any) -> None:
 
 
 def validate_rl_games_config(cfg: Any) -> None:
-    model_alias = str(_require_non_empty_value(cfg=cfg, key="rl_games.model_alias"))
+    _require_non_empty_value(cfg=cfg, key="rl_games.model_alias")
     _require_non_empty_value(cfg=cfg, key="rl_games.task")
     _require_non_empty_value(cfg=cfg, key="dataset.converted_name")
     _require_non_empty_value(cfg=cfg, key="base_model.repo_id")
     _validate_latency_values(cfg=cfg)
-
-    initialization_mode = _normalize_mode(_select_value(cfg=cfg, key="rl_games.initialization_mode"))
-    if model_alias == "pi-0.5" and initialization_mode == "scratch":
-        raise ValueError("pi-0.5 scratch is not supported")
 
     if _is_bridge_initialization(cfg=cfg):
         _validate_bridge_initialization(cfg=cfg)

@@ -337,7 +337,7 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
         for layer_idx, layer in enumerate(self.model.transformer_blocks):
             model_output = layer(
                 hidden_states=model_output,
-                encoder_hidden_states=vl_embs_list[layer_idx],  # Use layer-specific vl_embs
+                encoder_hidden_states=vl_embs_list[layer_idx] if layer.cross_attention_dim is not None else None,
                 temb=temb,
             )
 
@@ -404,7 +404,7 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
             for layer_idx, layer in enumerate(self.model.transformer_blocks):
                 model_output = layer(
                     hidden_states=model_output,
-                    encoder_hidden_states=vl_embs_list[layer_idx],
+                    encoder_hidden_states=vl_embs_list[layer_idx] if layer.cross_attention_dim is not None else None,
                     temb=temb,
                 )
             # TODO miss self att and _process_output
