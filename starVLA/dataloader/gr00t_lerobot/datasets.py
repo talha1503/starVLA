@@ -1489,7 +1489,7 @@ class LeRobotSingleDataset(Dataset):
             state = []
             for state_key in self.modality_keys["state"]:
                 state.append(data[state_key])
-            state = np.concatenate(state, axis=1).astype(np.float16)
+            state = np.concatenate(state, axis=1).astype(np.float32)
             sample["state"] = state
 
         auxiliary_fields = self.data_cfg.get("auxiliary_fields", {}) if self.data_cfg is not None else {}
