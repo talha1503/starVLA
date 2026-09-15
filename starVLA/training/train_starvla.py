@@ -691,12 +691,14 @@ class VLATrainer(TrainerUtils):
                 dir=os.path.join(self.config.output_dir, "wandb"),
                 project=self.config.wandb_project,
                 entity=self.config.wandb_entity,
-                group="vla-train",
+                group=self.config.wandb_group,
+                tags=self.config.wandb_tags,
             )
             wandb.config.update({
                 "micro_batch": self.config.datasets.vla_data.per_device_batch_size,
                 "gradient_accumulation_steps": self.accelerator.gradient_accumulation_steps,
                 "global_batch": self.total_batch_size,
+                "training_latency_condition": self.config.training_latency_condition,
             }, allow_val_change=True)
             wandb.define_metric("global_step")
             wandb.define_metric("*", step_metric="global_step")

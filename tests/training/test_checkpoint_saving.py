@@ -45,6 +45,9 @@ def test_wandb_reports_name_batch_and_optimizer_step(tmp_path, monkeypatch, wand
         "run_id": "bootstrap",
         "wandb_project": "starvla_tasks",
         "wandb_entity": None,
+        "wandb_group": "vla-train",
+        "wandb_tags": ["mikasa", "h1", "formal", "profile-latency"],
+        "training_latency_condition": "profile-latency",
         "datasets": {"vla_data": {"per_device_batch_size": 16}},
         "trainer": {"logging_frequency": 5},
     }
@@ -71,8 +74,11 @@ def test_wandb_reports_name_batch_and_optimizer_step(tmp_path, monkeypatch, wand
     trainer._init_wandb()
 
     assert init_calls[0]["name"] == expected
+    assert init_calls[0]["group"] == "vla-train"
+    assert init_calls[0]["tags"] == ["mikasa", "h1", "formal", "profile-latency"]
     assert config_updates == [({
         "micro_batch": 16, "gradient_accumulation_steps": 8, "global_batch": 128,
+        "training_latency_condition": "profile-latency",
     }, {"allow_val_change": True})]
     assert metric_definitions == [("global_step", {}), ("*", {"step_metric": "global_step"})]
 
