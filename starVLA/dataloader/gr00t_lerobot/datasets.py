@@ -90,6 +90,11 @@ def _apply_prompt_mode(prompt: str, prompt_mode: str | None) -> str:
     raise ValueError(f"Unsupported datasets.vla_data.prompt_mode={prompt_mode!r}")
 
 
+def _concatenate_action_fields(data: dict, keys: list[str]) -> np.ndarray:
+    action = np.concatenate([data[key] for key in keys], axis=-1)
+    return action[0] if action.ndim == 3 else action
+
+
 #  LeRobot v3.0 dataset file names 
 LE_ROBOT3_TASKS_FILENAME = "meta/tasks.parquet"
 LE_ROBOT3_EPISODE_FILENAME = "meta/episodes/*/*.parquet"
@@ -1392,8 +1397,8 @@ class LeRobotSingleDataset(Dataset):
         raw_data = self.get_step_data(trajectory_id, base_index)
         raw_action_target = None
         if self.data_cfg is not None and self.data_cfg.get("include_action_target", False):
-            raw_action_target = np.concatenate(
-                [raw_data[key] for key in self.modality_keys["action"]], axis=1
+            raw_action_target = _concatenate_action_fields(
+                raw_data, self.modality_keys["action"]
             ).astype(np.float32)
         data = self.transforms(raw_data)
         sample = self._pack_sample(data, trajectory_id=trajectory_id, base_index=base_index)
@@ -1437,10 +1442,7 @@ class LeRobotSingleDataset(Dataset):
 
         language = data[self.modality_keys["language"][0]][0]
         language = _apply_prompt_mode(language, self.data_cfg.get("prompt_mode") if self.data_cfg is not None else None)
-        action = []
-        for action_key in self.modality_keys["action"]:
-            action.append(data[action_key])
-        action = np.concatenate(action, axis=1).astype(np.float16)  # [rows, action_dim]
+        action = _concatenate_action_fields(data, self.modality_keys["action"]).astype(np.float16)
 
         actions_per_frame = None
         valid = None
@@ -1977,13 +1979,14 @@ class LeRobotSingleDataset(Dataset):
         # Get the data array, shape: (T, D)
         assert self.curr_traj_data is not None, f"No data found for {trajectory_id=}"
         assert le_key in self.curr_traj_data.columns, f"No {le_key} found in {trajectory_id=}"
-        data_array: np.ndarray = np.stack(self.curr_traj_data[le_key])  # type: ignore
-        assert data_array.ndim == 2, f"Expected 2D array, got key {le_key} is{data_array.shape} array"
+        data_array: np.ndarray = np.stack(
+            [np.stack(value) for value in self.curr_traj_data[le_key]]
+        )
         le_indices = np.arange(
             le_state_or_action_cfg[key].start,
             le_state_or_action_cfg[key].end,
         )
-        data_array = data_array[:, le_indices]
+        data_array = data_array[..., le_indices]
         # Get the state or action configuration
         state_or_action_cfg = getattr(self.metadata.modalities, modality)[key]
 
@@ -2884,8 +2887,8 @@ class LeRobotMixtureDataset(Dataset):
                 raw_data = dataset.get_step_data(trajectory_id, step)
                 raw_action_target = None
                 if dataset.data_cfg is not None and dataset.data_cfg.get("include_action_target", False):
-                    raw_action_target = np.concatenate(
-                        [raw_data[key] for key in dataset.modality_keys["action"]], axis=1
+                    raw_action_target = _concatenate_action_fields(
+                        raw_data, dataset.modality_keys["action"]
                     ).astype(np.float32)
                 data = dataset.transforms(raw_data)
                 sample = dataset._pack_sample(data, trajectory_id=trajectory_id, base_index=step)
