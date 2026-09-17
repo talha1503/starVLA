@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 
-cd starVLA
+WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
+export WORKSPACE_DIR
 
-bash examples/rl_games/install/install_stack.sh pi05 deadly_corridor
+bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh"
+
+cd "${WORKSPACE_DIR}/starVLA"
 
 conda activate starvla_rl_games_pi05
 
-bash examples/rl_games/install/flash_attn.sh --check >/dev/null 2>&1 || bash examples/rl_games/install/flash_attn.sh
+bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
+
+export PYTHONPATH="${WORKSPACE_DIR}/latency-sensitive-bench:${PYTHONPATH:-}"
 
 python examples/rl_games/scripts/launch_train.py \
     model=pi05 \
