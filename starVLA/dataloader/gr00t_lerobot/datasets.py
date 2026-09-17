@@ -90,6 +90,11 @@ def _apply_prompt_mode(prompt: str, prompt_mode: str | None) -> str:
     raise ValueError(f"Unsupported datasets.vla_data.prompt_mode={prompt_mode!r}")
 
 
+def _concatenate_action_fields(data: dict, keys: list[str]) -> np.ndarray:
+    action = np.concatenate([data[key] for key in keys], axis=-1)
+    return action[0] if action.ndim == 3 else action
+
+
 #  LeRobot v3.0 dataset file names 
 LE_ROBOT3_TASKS_FILENAME = "meta/tasks.parquet"
 LE_ROBOT3_EPISODE_FILENAME = "meta/episodes/*/*.parquet"
@@ -646,6 +651,8 @@ class LeRobotSingleDataset(Dataset):
         # self._episodes = self._get_episode_info() # TODO why we need this func
         self.curr_traj_data = None
         self.curr_traj_id = None
+        # ponytail: retain visited immutable tables; use a bounded cache if datasets outgrow RAM.
+        self._parquet_cache: dict[Path, pd.DataFrame] = {}
 
         self._trajectory_ids, self._trajectory_lengths = self._get_trajectories()
         self._modality_keys = self._get_modality_keys()
@@ -1390,8 +1397,8 @@ class LeRobotSingleDataset(Dataset):
         raw_data = self.get_step_data(trajectory_id, base_index)
         raw_action_target = None
         if self.data_cfg is not None and self.data_cfg.get("include_action_target", False):
-            raw_action_target = np.concatenate(
-                [raw_data[key] for key in self.modality_keys["action"]], axis=1
+            raw_action_target = _concatenate_action_fields(
+                raw_data, self.modality_keys["action"]
             ).astype(np.float32)
         data = self.transforms(raw_data)
         sample = self._pack_sample(data, trajectory_id=trajectory_id, base_index=base_index)
@@ -1435,10 +1442,7 @@ class LeRobotSingleDataset(Dataset):
 
         language = data[self.modality_keys["language"][0]][0]
         language = _apply_prompt_mode(language, self.data_cfg.get("prompt_mode") if self.data_cfg is not None else None)
-        action = []
-        for action_key in self.modality_keys["action"]:
-            action.append(data[action_key])
-        action = np.concatenate(action, axis=1).astype(np.float16)  # [rows, action_dim]
+        action = _concatenate_action_fields(data, self.modality_keys["action"]).astype(np.float16)
 
         actions_per_frame = None
         valid = None
@@ -1487,7 +1491,7 @@ class LeRobotSingleDataset(Dataset):
             state = []
             for state_key in self.modality_keys["state"]:
                 state.append(data[state_key])
-            state = np.concatenate(state, axis=1).astype(np.float16)
+            state = np.concatenate(state, axis=1).astype(np.float32)
             sample["state"] = state
 
         auxiliary_fields = self.data_cfg.get("auxiliary_fields", {}) if self.data_cfg is not None else {}
@@ -1561,6 +1565,11 @@ class LeRobotSingleDataset(Dataset):
         data = self._apply_action_mode(data)
         return data
 
+    def _read_trajectory_parquet(self, parquet_path: Path) -> pd.DataFrame:
+        if parquet_path not in self._parquet_cache:
+            self._parquet_cache[parquet_path] = pd.read_parquet(parquet_path)
+        return self._parquet_cache[parquet_path]
+
     def get_trajectory_data(self, trajectory_id: int) -> pd.DataFrame:
         """Get the data for a trajectory."""
         if self._lerobot_version == "v2.0":
@@ -1572,9 +1581,8 @@ class LeRobotSingleDataset(Dataset):
                 parquet_path = self.dataset_path / self.data_path_pattern.format(
                     episode_chunk=chunk_index, episode_index=trajectory_id
                 )
-                assert parquet_path.exists(), f"Parquet file not found at {parquet_path}"
+                self.curr_traj_data = self._read_trajectory_parquet(parquet_path)
                 self.curr_traj_id = trajectory_id
-                self.curr_traj_data = pd.read_parquet(parquet_path)
                 return self.curr_traj_data
         elif self._lerobot_version == "v3.0":
             return self.get_trajectory_data_lerobot_v3(trajectory_id)
@@ -1593,8 +1601,7 @@ class LeRobotSingleDataset(Dataset):
             parquet_path = self.dataset_path / self.data_path_pattern.format(
                 chunk_index=chunk_index, file_index=file_index
             )
-            assert parquet_path.exists(), f"Parquet file not found at {parquet_path}"
-            file_data = pd.read_parquet(parquet_path)
+            file_data = self._read_trajectory_parquet(parquet_path)
             
             # filter by trajectory_id
             episode_data = file_data.loc[file_data["episode_index"] == trajectory_id].copy()
@@ -1972,13 +1979,14 @@ class LeRobotSingleDataset(Dataset):
         # Get the data array, shape: (T, D)
         assert self.curr_traj_data is not None, f"No data found for {trajectory_id=}"
         assert le_key in self.curr_traj_data.columns, f"No {le_key} found in {trajectory_id=}"
-        data_array: np.ndarray = np.stack(self.curr_traj_data[le_key])  # type: ignore
-        assert data_array.ndim == 2, f"Expected 2D array, got key {le_key} is{data_array.shape} array"
+        data_array: np.ndarray = np.stack(
+            [np.stack(value) for value in self.curr_traj_data[le_key]]
+        )
         le_indices = np.arange(
             le_state_or_action_cfg[key].start,
             le_state_or_action_cfg[key].end,
         )
-        data_array = data_array[:, le_indices]
+        data_array = data_array[..., le_indices]
         # Get the state or action configuration
         state_or_action_cfg = getattr(self.metadata.modalities, modality)[key]
 
@@ -2531,6 +2539,8 @@ class LeRobotMixtureDataset(Dataset):
         self._flap_step_order: np.ndarray = np.array([], dtype=np.int64)
         self._other_step_order: np.ndarray = np.array([], dtype=np.int64)
 
+        # Persistent spawn workers share the epoch but retain their own tables and sample order.
+        self._shared_epoch = torch.zeros((), dtype=torch.int64, device="cpu").share_memory_()
         # Set the epoch after initializing sequential sampling state.
         self.set_epoch(0)
 
@@ -2574,6 +2584,7 @@ class LeRobotMixtureDataset(Dataset):
         """
         self.epoch = epoch
         self._rebuild_step_order(epoch)
+        self._shared_epoch.fill_(epoch)
 
     def set_active_latency_filter(self, latencies: Sequence[int] | None) -> None:
         """Restrict sequential step sampling to the provided latency IDs."""
@@ -2798,6 +2809,11 @@ class LeRobotMixtureDataset(Dataset):
         """Sample a single step from the dataset."""
         # return self.sampled_steps[index]
 
+        epoch = self._shared_epoch.item()
+        if self.epoch != epoch:
+            self.epoch = epoch
+            self._rebuild_step_order(epoch)
+
         if self._sequential_step_sampling:
             if len(self._step_order) == 0:
                 raise ValueError("Cannot sample from an empty sequential step order.")
@@ -2871,8 +2887,8 @@ class LeRobotMixtureDataset(Dataset):
                 raw_data = dataset.get_step_data(trajectory_id, step)
                 raw_action_target = None
                 if dataset.data_cfg is not None and dataset.data_cfg.get("include_action_target", False):
-                    raw_action_target = np.concatenate(
-                        [raw_data[key] for key in dataset.modality_keys["action"]], axis=1
+                    raw_action_target = _concatenate_action_fields(
+                        raw_data, dataset.modality_keys["action"]
                     ).astype(np.float32)
                 data = dataset.transforms(raw_data)
                 sample = dataset._pack_sample(data, trajectory_id=trajectory_id, base_index=step)

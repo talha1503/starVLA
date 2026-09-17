@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from omegaconf import OmegaConf
 
 from examples.rl_games.scripts import launch_train
@@ -181,39 +182,20 @@ def test_launcher_forwards_generic_gymnasium_openvla_contract(tmp_path: Path, mo
     assert recomposed.rl_games.env_eval.enabled is False
 
 
-def test_generic_gymnasium_openvla_command_reads_handoff_contract_from_manifest(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "model,action_dim,state_dim,uses_state",
+    [("openvla", 3, 1, False), ("pi05", 6, 1, False),
+     ("pi05", 5, 4, True), ("pi05", 3, 11, True),
+     ("pi05", 6, 17, True), ("pi05", 6, 17, True),
+     ("pi05", 8, 27, True), ("pi05", 17, 376, True)],
+    ids=["openvla", "air_raid", "inverted_pendulum", "hopper", "half_cheetah",
+         "walker2d", "ant", "humanoid"],
+)
+def test_generic_gymnasium_command_reads_handoff_contract_from_manifest(
+    tmp_path: Path, model: str, action_dim: int, state_dim: int, uses_state: bool,
 ) -> None:
-    command_text = COMMAND_PATH.read_text(encoding="utf-8")
-
-    assert 'DATASET_LOCAL_DIR="$1"' in command_text
-    assert 'DATA_MIX="$2"' in command_text
-    assert 'CUSTOM_MIXTURES_PATH="$3"' in command_text
-    assert 'shift 3' in command_text
-    assert 'MANIFEST_PATH="${DATASET_LOCAL_DIR}/${DATA_MIX}/manifest.json"' in command_text
-    assert 'contract = manifest["gymnasium_task"]' in command_text
-    assert 'print(manifest["active_action_dim"])' in command_text
-    assert "--model openvla" in command_text
-    assert "--env gymnasium" in command_text
-    assert '--init "${INIT_MODE}"' in command_text
-    assert "--mode single" in command_text
-    assert 'paths.dataset_local_dir="${DATASET_LOCAL_DIR}"' in command_text
-    assert 'dataset.single_converted_name="${DATA_MIX}"' in command_text
-    assert 'datasets.vla_data.data_mix="${DATA_MIX}"' in command_text
-    assert 'datasets.vla_data.custom_mixtures_path="${CUSTOM_MIXTURES_PATH}"' in command_text
-    assert 'rl_games.gymnasium.task_contract="${TASK_CONTRACT}"' in command_text
-    assert 'framework.action_model.action_env_dim="${ACTION_ENV_DIM}"' in command_text
-    assert 'framework.action_model.action_dim="${ACTION_DIM}"' in command_text
-    assert 'rl_games.action_carrier="${ACTION_CARRIER}"' in command_text
-    assert "datasets.vla_data.include_state=false" in command_text
-    assert "rl_games.env_eval.enabled=false" in command_text
-    assert "rl_games.env_eval.mid_train.enabled=false" in command_text
-    assert "rl_games.env_eval.post_train.enabled=false" in command_text
-    assert "model=wan_oft" not in command_text
-    assert "image_sequence_length" not in command_text
-    assert '"$@"' in command_text
-
-    subprocess.run(["bash", "-n", str(COMMAND_PATH)], check=True, cwd=REPO_ROOT)
+    command_path = REPO_ROOT / "commands" / model / f"train_gymnasium_{model}.sh"
+    subprocess.run(["bash", "-n", str(command_path)], check=True, cwd=REPO_ROOT)
 
     dataset_root = tmp_path / "datasets"
     data_mix = "mountain_car_fixed_l3"
@@ -224,8 +206,10 @@ def test_generic_gymnasium_openvla_command_reads_handoff_contract_from_manifest(
         json.dumps(
                 {
                     "gymnasium_task": task_contract,
-                    "active_action_dim": 3,
-                    "action_dim": 3,
+                    "uses_state": uses_state,
+                    "state_dim": state_dim,
+                    "active_action_dim": action_dim,
+                    "action_dim": action_dim,
                     "action_carrier": "native",
                 }
         ),
@@ -252,7 +236,7 @@ def test_generic_gymnasium_openvla_command_reads_handoff_contract_from_manifest(
     subprocess.run(
         [
             "bash",
-            str(COMMAND_PATH),
+            str(command_path),
             str(dataset_root),
             data_mix,
             str(mixture_path),
@@ -272,14 +256,38 @@ def test_generic_gymnasium_openvla_command_reads_handoff_contract_from_manifest(
         "rl_games.gymnasium.task_contract="
         + launch_train._hydra_value(task_contract)
     ) in launched_args
-    assert "framework.action_model.action_env_dim=3" in launched_args
-    assert "framework.action_model.action_dim=3" in launched_args
+    assert f"framework.action_model.action_env_dim={action_dim}" in launched_args
+    assert f"framework.action_model.action_dim={action_dim}" in launched_args
     assert "rl_games.action_carrier=native" in launched_args
     assert launched_args[launched_args.index("--init") + 1] == "scratch"
     assert f"paths.dataset_local_dir={dataset_root}" in launched_args
     assert f"dataset.single_converted_name={data_mix}" in launched_args
     assert f"datasets.vla_data.custom_mixtures_path={mixture_path}" in launched_args
     assert "trainer.max_train_steps=17" in launched_args
+
+    cfg = launch_train.compose_training_config(
+        config_name="train", model=model, env="gymnasium", init="scratch", mode="single",
+        overrides=launched_args[9:],
+    )
+    assert cfg.framework.action_model.action_dim == action_dim
+    assert cfg.framework.action_model.action_env_dim == action_dim
+    assert cfg.datasets.vla_data.include_state == uses_state
+    assert cfg.framework.action_model.state_dim == (state_dim if uses_state or model == "openvla" else 0)
+    assert cfg.framework.action_model.action_horizon == 1
+    assert cfg.framework.action_model.future_action_window_size == 0
+    assert cfg.framework.action_model.past_action_window_size == 0
+    assert cfg.checkpoint.load == "none"
+    assert cfg.trainer.is_resume is False
+    assert cfg.trainer.pretrained_checkpoint is None
+    assert cfg.trainer.reload_modules is None
+    assert cfg.initialization.checkpoint_local_dir is None
+    assert cfg.initialization.checkpoint_hf_repo_id is None
+    assert cfg.initialization.checkpoint_filename is None
+    if model == "pi05":
+        assert cfg.base_model.repo_id == "Qwen/Qwen3-VL-4B-Instruct"
+        assert cfg.framework.name == "QwenPI_v3"
+        assert cfg.framework.action_model.state_encoding == "continuous_projector"
+        assert cfg.framework.action_model.num_inference_timesteps == 4
 
 
 def test_generic_gymnasium_openvla_command_accepts_continuous_bridge_contract(
@@ -313,6 +321,8 @@ def test_generic_gymnasium_openvla_command_accepts_continuous_bridge_contract(
         json.dumps(
             {
                 "gymnasium_task": task_contract,
+                    "uses_state": False,
+                    "state_dim": 1,
                 "active_action_dim": 6,
                 "action_dim": 7,
                 "action_carrier": "bridge",
@@ -359,3 +369,22 @@ def test_generic_gymnasium_openvla_command_accepts_continuous_bridge_contract(
     assert "framework.action_model.action_dim=7" in launched_args
     assert "framework.action_model.action_env_dim=6" in launched_args
     assert "datasets.vla_data.include_state=false" in launched_args
+
+@pytest.mark.parametrize("carrier,action_dim", [("bridge", 7), ("native", 7)])
+def test_pi05_command_rejects_non_native_dataset(tmp_path: Path, carrier: str, action_dim: int) -> None:
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "manifest.json").write_text(json.dumps({
+        "action_carrier": carrier, "action_dim": action_dim, "active_action_dim": 6,
+    }))
+    shim = tmp_path / "python"
+    shim.write_text(f'#!/usr/bin/env bash\nexec "{sys.executable}" "$@"\n')
+    shim.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "commands/pi05/train_gymnasium_pi05.sh"),
+         str(tmp_path), "dataset", "unused.json"],
+        cwd=REPO_ROOT, env={**os.environ, "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"},
+        capture_output=True, text=True,
+    )
+    assert result.returncode != 0
+    assert "Pi05 requires a native dataset" in result.stderr

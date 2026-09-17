@@ -323,7 +323,12 @@ class Qwenvl_OFT(baseframework):
         actions_target: torch.Tensor,
         action_env_dims: Optional[List[int]] = None,
         rl_games_tasks: Optional[List[str]] = None,
+        action_valid_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if action_valid_mask is not None:
+            error = (pred_actions[..., :self.action_env_dim] - actions_target[..., :self.action_env_dim]).abs().mean(dim=-1)
+            error = error.masked_fill(~action_valid_mask, 0)
+            return (error.sum(dim=-1) / action_valid_mask.sum(dim=-1)).mean()
         if self.loss_by_task and rl_games_tasks is not None:
             if len(rl_games_tasks) != pred_actions.shape[0]:
                 raise ValueError(f"Expected {pred_actions.shape[0]} task labels, got {len(rl_games_tasks)}")
@@ -495,6 +500,10 @@ class Qwenvl_OFT(baseframework):
                 actions_target,
                 action_env_dims=action_env_dims,
                 rl_games_tasks=rl_games_tasks,
+                action_valid_mask=(torch.as_tensor(
+                    np.asarray([example["action_valid_mask"] for example in examples]),
+                    device=pred_actions.device, dtype=torch.bool,
+                ) if "action_valid_mask" in examples[0] else None),
             )
             if self.task_objective is not None:
                 action_loss = action_loss + self.task_objective(pred_actions, examples)

@@ -691,8 +691,17 @@ class VLATrainer(TrainerUtils):
                 dir=os.path.join(self.config.output_dir, "wandb"),
                 project=self.config.wandb_project,
                 entity=self.config.wandb_entity,
-                group="vla-train",
+                group=self.config.wandb_group,
+                tags=self.config.wandb_tags,
             )
+            wandb.config.update({
+                "micro_batch": self.config.datasets.vla_data.per_device_batch_size,
+                "gradient_accumulation_steps": self.accelerator.gradient_accumulation_steps,
+                "global_batch": self.total_batch_size,
+                "training_latency_condition": self.config.training_latency_condition,
+            }, allow_val_change=True)
+            wandb.define_metric("global_step")
+            wandb.define_metric("*", step_metric="global_step")
 
     def _save_initial_configs(self):
         """Save full config and training script at the very start of training."""
@@ -1036,6 +1045,9 @@ class VLATrainer(TrainerUtils):
 
         self.accelerator.wait_for_everyone()
 
+    def _log_wandb(self, metrics):
+        wandb.log({**metrics, "global_step": self.completed_steps})
+
     def _log_metrics(self, metrics):
         """Record training metrics."""
         if self.completed_steps % self.config.trainer.logging_frequency == 0 and self.accelerator.is_main_process:
@@ -1052,7 +1064,7 @@ class VLATrainer(TrainerUtils):
                 ),
                 2,
             )
-            wandb.log(metrics, step=self.completed_steps)
+            self._log_wandb(metrics)
             logger.info(f"Step {self.completed_steps}, Loss: {metrics})")
 
     @staticmethod
@@ -1440,6 +1452,7 @@ class VLATrainer(TrainerUtils):
 
     def train(self):
         """Execute training loop."""
+        self.model.train()
         self._log_training_config()
         self._create_data_iterators()
         self._apply_latency_curriculum(force=True)
@@ -1585,10 +1598,7 @@ class VLATrainer(TrainerUtils):
                     t_profile_log = self._profile_start() if self._profile_timing_should_log() else None
                     self._log_metrics(step_metrics)
                     if self._profile_timing_should_log() and self.accelerator.is_main_process:
-                        wandb.log(
-                            {"timing/log_metrics_total": self._profile_elapsed(t_profile_log)},
-                            step=self.completed_steps,
-                        )
+                        self._log_wandb({"timing/log_metrics_total": self._profile_elapsed(t_profile_log)})
 
                 if stop_requested:
                     self._save_interrupt_checkpoint()
@@ -1602,10 +1612,7 @@ class VLATrainer(TrainerUtils):
                     t_profile_checkpoint = self._profile_start() if self._profile_timing_should_log() else None
                     self._save_checkpoint()
                     if self._profile_timing_should_log() and self.accelerator.is_main_process:
-                        wandb.log(
-                            {"timing/checkpoint_total": self._profile_elapsed(t_profile_checkpoint)},
-                            step=self.completed_steps,
-                        )
+                        self._log_wandb({"timing/checkpoint_total": self._profile_elapsed(t_profile_checkpoint)})
 
                 if self.completed_steps >= stop_step:
                     break
@@ -2390,7 +2397,7 @@ class VLATrainer(TrainerUtils):
                     stage="post_train",
                     step=self.completed_steps,
                 )
-                wandb.log(final_metrics, step=self.completed_steps)
+                self._log_wandb(final_metrics)
 
         if self.accelerator.is_main_process:
             wandb.finish()

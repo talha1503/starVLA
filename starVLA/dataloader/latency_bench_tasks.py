@@ -29,6 +29,15 @@ from starVLA.dataloader.lerobot_datasets import (
 )
 
 
+class _H1StateActionTransform(StateActionTransform):
+    """Match H1 deployment's bounded state normalization."""
+
+    def apply(self, data: dict[str, Any]) -> dict[str, Any]:
+        data = super().apply(data)
+        data["state.proprio"] = data["state.proprio"].clamp(-1, 1)
+        return data
+
+
 class LatencyBenchH1DataConfig(BaseDataConfig):
     def __init__(self, contract: dict[str, Any]):
         self.robot_type = contract["robot_type"]
@@ -50,7 +59,7 @@ class LatencyBenchH1DataConfig(BaseDataConfig):
         return ComposedModalityTransform(
             transforms=[
                 StateActionToTensor(apply_to=keys),
-                StateActionTransform(
+                _H1StateActionTransform(
                     apply_to=keys,
                     normalization_modes={key: "min_max" for key in keys},
                 ),

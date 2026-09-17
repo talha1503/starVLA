@@ -60,7 +60,7 @@ def test_kv_memory_sync_derives_rollout_len_from_window() -> None:
     assert cfg.datasets.vla_data.image_mode == "multiframe"
 
 
-def test_rejects_pi05_scratch() -> None:
+def test_accepts_pi05_scratch() -> None:
     cfg = _build_cfg(
         {
             "rl_games": {
@@ -83,8 +83,7 @@ def test_rejects_pi05_scratch() -> None:
         }
     )
 
-    with pytest.raises(ValueError, match="pi-0.5 scratch is not supported"):
-        validate_rl_games_config(cfg)
+    validate_rl_games_config(cfg)
 
 
 def test_rejects_bridge_without_checkpoint_metadata() -> None:
@@ -168,11 +167,12 @@ def test_rejects_pretrained_without_bridge_action_carrier() -> None:
         validate_rl_games_config(cfg)
 
 
-def test_accepts_bridge_with_checkpoint_metadata() -> None:
+@pytest.mark.parametrize("model_alias", ["openvla", "pi-0.5"])
+def test_accepts_bridge_with_checkpoint_metadata(model_alias: str) -> None:
     cfg = _build_cfg(
         {
             "rl_games": {
-                "model_alias": "openvla",
+                "model_alias": model_alias,
                 "task": "flappy",
                 "initialization_mode": "bridge",
                 "action_carrier": "bridge",

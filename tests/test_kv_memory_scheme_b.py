@@ -162,6 +162,7 @@ def test_mixture_dataset_preserves_kv_memory_fields_from_single_dataset():
 
     class SingleDataset:
         dataset_name = "fake"
+        data_cfg = None
         lerobot_info_meta = {"total_videos": 0}
         modality_keys = {"video": ["video.image"]}
 
