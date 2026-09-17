@@ -292,6 +292,7 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
         actions: torch.Tensor,
         state: torch.Tensor = None,
         return_clean_actions: bool = False,
+        action_valid_mask: torch.Tensor = None,
     ):
         """
         vl_embs: list of torch.Tensor, each shape (B, seq_length, feature_dim)
@@ -300,6 +301,9 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
         device = actions.device
         num_layers = len(vl_embs_list)
         B, L, D = vl_embs_list[0].shape
+        if action_valid_mask is not None:
+            # Missing labels must not enter valid heads through self-attention.
+            actions = actions.masked_fill(~action_valid_mask[..., None], 0)
         # Embed noised action trajectory.
         noise = torch.randn(actions.shape, device=actions.device, dtype=actions.dtype)
         t = self.sample_time(actions.shape[0], device=actions.device, dtype=actions.dtype)
@@ -350,7 +354,12 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
         effective_dim = min(self.action_env_dim, self.action_dim)
         pred_loss = pred_actions[..., :effective_dim]
         target_loss = velocity[..., :effective_dim]
-        loss = ((pred_loss - target_loss) ** 2).mean()
+        head_loss = ((pred_loss - target_loss) ** 2).mean(dim=-1)
+        if action_valid_mask is None:
+            loss = head_loss.mean()
+        else:
+            # Each request has equal weight, regardless of how many heads ran.
+            loss = ((head_loss * action_valid_mask).sum(-1) / action_valid_mask.sum(-1)).mean()
         if return_clean_actions:
             clean_actions = noisy_trajectory + (1 - t) * pred_actions
             return loss, clean_actions

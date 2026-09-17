@@ -321,6 +321,13 @@ class Qwen_PI_v3(baseframework):
             )
             repeated_diffusion_steps = 2  # No repeat for the large action FM to save memory.
             actions_target_repeated = actions_target.repeat(repeated_diffusion_steps, 1, 1)
+            action_valid_mask = None
+            if "action_valid_mask" in examples[0]:
+                action_valid_mask = torch.as_tensor(
+                    np.array([example["action_valid_mask"] for example in examples]),
+                    device=base_hidden.device,
+                    dtype=torch.bool,
+                )[:, -self.action_horizon :].repeat(repeated_diffusion_steps, 1)
             # Repeat every VLM layer embedding to match the duplicated action batch.
             vl_embs_list_repeated = [h.repeat(repeated_diffusion_steps, 1, 1) for h in vl_embs_list]
 
@@ -334,6 +341,7 @@ class Qwen_PI_v3(baseframework):
                 actions_target_repeated,
                 state_repeated,
                 return_clean_actions=self.task_objective is not None,
+                action_valid_mask=action_valid_mask,
             )
             if self.task_objective is None:
                 action_loss = action_result

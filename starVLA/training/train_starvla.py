@@ -1045,6 +1045,9 @@ class VLATrainer(TrainerUtils):
 
         self.accelerator.wait_for_everyone()
 
+    def _log_wandb(self, metrics):
+        wandb.log({**metrics, "global_step": self.completed_steps})
+
     def _log_metrics(self, metrics):
         """Record training metrics."""
         if self.completed_steps % self.config.trainer.logging_frequency == 0 and self.accelerator.is_main_process:
@@ -1061,7 +1064,7 @@ class VLATrainer(TrainerUtils):
                 ),
                 2,
             )
-            wandb.log({**metrics, "global_step": self.completed_steps}, step=self.completed_steps)
+            self._log_wandb(metrics)
             logger.info(f"Step {self.completed_steps}, Loss: {metrics})")
 
     @staticmethod
@@ -1595,11 +1598,7 @@ class VLATrainer(TrainerUtils):
                     t_profile_log = self._profile_start() if self._profile_timing_should_log() else None
                     self._log_metrics(step_metrics)
                     if self._profile_timing_should_log() and self.accelerator.is_main_process:
-                        wandb.log(
-                            {"timing/log_metrics_total": self._profile_elapsed(t_profile_log),
-                             "global_step": self.completed_steps},
-                            step=self.completed_steps,
-                        )
+                        self._log_wandb({"timing/log_metrics_total": self._profile_elapsed(t_profile_log)})
 
                 if stop_requested:
                     self._save_interrupt_checkpoint()
@@ -1613,11 +1612,7 @@ class VLATrainer(TrainerUtils):
                     t_profile_checkpoint = self._profile_start() if self._profile_timing_should_log() else None
                     self._save_checkpoint()
                     if self._profile_timing_should_log() and self.accelerator.is_main_process:
-                        wandb.log(
-                            {"timing/checkpoint_total": self._profile_elapsed(t_profile_checkpoint),
-                             "global_step": self.completed_steps},
-                            step=self.completed_steps,
-                        )
+                        self._log_wandb({"timing/checkpoint_total": self._profile_elapsed(t_profile_checkpoint)})
 
                 if self.completed_steps >= stop_step:
                     break
@@ -2402,7 +2397,7 @@ class VLATrainer(TrainerUtils):
                     stage="post_train",
                     step=self.completed_steps,
                 )
-                wandb.log({**final_metrics, "global_step": self.completed_steps}, step=self.completed_steps)
+                self._log_wandb(final_metrics)
 
         if self.accelerator.is_main_process:
             wandb.finish()

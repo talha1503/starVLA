@@ -89,7 +89,7 @@ def test_wandb_reports_name_batch_and_optimizer_step(tmp_path, monkeypatch, wand
         trainer.completed_steps = step
         trainer._log_metrics({"train/loss": 0.25})
     assert [values["global_step"] for values, _ in history] == [150, 155]
-    assert [kwargs["step"] for _, kwargs in history] == [150, 155]
+    assert [kwargs for _, kwargs in history] == [{}, {}]
     assert all(values["train/loss"] == 0.25 for values, _ in history)
 
 
