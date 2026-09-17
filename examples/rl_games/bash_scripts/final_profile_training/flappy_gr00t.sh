@@ -9,14 +9,51 @@ if [[ ! -d "${CODE_ROOT}/starVLA" ]]; then
   echo "[error] missing StarVLA repo: ${CODE_ROOT}/starVLA" >&2
   exit 2
 fi
-
-if [[ -d "${CODE_ROOT}/latency-sensitive-bench/.git" ]]; then
-  git -C "${CODE_ROOT}/latency-sensitive-bench" submodule update --init --recursive
-else
-  WORKSPACE_DIR="${CODE_ROOT}" bash "${CODE_ROOT}/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh"
+if [[ ! -d "${CODE_ROOT}/latency-sensitive-bench/.git" ]]; then
+  echo "[error] missing latency-sensitive-bench repo: ${CODE_ROOT}/latency-sensitive-bench" >&2
+  exit 2
 fi
 
+cd "${CODE_ROOT}/latency-sensitive-bench"
+git config --global url."https://github.com/".insteadOf git@github.com:
+git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+git config -f .gitmodules submodule.flappy-bird-gymnasium.url https://github.com/mindorigin150/flappy-bird-gymnasium.git
+git submodule sync -- third_party/starVLA third_party/flappy-bird-gymnasium third_party/sample-factory
+git submodule update --init --recursive third_party/starVLA
+git submodule update --init --recursive third_party/sample-factory
+
+if [[ ! -f third_party/flappy-bird-gymnasium/pyproject.toml && ! -f third_party/flappy-bird-gymnasium/setup.py ]]; then
+  git submodule deinit -f -- third_party/flappy-bird-gymnasium || true
+  rm -rf .git/modules/third_party/flappy-bird-gymnasium
+  rm -rf third_party/flappy-bird-gymnasium
+fi
+git submodule update --init --recursive third_party/flappy-bird-gymnasium
+
 cd "${CODE_ROOT}/starVLA"
+
+if command -v apt-get >/dev/null 2>&1 && [[ "${SKIP_APT_INSTALL:-0}" != "1" ]]; then
+  sudo apt-get update
+  sudo apt-get install -y \
+    pkg-config \
+    libsdl2-dev \
+    libsdl2-image-dev \
+    libsdl2-mixer-dev \
+    libsdl2-ttf-dev \
+    libfreetype6-dev \
+    libportmidi-dev
+fi
+
+if command -v conda >/dev/null 2>&1; then
+  CONDA_BASE="$(conda info --base)"
+  source "${CONDA_BASE}/etc/profile.d/conda.sh"
+elif [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]]; then
+  source "$HOME/miniconda3/etc/profile.d/conda.sh"
+elif [[ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]]; then
+  source "$HOME/miniconda/etc/profile.d/conda.sh"
+else
+  echo "[error] conda not found; install/source conda before running this script" >&2
+  exit 2
+fi
 
 conda activate starvla_rl_games_gr00t
 
