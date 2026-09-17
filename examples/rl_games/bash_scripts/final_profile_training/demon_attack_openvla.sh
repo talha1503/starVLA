@@ -55,6 +55,8 @@ else
   exit 2
 fi
 
+bash examples/rl_games/install/install_stack.sh openvla demon_attack
+
 conda activate starvla_rl_games_openvla
 
 WORKSPACE_DIR="${CODE_ROOT}" bash "${CODE_ROOT}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
