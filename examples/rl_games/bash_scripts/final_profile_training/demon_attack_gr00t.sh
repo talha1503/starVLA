@@ -1,17 +1,29 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
-export WORKSPACE_DIR
+CODE_ROOT="${CODE_ROOT:-/home/ubuntu/talha}"
+DATA_WORKSPACE_DIR="${DATA_WORKSPACE_DIR:-/mnt/local/talha}"
+export CODE_ROOT DATA_WORKSPACE_DIR
 
-bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh"
+if [[ ! -d "${CODE_ROOT}/starVLA" ]]; then
+  echo "[error] missing StarVLA repo: ${CODE_ROOT}/starVLA" >&2
+  exit 2
+fi
 
-cd "${WORKSPACE_DIR}/starVLA"
+if [[ -d "${CODE_ROOT}/latency-sensitive-bench/.git" ]]; then
+  git -C "${CODE_ROOT}/latency-sensitive-bench" submodule update --init --recursive
+else
+  WORKSPACE_DIR="${CODE_ROOT}" bash "${CODE_ROOT}/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh"
+fi
+
+cd "${CODE_ROOT}/starVLA"
 
 conda activate starvla_rl_games_gr00t
 
-bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
+WORKSPACE_DIR="${CODE_ROOT}" bash "${CODE_ROOT}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
 
-export PYTHONPATH="${WORKSPACE_DIR}/latency-sensitive-bench:${PYTHONPATH:-}"
+mkdir -p "${DATA_WORKSPACE_DIR}"
+export PYTHONPATH="${CODE_ROOT}/latency-sensitive-bench:${PYTHONPATH:-}"
 
 python examples/rl_games/scripts/launch_train.py \
     model=gr00t \
@@ -20,7 +32,7 @@ python examples/rl_games/scripts/launch_train.py \
     mode=mixed_latency \
     run_id="gr00t_bridge_demon_attack_rtx3090_profile_1000ep_7k2steps_final_action_1e-5_backbone_1e-6" \
     trainer.distributed_backend=none \
-    workspace_dir="$WORKSPACE_DIR" \
+    workspace_dir="$DATA_WORKSPACE_DIR" \
     wandb_entity="talha1503" \
     checkpoint.hf_repo_id="latency-sensitive-bench/gr00t_bridge_demon_attack_rtx3090_profile_1000ep_7k2steps_final_action_1e-5_backbone_1e-6" \
     checkpoint.sync.enabled=true \
