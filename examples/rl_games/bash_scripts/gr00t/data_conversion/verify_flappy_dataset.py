@@ -228,17 +228,30 @@ def build_latency_prompt_map(
         )
         if latency is None:
             raise KeyError(f"row is missing latency/prompt columns; available columns: {sorted(row.keys())}")
+        if latency_column == "latency_raw_frames":
+            latency_raw_frames = int(row[latency_column])
+        elif "latency_raw_frames" in row and row["latency_raw_frames"] is not None:
+            latency_raw_frames = int(row["latency_raw_frames"])
+        elif target_latency_unit == "raw_frames":
+            latency_raw_frames = int(latency)
+        else:
+            latency_raw_frames = int(latency) * int(obs_stride_raw_frames)
         prompt = str(row["prompt"])
         latency_ms = row.get("latency_ms")
         current = by_latency.get(latency)
         if current is None:
             by_latency[latency] = {
                 "latency": latency,
+                "latency_raw_frames": latency_raw_frames,
                 "latency_ms": latency_ms,
                 "prompt": prompt,
             }
             continue
-        if current["prompt"] != prompt or current.get("latency_ms") != latency_ms:
+        if (
+            current["prompt"] != prompt
+            or current.get("latency_ms") != latency_ms
+            or int(current["latency_raw_frames"]) != latency_raw_frames
+        ):
             raise ValueError(f"inconsistent prompt/latency_ms values for latency={latency}")
     return {str(k): by_latency[k] for k in sorted(by_latency)}
 

@@ -3,6 +3,7 @@ import json
 import pytest
 
 from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import (
+    build_latency_prompt_map,
     latency_id_from_row,
     source_timing_from_args,
 )
@@ -15,6 +16,30 @@ def test_raw_frame_latency_is_preserved() -> None:
         target_latency_unit="raw_frames",
         obs_stride_raw_frames=4,
     ) == 6
+
+
+def test_prompt_map_includes_raw_frame_latency_field() -> None:
+    prompt_map = build_latency_prompt_map(
+        [{"prompt": "latency six", "latency_raw_frames": 6, "latency_ms": 100.0}],
+        latency_column="latency_raw_frames",
+        target_latency_unit="raw_frames",
+        obs_stride_raw_frames=4,
+    )
+
+    assert prompt_map["6"]["latency"] == 6
+    assert prompt_map["6"]["latency_raw_frames"] == 6
+
+
+def test_prompt_map_derives_raw_frames_from_observation_step_latency() -> None:
+    prompt_map = build_latency_prompt_map(
+        [{"prompt": "latency two", "latency_raw_frames": 8, "latency_ms": 133.3}],
+        latency_column="latency_raw_frames",
+        target_latency_unit="observation_steps",
+        obs_stride_raw_frames=4,
+    )
+
+    assert prompt_map["2"]["latency"] == 2
+    assert prompt_map["2"]["latency_raw_frames"] == 8
 
 
 def test_raw_frame_latency_converts_to_observation_steps() -> None:
