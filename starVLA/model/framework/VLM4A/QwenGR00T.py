@@ -221,6 +221,20 @@ class Qwen_GR00T(baseframework):
             )
             actions_target_repeated = actions_target.repeat(repeated_diffusion_steps, 1, 1)
             last_hidden_repeated = last_hidden.repeat(repeated_diffusion_steps, 1, 1)
+            action_prefix_mask = None
+            action_loss_mask = None
+            if "action_prefix_mask" in examples[0]:
+                action_prefix_mask = torch.as_tensor(
+                    np.array([example["action_prefix_mask"] for example in examples]),
+                    device=last_hidden.device,
+                    dtype=torch.bool,
+                )[:, -self.action_horizon :].repeat(repeated_diffusion_steps, 1)
+            if "action_loss_mask" in examples[0]:
+                action_loss_mask = torch.as_tensor(
+                    np.array([example["action_loss_mask"] for example in examples]),
+                    device=last_hidden.device,
+                    dtype=torch.bool,
+                )[:, -self.action_horizon :].repeat(repeated_diffusion_steps, 1)
 
             state_repeated = None
             if state is not None:
@@ -232,6 +246,8 @@ class Qwen_GR00T(baseframework):
                 actions_target_repeated,
                 state_repeated,
                 return_clean_actions=self.task_objective is not None,
+                action_prefix_mask=action_prefix_mask,
+                action_loss_mask=action_loss_mask,
             )  # (B, chunk_len, action_dim)
             if self.task_objective is None:
                 action_loss = action_result
@@ -265,6 +281,16 @@ class Qwen_GR00T(baseframework):
         instructions = [example["lang"] for example in examples]  # [B, str]
 
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
+        action_prefix = (
+            [example["action_prefix"] for example in examples]
+            if "action_prefix" in examples[0]
+            else None
+        )
+        action_prefix_mask = (
+            [example["action_prefix_mask"] for example in examples]
+            if "action_prefix_mask" in examples[0]
+            else None
+        )
 
         train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
         if train_obs_image_size:
@@ -288,10 +314,27 @@ class Qwen_GR00T(baseframework):
             if state is not None
             else None
         )
+        action_prefix = (
+            self._pad_actions_to_model_dim(
+                torch.from_numpy(np.array(action_prefix)).to(last_hidden.device, dtype=last_hidden.dtype)
+            )
+            if action_prefix is not None
+            else None
+        )
+        action_prefix_mask = (
+            torch.from_numpy(np.array(action_prefix_mask)).to(last_hidden.device, dtype=torch.bool)
+            if action_prefix_mask is not None
+            else None
+        )
 
         # Step 4: Action Expert Forward
         with torch.autocast("cuda", dtype=torch.float32):
-            pred_actions = self.action_model.predict_action(last_hidden, state)  # (B, chunk_len, action_dim)
+            pred_actions = self.action_model.predict_action(
+                last_hidden,
+                state,
+                action_prefix=action_prefix,
+                action_prefix_mask=action_prefix_mask,
+            )  # (B, chunk_len, action_dim)
 
         normalized_actions = pred_actions.detach().cpu().numpy()
         return {"normalized_actions": normalized_actions}
