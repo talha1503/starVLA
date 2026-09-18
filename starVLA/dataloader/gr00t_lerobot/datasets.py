@@ -1979,9 +1979,12 @@ class LeRobotSingleDataset(Dataset):
         # Get the data array, shape: (T, D)
         assert self.curr_traj_data is not None, f"No data found for {trajectory_id=}"
         assert le_key in self.curr_traj_data.columns, f"No {le_key} found in {trajectory_id=}"
-        data_array: np.ndarray = np.stack(
-            [np.stack(value) for value in self.curr_traj_data[le_key]]
-        )
+        arrays = []
+        for value in self.curr_traj_data[le_key]:
+            array = np.asarray(value)
+            # Flat numeric vectors are already stacked; nested Parquet chunks are objects.
+            arrays.append(np.stack(array) if array.dtype.hasobject else array)
+        data_array: np.ndarray = np.stack(arrays)
         le_indices = np.arange(
             le_state_or_action_cfg[key].start,
             le_state_or_action_cfg[key].end,

@@ -2529,6 +2529,7 @@ def main(cfg) -> None:
         logger.info("✅ Configuration wrapped for access tracking")
 
         output_dir = setup_directories(cfg=cfg)
+        set_seed(cfg.seed)
         vla = build_framework(cfg)
         vla = _preload_model_checkpoint_before_accelerator(cfg=cfg, model=vla)
 

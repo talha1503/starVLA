@@ -53,7 +53,7 @@ class AtlantisDataConfig(FlappyDataConfig):
 
 
 class GymnasiumDataConfig(FlappyDataConfig):
-    pass
+    language_keys = ["annotation.human.task_description"]
 
 
 class GymnasiumNativeDataConfig(FlappyDataConfig):
