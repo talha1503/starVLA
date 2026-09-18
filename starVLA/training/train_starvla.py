@@ -612,6 +612,11 @@ class VLATrainer(TrainerUtils):
         self.graceful_stop_requested = False
         self._graceful_stop_logged = False
         self._interrupt_checkpoint_saved = False
+        self._dagger_control_dir = (
+            Path(self.config.trainer.dagger_control_dir)
+            if "dagger_control_dir" in self.config.trainer
+            else None
+        )
         stop_file = os.environ.get("STARVLA_STOP_FILE")
         self._graceful_stop_file = Path(stop_file) if stop_file else None
         if hasattr(self.config, "rl_games") and hasattr(self.config.rl_games, "env_eval"):
@@ -627,7 +632,7 @@ class VLATrainer(TrainerUtils):
 
     def prepare_training(self):
         _configure_torch_dynamo_recompile_limits()
-        if "stop_after_steps" in self.config.trainer:
+        if "stop_after_steps" in self.config.trainer or self._dagger_control_dir is not None:
             # Round-boundary resumes must restore the same LR schedule position.
             self.accelerator.register_for_checkpointing(self.lr_scheduler)
 
@@ -1123,6 +1128,41 @@ class VLATrainer(TrainerUtils):
         """Create data iterators."""
         self.vla_iter = iter(self.vla_train_dataloader)
 
+    def _wait_for_dagger_round(self) -> bool:
+        """Pause at a saved DAgger boundary and activate the controller's next mixture."""
+        ready_path = self._dagger_control_dir / f"step_{self.completed_steps}.ready"
+        continue_path = self._dagger_control_dir / f"step_{self.completed_steps}.continue.json"
+        command = [None]
+        if self.accelerator.is_main_process:
+            self._dagger_control_dir.mkdir(parents=True, exist_ok=True)
+            temporary = ready_path.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps({"step": self.completed_steps}) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(ready_path)
+            logger.info("DAgger round %s is ready for collection", self.completed_steps)
+            while not continue_path.is_file():
+                if self._refresh_graceful_stop_requested():
+                    break
+                time.sleep(1.0)
+            if not self.graceful_stop_requested:
+                command[0] = json.loads(continue_path.read_text(encoding="utf-8"))
+
+        if dist.is_initialized():
+            dist.broadcast_object_list(command, src=0)
+        if command[0] is None:
+            self._mark_graceful_stop_requested("dagger_round_wait")
+            return False
+
+        self.vla_train_dataloader.dataset.refresh_custom_mixture()
+        self._create_data_iterators()
+        _distributed_barrier()
+        if self.accelerator.is_main_process:
+            self._log_wandb(command[0]["metrics"])
+            logger.info("DAgger round %s resumed with refreshed data", self.completed_steps)
+        return True
+
     def _mark_graceful_stop_requested(self, reason: str) -> None:
         self.graceful_stop_requested = True
         if self._graceful_stop_file is not None and not self._graceful_stop_file.exists():
@@ -1613,6 +1653,12 @@ class VLATrainer(TrainerUtils):
                     self._save_checkpoint()
                     if self._profile_timing_should_log() and self.accelerator.is_main_process:
                         self._log_wandb({"timing/checkpoint_total": self._profile_elapsed(t_profile_checkpoint)})
+                    if (
+                        self._dagger_control_dir is not None
+                        and self.completed_steps < self.config.trainer.max_train_steps
+                        and not self._wait_for_dagger_round()
+                    ):
+                        break
 
                 if self.completed_steps >= stop_step:
                     break

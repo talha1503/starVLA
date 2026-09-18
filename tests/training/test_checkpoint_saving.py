@@ -98,6 +98,7 @@ def test_model_only_checkpoint_does_not_save_full_training_state(tmp_path: Path)
         {
             "output_dir": str(tmp_path),
             "datasets": {"vla_data": {"per_device_batch_size": 1}},
+            "trainer": {},
             "checkpoint": {
                 "save_best_model": False,
                 "save_final_model": True,
@@ -133,6 +134,45 @@ def test_model_only_checkpoint_does_not_save_full_training_state(tmp_path: Path)
     assert model_path.exists()
     assert not state_path.exists()
     assert json.loads(summary_path.read_text(encoding="utf-8").strip()) == {"steps": 400}
+
+
+def test_dagger_boundary_refreshes_dataset_and_restarts_iterator(tmp_path: Path) -> None:
+    class Dataset:
+        def __init__(self) -> None:
+            self.refreshes = 0
+
+        def refresh_custom_mixture(self) -> None:
+            self.refreshes += 1
+
+    class Loader:
+        def __init__(self) -> None:
+            self.dataset = Dataset()
+            self.iterator_count = 0
+
+        def __iter__(self):
+            self.iterator_count += 1
+            return iter(())
+
+    control_dir = tmp_path / "control"
+    control_dir.mkdir()
+    metrics = {"round": 2, "eval/mean_length": 42.0}
+    (control_dir / "step_500.continue.json").write_text(
+        json.dumps({"metrics": metrics}), encoding="utf-8"
+    )
+    trainer = VLATrainer.__new__(VLATrainer)
+    trainer._dagger_control_dir = control_dir
+    trainer.completed_steps = 500
+    trainer.accelerator = _FakeAccelerator()
+    trainer.vla_train_dataloader = Loader()
+    trainer.graceful_stop_requested = False
+    logged = []
+    trainer._log_wandb = logged.append
+
+    assert trainer._wait_for_dagger_round() is True
+    assert json.loads((control_dir / "step_500.ready").read_text()) == {"step": 500}
+    assert trainer.vla_train_dataloader.dataset.refreshes == 1
+    assert trainer.vla_train_dataloader.iterator_count == 1
+    assert logged == [metrics]
 
 
 def test_round_resume_restores_optimizer_and_lr_schedule(tmp_path, monkeypatch):

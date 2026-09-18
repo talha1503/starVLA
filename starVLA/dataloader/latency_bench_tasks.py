@@ -7,10 +7,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+import torch
 from torch.utils.data import DataLoader
 
 from starVLA.dataloader.gr00t_lerobot.data_config import BaseDataConfig
-from starVLA.dataloader.gr00t_lerobot.datasets import ModalityConfig
+from starVLA.dataloader.gr00t_lerobot.datasets import LeRobotMixtureDataset, ModalityConfig
 from starVLA.dataloader.gr00t_lerobot.embodiment_tags import EmbodimentTag
 from starVLA.dataloader.gr00t_lerobot.registry import (
     ROBOT_TYPE_CONFIG_MAP,
@@ -26,6 +27,7 @@ from starVLA.dataloader.worker_context import build_cpu_only_dataloader_kwargs
 from starVLA.dataloader.lerobot_datasets import (
     collate_fn,
     get_vla_dataset as _get_vla_dataset,
+    make_LeRobotSingleDataset,
 )
 
 
@@ -73,15 +75,7 @@ def _register_contract(contract: dict[str, Any]) -> None:
     ROBOT_TYPE_TO_EMBODIMENT_TAG[config.robot_type] = EmbodimentTag.NEW_EMBODIMENT
 
 
-def get_vla_dataset(
-    data_cfg: Any,
-    mode: str = "train",
-    balance_dataset_weights: bool = False,
-    balance_trajectory_weights: bool = False,
-    seed: int = 42,
-    **kwargs: Any,
-):
-    """Build the standard StarVLA mixture while attaching task auxiliaries."""
+def _configured_data_cfg(data_cfg: Any) -> Any:
     cfg = copy.deepcopy(data_cfg)
     load_custom_mixtures(cfg["custom_mixtures_path"])
     contract = json.loads(Path(cfg["task_contract_path"]).expanduser().read_text(encoding="utf-8"))
@@ -92,6 +86,90 @@ def get_vla_dataset(
         name: value["column"]
         for name, value in contract["auxiliary"].items()
     }
+    return cfg
+
+
+class _RefreshableLatencyBenchMixture(LeRobotMixtureDataset):
+    """Own an incrementally refreshable DAgger mixture inside persistent workers."""
+
+    def __init__(
+        self,
+        data_cfg: Any,
+        *,
+        mode: str,
+        balance_dataset_weights: bool,
+        balance_trajectory_weights: bool,
+        seed: int,
+    ) -> None:
+        self._refresh_data_cfg = copy.deepcopy(data_cfg)
+        self._refresh_data_root = Path(self._refresh_data_cfg["data_root_dir"])
+        self._refresh_mixture_name = self._refresh_data_cfg["data_mix"]
+        self._refresh_mixture_path = Path(self._refresh_data_cfg["custom_mixtures_path"])
+        self._refresh_source_cache: dict[tuple[str, str], Any] = {}
+        super().__init__(
+            self._materialize_current_mixture(None),
+            mode=mode,
+            balance_dataset_weights=balance_dataset_weights,
+            balance_trajectory_weights=balance_trajectory_weights,
+            seed=seed,
+            data_cfg=self._refresh_data_cfg,
+        )
+        self._shared_mixture_generation = torch.zeros(
+            (), dtype=torch.int64, device="cpu"
+        ).share_memory_()
+        self._local_mixture_generation = 0
+
+    def _current_mixture_spec(self) -> list[list[Any]]:
+        payload = json.loads(self._refresh_mixture_path.read_text(encoding="utf-8"))
+        return payload[self._refresh_mixture_name]
+
+    def _materialize_current_mixture(
+        self,
+        transform_metadata: dict[str, Any] | None,
+    ) -> list[tuple[Any, float]]:
+        mixture = []
+        for data_name, weight, robot_type in self._current_mixture_spec():
+            key = (data_name, robot_type)
+            if key not in self._refresh_source_cache:
+                source = make_LeRobotSingleDataset(
+                    self._refresh_data_root,
+                    key[0],
+                    key[1],
+                    delete_pause_frame=False,
+                    data_cfg=self._refresh_data_cfg,
+                )
+                if transform_metadata is not None:
+                    # DAgger deltas use the normalization frozen by the initial mixture.
+                    source.set_transforms_metadata(transform_metadata[source.tag])
+                self._refresh_source_cache[key] = source
+            mixture.append((self._refresh_source_cache[key], weight))
+        return mixture
+
+    def refresh_custom_mixture(self) -> None:
+        """Publish the current mixture file to this process and its worker copies."""
+        generation = self._shared_mixture_generation.item() + 1
+        self._replace_data_mixture(self._materialize_current_mixture(self.merged_metadata))
+        self._local_mixture_generation = generation
+        self._shared_mixture_generation.fill_(generation)
+
+    def __getitem__(self, index: int) -> dict:
+        generation = self._shared_mixture_generation.item()
+        if self._local_mixture_generation != generation:
+            self._replace_data_mixture(self._materialize_current_mixture(self.merged_metadata))
+            self._local_mixture_generation = generation
+        return super().__getitem__(index)
+
+
+def get_vla_dataset(
+    data_cfg: Any,
+    mode: str = "train",
+    balance_dataset_weights: bool = False,
+    balance_trajectory_weights: bool = False,
+    seed: int = 42,
+    **kwargs: Any,
+):
+    """Build the standard StarVLA mixture while attaching task auxiliaries."""
+    cfg = _configured_data_cfg(data_cfg)
     return _get_vla_dataset(
         data_cfg=cfg,
         mode=mode,
@@ -116,7 +194,16 @@ def build_dataloader(
         eval_sequential = data_cfg.get("eval_sequential_step_sampling")
         if eval_sequential is not None:
             data_cfg.sequential_step_sampling = eval_sequential
-    dataset = get_vla_dataset(data_cfg, mode=mode)
+    if mode == "train" and "dagger_control_dir" in cfg.trainer:
+        dataset = _RefreshableLatencyBenchMixture(
+            _configured_data_cfg(data_cfg),
+            mode=mode,
+            balance_dataset_weights=False,
+            balance_trajectory_weights=False,
+            seed=42,
+        )
+    else:
+        dataset = get_vla_dataset(data_cfg, mode=mode)
     num_workers = data_cfg["num_workers"]
     if mode == "eval":
         eval_num_workers = data_cfg.get("eval_num_workers")
