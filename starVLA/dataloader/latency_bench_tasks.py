@@ -105,6 +105,9 @@ class _RefreshableLatencyBenchMixture(LeRobotMixtureDataset):
         self._refresh_data_root = Path(self._refresh_data_cfg["data_root_dir"])
         self._refresh_mixture_name = self._refresh_data_cfg["data_mix"]
         self._refresh_mixture_path = Path(self._refresh_data_cfg["custom_mixtures_path"])
+        self._refresh_contract = json.loads(
+            Path(self._refresh_data_cfg["task_contract_path"]).read_text(encoding="utf-8")
+        )
         self._refresh_source_cache: dict[tuple[str, str], Any] = {}
         super().__init__(
             self._materialize_current_mixture(None),
@@ -127,6 +130,7 @@ class _RefreshableLatencyBenchMixture(LeRobotMixtureDataset):
         self,
         transform_metadata: dict[str, Any] | None,
     ) -> list[tuple[Any, float]]:
+        _register_contract(self._refresh_contract)
         mixture = []
         for data_name, weight, robot_type in self._current_mixture_spec():
             key = (data_name, robot_type)

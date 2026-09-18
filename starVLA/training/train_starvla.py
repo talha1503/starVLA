@@ -1129,29 +1129,50 @@ class VLATrainer(TrainerUtils):
         self.vla_iter = iter(self.vla_train_dataloader)
 
     def _wait_for_dagger_round(self) -> bool:
-        """Pause at a saved DAgger boundary and activate the controller's next mixture."""
-        ready_path = self._dagger_control_dir / f"step_{self.completed_steps}.ready"
+        """Serve the resident model, then activate the controller's next mixture."""
         continue_path = self._dagger_control_dir / f"step_{self.completed_steps}.continue.json"
-        command = [None]
-        if self.accelerator.is_main_process:
-            self._dagger_control_dir.mkdir(parents=True, exist_ok=True)
-            temporary = ready_path.with_suffix(".tmp")
-            temporary.write_text(
-                json.dumps({"step": self.completed_steps}) + "\n",
-                encoding="utf-8",
-            )
-            temporary.replace(ready_path)
-            logger.info("DAgger round %s is ready for collection", self.completed_steps)
-            while not continue_path.is_file():
-                if self._refresh_graceful_stop_requested():
-                    break
-                time.sleep(1.0)
-            if not self.graceful_stop_requested:
-                command[0] = json.loads(continue_path.read_text(encoding="utf-8"))
+        if continue_path.is_file():
+            command = json.loads(continue_path.read_text(encoding="utf-8"))
+        else:
+            # latency_bench is an optional integration for upstream StarVLA training.
+            from latency_bench.integrations.starvla_resident_dagger import serve_resident_inference
+            from latency_bench.policy.starvla import build_live_starvla_policy
 
-        if dist.is_initialized():
-            dist.broadcast_object_list(command, src=0)
-        if command[0] is None:
+            resident_config = json.loads(
+                (self._dagger_control_dir / "resident_policy.json").read_text(encoding="utf-8")
+            )
+            model_config = OmegaConf.to_container(
+                self.config.unwrap() if isinstance(self.config, AccessTrackedConfig) else self.config,
+                resolve=True,
+            )
+            was_training = self.model.training
+            self.model.eval()
+            unwrapped = self.accelerator.unwrap_model(self.model)
+            policy = build_live_starvla_policy(
+                framework=unwrapped,
+                model_cfg=model_config,
+                config=resident_config,
+                action_resolver=None,
+            )
+            try:
+                with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+                    command = serve_resident_inference(
+                        policy=policy,
+                        control_dir=self._dagger_control_dir,
+                        socket_dir=Path(resident_config["socket_dir"]),
+                        step=self.completed_steps,
+                        rank=int(self.accelerator.process_index),
+                        world_size=int(self.accelerator.num_processes),
+                        stop_requested=self._refresh_graceful_stop_requested,
+                    )
+            finally:
+                reset = getattr(unwrapped, "reset_memory", None)
+                if callable(reset):
+                    reset()
+                if was_training:
+                    self.model.train()
+
+        if command is None:
             self._mark_graceful_stop_requested("dagger_round_wait")
             return False
 
@@ -1159,7 +1180,7 @@ class VLATrainer(TrainerUtils):
         self._create_data_iterators()
         _distributed_barrier()
         if self.accelerator.is_main_process:
-            self._log_wandb(command[0]["metrics"])
+            self._log_wandb(command["metrics"])
             logger.info("DAgger round %s resumed with refreshed data", self.completed_steps)
         return True
 
@@ -1509,6 +1530,21 @@ class VLATrainer(TrainerUtils):
         )
 
         try:
+            save_interval = int(self.config.trainer.save_interval)
+            resume_continue_path = (
+                self._dagger_control_dir / f"step_{self.completed_steps}.continue.json"
+                if self._dagger_control_dir is not None
+                else None
+            )
+            if (
+                resume_continue_path is not None
+                and self.completed_steps > 0
+                and self.completed_steps < stop_step
+                and self.completed_steps % save_interval == 0
+                and not resume_continue_path.is_file()
+                and not self._wait_for_dagger_round()
+            ):
+                return
             while self.completed_steps < stop_step:
                 if self._refresh_graceful_stop_requested():
                     self._save_interrupt_checkpoint()
