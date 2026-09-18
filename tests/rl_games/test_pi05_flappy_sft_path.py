@@ -329,6 +329,106 @@ def test_ready_local_raw_frame_dataset_ignores_manifest_source_mismatch(
     assert result["eval_data_mix"] == "flappy_train__bridge__val"
 
 
+def test_ready_mixed_dataset_remakes_missing_latency_prompt_map_from_local_parquets(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+
+    data_root_dir = tmp_path / "datasets"
+    train_dataset_dir = data_root_dir / "flappy_train__bridge"
+    eval_dataset_dir = data_root_dir / "flappy_train__bridge__val"
+    prompt_zero = "latency is 6 raw frames (200.00 ms)"
+    prompt_one = "latency is 7 raw frames (233.33 ms)"
+    manifest = {
+        "source": "",
+        "source_config": None,
+        "source_subdir": None,
+        "action_carrier": "bridge",
+        "latency_metadata": True,
+        "fps": 30.0,
+        "obs_stride_raw_frames": 1,
+        "source_latency_column": "latency_raw_frames",
+        "target_latency_unit": "raw_frames",
+    }
+    for dataset_dir in (train_dataset_dir, eval_dataset_dir):
+        (dataset_dir / "meta").mkdir(parents=True)
+        (dataset_dir / "data" / "chunk-000").mkdir(parents=True)
+        for metadata_name in ("modality.json", "info.json"):
+            (dataset_dir / "meta" / metadata_name).write_text("{}", encoding="utf-8")
+        (dataset_dir / "meta" / "episodes.jsonl").write_text("{}\n", encoding="utf-8")
+        (dataset_dir / "meta" / "tasks.jsonl").write_text(
+            "\n".join([
+                json.dumps({"task_index": 0, "task": prompt_zero}),
+                json.dumps({"task_index": 1, "task": prompt_one}),
+            ]) + "\n",
+            encoding="utf-8",
+        )
+        (dataset_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        pq.write_table(
+            pa.table({
+                "latency": pa.array([6, 7], type=pa.int64()),
+                "task_index": pa.array([0, 1], type=pa.int64()),
+            }),
+            dataset_dir / "data" / "chunk-000" / "episode_000000.parquet",
+        )
+
+    def reject_verify_dataset(*args: Any, **kwargs: Any) -> bool:
+        raise AssertionError("ready local dataset should not verify raw source")
+
+    def reject_convert_dataset(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("ready local dataset should not be rebuilt")
+
+    def fake_validate_starvla_dataset(data_root_dir: Path, data_mix: str) -> dict[str, Any]:
+        return {
+            "dataset_stats_path": str(data_root_dir / data_mix / "dataset_statistics.json"),
+            "dataset_num_steps": 2,
+            "dataset_num_trajectories": 1,
+            "dataset_robot_type": "flappy",
+            "dataset_embodiment_tag": "flappy",
+        }
+
+    monkeypatch.setattr(setup_training_assets, "_validate_starvla_dataset", fake_validate_starvla_dataset)
+    args = SimpleNamespace(
+        dataset_local_dir=str(data_root_dir),
+        initialization_mode="bridge",
+        action_carrier="bridge",
+        converted_dataset_name="flappy_train",
+        source_dataset_hf="",
+        source_dataset_config_name=None,
+        source_dataset_subdir=None,
+        setup_force="false",
+        dataset_force_download="false",
+        mode="mixed_latency",
+        latency_mode="mixed",
+        verify_rows=200,
+        dataset_cache_dir=None,
+        max_episodes=None,
+        latency_filter=None,
+        episodes_per_latency=None,
+        target_latency_unit="raw_frames",
+    )
+
+    result = setup_training_assets._ensure_rl_games_lerobot_dataset(
+        args,
+        convert_dataset=reject_convert_dataset,
+        verify_dataset=reject_verify_dataset,
+        env_name="flappy",
+        env_fps=30.0,
+        obs_fps=30.0,
+    )
+
+    prompt_map_path = train_dataset_dir / "latency_prompt_map.json"
+    prompt_map = json.loads(prompt_map_path.read_text(encoding="utf-8"))
+    assert result["dataset_converted"] is False
+    assert result["latency_prompt_map_path"] == str(prompt_map_path)
+    assert sorted(prompt_map) == ["6", "7"]
+    assert prompt_map["6"]["latency_raw_frames"] == 6
+    assert prompt_map["6"]["latency_ms"] == 200.0
+    assert prompt_map["6"]["prompt"] == prompt_zero
+
+
 def _write_runtime_cache(dataset_dir: Path, *, total_steps: int, num_trajectories: int) -> None:
     meta_dir = dataset_dir / "meta"
     meta_dir.mkdir(parents=True)

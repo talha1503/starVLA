@@ -144,6 +144,160 @@ def _write_prompt_map(path: Path, prompt_map: dict[str, dict[str, Any]], *, late
     return path
 
 
+def _prompt_map_has_raw_frame_entries(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        mapping = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(mapping, dict) or not mapping:
+        return False
+    return all(
+        isinstance(entry, dict) and "latency_raw_frames" in entry
+        for entry in mapping.values()
+    )
+
+
+def _read_prompt_map(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.exists():
+        return {}
+    try:
+        mapping = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(mapping, dict):
+        return {}
+    return {str(key): value for key, value in mapping.items() if isinstance(value, dict)}
+
+
+def _prompt_map_entry_count(path: Path) -> int:
+    return len(_read_prompt_map(path))
+
+
+def _extract_latency_ms_from_prompt(prompt: str) -> float | None:
+    match = re.search(r"\(([0-9]+(?:\.[0-9]+)?)\s*ms\)", prompt)
+    if match is None:
+        return None
+    return float(match.group(1))
+
+
+def _read_local_task_prompts(dataset_dir: Path) -> dict[int, str]:
+    tasks_path = dataset_dir / "meta/tasks.jsonl"
+    if not tasks_path.exists():
+        return {}
+    prompts: dict[int, str] = {}
+    for line in tasks_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        task_index = int(record.get("task_index", len(prompts)))
+        prompt = record.get("task", record.get("prompt"))
+        if prompt is not None:
+            prompts[task_index] = str(prompt)
+    return prompts
+
+
+def _latency_raw_frames_from_target_latency(
+    latency: int,
+    *,
+    target_latency_unit: str,
+    obs_stride_raw_frames: int,
+) -> int:
+    if target_latency_unit == "raw_frames":
+        return int(latency)
+    if target_latency_unit == "observation_steps":
+        return int(latency) * int(obs_stride_raw_frames)
+    raise ValueError(f"unsupported target_latency_unit={target_latency_unit!r}")
+
+
+def _load_local_latency_prompt_map(
+    dataset_dir: Path,
+    *,
+    target_latency_unit: str,
+    obs_stride_raw_frames: int,
+) -> dict[str, dict[str, Any]]:
+    task_prompts = _read_local_task_prompts(dataset_dir)
+    if not task_prompts:
+        return {}
+
+    try:
+        import pyarrow.parquet as pq
+    except Exception:
+        return {}
+
+    prompt_map: dict[int, dict[str, Any]] = {}
+    for parquet_path in sorted(dataset_dir.glob("data/*/*.parquet")):
+        try:
+            parquet = pq.ParquetFile(parquet_path)
+            schema_names = set(parquet.schema_arrow.names)
+        except Exception:
+            continue
+        if "latency" not in schema_names or "task_index" not in schema_names:
+            continue
+        for batch in parquet.iter_batches(columns=["latency", "task_index"], batch_size=65536):
+            for row in batch.to_pylist():
+                latency = int(row["latency"])
+                prompt = task_prompts.get(int(row["task_index"]))
+                if prompt is None:
+                    continue
+                latency_raw_frames = _latency_raw_frames_from_target_latency(
+                    latency,
+                    target_latency_unit=target_latency_unit,
+                    obs_stride_raw_frames=obs_stride_raw_frames,
+                )
+                entry = {
+                    "latency": latency,
+                    "latency_raw_frames": latency_raw_frames,
+                    "latency_ms": _extract_latency_ms_from_prompt(prompt),
+                    "prompt": prompt,
+                }
+                existing = prompt_map.get(latency)
+                if existing is None:
+                    prompt_map[latency] = entry
+                elif existing["prompt"] != prompt or int(existing["latency_raw_frames"]) != latency_raw_frames:
+                    raise ValueError(
+                        f"local dataset has inconsistent prompt map rows for latency={latency}: "
+                        f"{existing!r} vs {entry!r}"
+                    )
+    return {str(k): prompt_map[k] for k in sorted(prompt_map)}
+
+
+def _normalize_prompt_map_entries(
+    prompt_map: dict[str, dict[str, Any]],
+    *,
+    target_latency_unit: str,
+    obs_stride_raw_frames: int,
+) -> dict[str, dict[str, Any]]:
+    normalized: dict[str, dict[str, Any]] = {}
+    for key, value in prompt_map.items():
+        if not isinstance(value, dict) or "prompt" not in value:
+            continue
+        latency = int(value.get("latency", key))
+        entry = dict(value)
+        entry["latency"] = latency
+        if entry.get("latency_raw_frames") is None:
+            entry["latency_raw_frames"] = _latency_raw_frames_from_target_latency(
+                latency,
+                target_latency_unit=target_latency_unit,
+                obs_stride_raw_frames=obs_stride_raw_frames,
+            )
+        else:
+            entry["latency_raw_frames"] = int(entry["latency_raw_frames"])
+        if "latency_ms" not in entry:
+            entry["latency_ms"] = _extract_latency_ms_from_prompt(str(entry["prompt"]))
+        normalized[str(latency)] = entry
+    return normalized
+
+
+def _write_sorted_prompt_map(path: Path, prompt_map: dict[str, dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({str(k): prompt_map[str(k)] for k in sorted(int(k) for k in prompt_map)}, indent=2),
+        encoding="utf-8",
+    )
+
+
 def _find_latest_local_checkpoint(checkpoint_dir: Path) -> tuple[Path | None, int, str | None]:
     if not checkpoint_dir.exists():
         return None, 0, None
@@ -595,12 +749,93 @@ def _ensure_rl_games_lerobot_dataset(
         if not mixed_latency:
             return True
         if not prompt_map.exists():
-            return False
+            return _dataset_ready(dataset_dir)
         try:
             mapping = json.loads(prompt_map.read_text(encoding="utf-8"))
         except Exception:
-            return False
-        return len(mapping) > 1
+            return _dataset_ready(dataset_dir)
+        if len(mapping) > 1 and _prompt_map_has_raw_frame_entries(prompt_map):
+            return True
+        return _dataset_ready(dataset_dir)
+
+    def _source_prompt_map(latencies: list[int] | None = None) -> dict[str, dict[str, Any]]:
+        if not source_dataset:
+            return {}
+        return _load_source_latency_prompt_map(
+            source_dataset,
+            cache_dir=getattr(args, "dataset_cache_dir", None),
+            dataset_config_name=source_config_name,
+            dataset_source_subdir=source_subdir,
+            latencies=latencies,
+            source_latency_column=source_latency_column,
+            target_latency_unit=target_latency_unit,
+            obs_stride_raw_frames=obs_stride_raw_frames,
+        )
+
+    def _remake_prompt_map_if_needed(*, required_latencies: list[int] | None = None) -> None:
+        existing_map = _normalize_prompt_map_entries(
+            _read_prompt_map(prompt_map),
+            target_latency_unit=target_latency_unit,
+            obs_stride_raw_frames=obs_stride_raw_frames,
+        )
+        required_keys = {str(int(value)) for value in (required_latencies or [])}
+        prompt_map_required = mixed_latency or bool(required_keys) or prompt_map.exists()
+        if not prompt_map_required:
+            return
+        needs_remake = (
+            not _prompt_map_has_raw_frame_entries(prompt_map)
+            or (mixed_latency and _prompt_map_entry_count(prompt_map) <= 1)
+            or not required_keys.issubset(existing_map)
+        )
+        if not needs_remake:
+            return
+
+        local_map = _load_local_latency_prompt_map(
+            dataset_dir,
+            target_latency_unit=target_latency_unit,
+            obs_stride_raw_frames=obs_stride_raw_frames,
+        )
+        merged = {
+            **existing_map,
+            **_normalize_prompt_map_entries(
+                local_map,
+                target_latency_unit=target_latency_unit,
+                obs_stride_raw_frames=obs_stride_raw_frames,
+            ),
+        }
+        missing_required = [int(value) for value in sorted(required_keys, key=int) if value not in merged]
+        if (
+            (missing_required or (mixed_latency and len(merged) <= 1))
+            and source_dataset
+        ):
+            merged = {
+                **merged,
+                **_normalize_prompt_map_entries(
+                    _source_prompt_map(missing_required or None),
+                    target_latency_unit=target_latency_unit,
+                    obs_stride_raw_frames=obs_stride_raw_frames,
+                ),
+            }
+
+        if not merged:
+            if required_keys or mixed_latency:
+                raise ValueError(
+                    f"could not remake latency prompt map from local dataset: {prompt_map}. "
+                    "Expected converted parquet files with latency/task_index columns and meta/tasks.jsonl."
+                )
+            return
+        if mixed_latency and len(merged) <= 1:
+            raise ValueError(
+                f"remade latency prompt map has only {len(merged)} entry: {prompt_map}. "
+                "Mixed-latency training/eval needs more than one latency prompt."
+            )
+        missing_required = [int(value) for value in sorted(required_keys, key=int) if value not in merged]
+        if missing_required:
+            raise ValueError(
+                f"could not add required eval latencies {missing_required} to {prompt_map}; "
+                f"available latencies are {sorted(int(key) for key in merged)}"
+            )
+        _write_sorted_prompt_map(prompt_map, merged)
 
     rebuild = (
         force
@@ -681,29 +916,7 @@ def _ensure_rl_games_lerobot_dataset(
         *(int(v) for v in (latency_filter or [])),
         *(int(v) for v in (eval_latencies or [])),
     })
-    if all_needed and source_dataset:
-        existing_map = (
-            json.loads(prompt_map.read_text(encoding="utf-8"))
-            if prompt_map.exists()
-            else {}
-        )
-        missing = [lat for lat in all_needed if str(lat) not in existing_map]
-        if missing:
-            full_map = _load_source_latency_prompt_map(
-                source_dataset,
-                cache_dir=getattr(args, "dataset_cache_dir", None),
-                dataset_config_name=source_config_name,
-                dataset_source_subdir=source_subdir,
-                latencies=all_needed,
-                source_latency_column="latency_raw_frames",
-                target_latency_unit=target_latency_unit,
-                obs_stride_raw_frames=obs_stride_raw_frames,
-            )
-            merged = {**existing_map, **full_map}
-            prompt_map.write_text(
-                json.dumps({str(k): merged[str(k)] for k in sorted(int(k) for k in merged)}, indent=2),
-                encoding="utf-8",
-            )
+    _remake_prompt_map_if_needed(required_latencies=all_needed)
 
     return {
         "dataset_ready": True,
