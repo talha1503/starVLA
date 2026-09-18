@@ -228,6 +228,8 @@ def _setup_eval_latencies(cfg: Any) -> list[int] | None:
     for stage in ("mid_train", "post_train"):
         if not _as_bool_default(_cfg_get(cfg, f"rl_games.env_eval.{stage}.enabled"), True):
             continue
+        if _as_bool_default(_cfg_get(cfg, f"rl_games.env_eval.{stage}.latencies_from_prompt_map"), False):
+            continue
         latencies.update(_optional_int_list(_cfg_get(cfg, f"rl_games.env_eval.{stage}.latencies")) or [])
     return sorted(latencies) or None
 
