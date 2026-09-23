@@ -1153,7 +1153,9 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
             "atlantis": (15.0, 4),
         }[task_name]
         task_fps, task_obs_stride_raw_frames = task_timing
-        task_target_latency_unit = "raw_frames" if task_name in {"asterix", "atlantis"} else "observation_steps"
+        task_target_latency_unit = (
+            "raw_frames" if task_name in {"asterix", "atlantis", "defend_the_line"} else "observation_steps"
+        )
 
         base_converted_name = str(_get_task_value(task_cfg, "converted_name", default=f"{task_name}_cross_task_train"))
         converted_base = _derived_dataset_name(
