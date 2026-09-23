@@ -14,6 +14,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import datasets
 from datasets import load_dataset
+try:
+    from datasets.exceptions import DatasetGenerationError
+except Exception:
+    class DatasetGenerationError(Exception):
+        pass
 from PIL import Image
 from tqdm import tqdm
 
@@ -37,7 +42,7 @@ STATE_DIM = 1
 BRIDGE_STATE_DIM = 7
 DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN = "observation.context_images"
 EpisodeKey = int | tuple[int, int]
-READ_SCHEMA_EXCEPTIONS = (ValueError, KeyError, FileNotFoundError, pa.ArrowInvalid)
+READ_SCHEMA_EXCEPTIONS = (ValueError, KeyError, FileNotFoundError, pa.ArrowInvalid, DatasetGenerationError)
 
 
 class DemonAttackColumns(NamedTuple):
@@ -216,8 +221,6 @@ def _load_split(
                     last_exc = retry_exc
                     continue
             return _filter_internal_split(ds)
-        if last_exc is not None and split == "train":
-            raise last_exc
         return None
 
     def _load_one(subdir: str | None):

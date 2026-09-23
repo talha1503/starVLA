@@ -11,9 +11,15 @@ from typing import Any, Iterable
 
 import pyarrow as pa
 
+try:
+    from datasets.exceptions import DatasetGenerationError
+except Exception:
+    class DatasetGenerationError(Exception):
+        pass
+
 
 _LATENCY_SUBDIR_RE = re.compile(r"((?:fix|fixed)_latency_)\d+(_)")
-READ_SCHEMA_EXCEPTIONS = (ValueError, KeyError, FileNotFoundError, pa.ArrowInvalid)
+READ_SCHEMA_EXCEPTIONS = (ValueError, KeyError, FileNotFoundError, pa.ArrowInvalid, DatasetGenerationError)
 
 
 def latency_subdir_for(template: str, latency: int) -> str | None:
