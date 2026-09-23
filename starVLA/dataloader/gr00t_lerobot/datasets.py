@@ -2387,13 +2387,21 @@ def get_used_modality_keys(modality_keys: dict) -> tuple[list, list]:
     return used_action_keys, used_state_keys
 
 
-def _strip_fps(obj):
-    """Recursively drop "fps" keys so modality configs can be compared while
-    ignoring source-capture frame rate, which legitimately differs across tasks."""
+def _strip_video_capture_metadata(obj):
+    """Drop source-capture video metadata for cross-task compatibility checks.
+
+    RL-games mixtures can combine tasks with different native FPS/resolutions;
+    the training transform resizes observations before model input, so these
+    fields are descriptive rather than a distinct model contract.
+    """
     if isinstance(obj, dict):
-        return {key: _strip_fps(value) for key, value in obj.items() if key != "fps"}
+        return {
+            key: _strip_video_capture_metadata(value)
+            for key, value in obj.items()
+            if key not in {"fps", "resolution"}
+        }
     if isinstance(obj, list):
-        return [_strip_fps(value) for value in obj]
+        return [_strip_video_capture_metadata(value) for value in obj]
     return obj
 
 
@@ -3159,11 +3167,10 @@ class LeRobotMixtureDataset(Dataset):
                 modality_configs[modality].append(configs)
         merged_metadata["modalities"] = {}
         for modality, configs in modality_configs.items():
-            # "fps" is purely descriptive source-capture metadata (not consumed by
-            # any transform/time-windowing logic) and legitimately differs across
-            # tasks in a cross-task mixture with different native environment
-            # rates. Ignore it when checking that configs are otherwise compatible.
-            comparable = {json.dumps(_strip_fps(config), sort_keys=True) for config in configs}
+            comparable = {
+                json.dumps(_strip_video_capture_metadata(config), sort_keys=True)
+                for config in configs
+            }
             assert (
                 len(comparable) == 1
             ), f"Multiple modality configs for modality {modality}: {configs}"
