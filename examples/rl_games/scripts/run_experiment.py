@@ -72,6 +72,14 @@ def _as_bool(value: Any) -> bool:
     return str(value).lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _cross_task_eval_enabled(task_cfg: Any) -> bool:
+    if not isinstance(task_cfg, dict):
+        return True
+    mid_train = task_cfg.get("mid_train") or {}
+    post_train = task_cfg.get("post_train") or {}
+    return _as_bool(mid_train.get("enabled", True)) or _as_bool(post_train.get("enabled", True))
+
+
 def _resolve_path(value: Any, workspace_dir: Path) -> str:
     if value in (None, ""):
         return ""
@@ -382,7 +390,12 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
     prompt_map = setup.get("latency_prompt_map_path")
     if prompt_map:
         _append_leaf_override(cmd, "rl_games.env_eval.latency.prompt_map_path", prompt_map)
-    eval_task_names = set((_get(cfg, "rl_games.cross_task.eval_tasks", {}) or {}).keys())
+    eval_tasks_cfg = _get(cfg, "rl_games.cross_task.eval_tasks", {}) or {}
+    eval_task_names = {
+        str(task_name)
+        for task_name, task_cfg in eval_tasks_cfg.items()
+        if _cross_task_eval_enabled(task_cfg)
+    }
     for task_name, task_prompt_map in (setup.get("cross_task_prompt_maps") or {}).items():
         if task_name not in eval_task_names:
             continue

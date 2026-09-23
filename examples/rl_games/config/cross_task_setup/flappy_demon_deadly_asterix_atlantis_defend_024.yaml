@@ -3,7 +3,11 @@
 rl_games:
   env_eval:
     mid_train:
+      enabled: false
       interval_steps: 1000
+    post_train:
+      enabled: true
+      latencies: [0, 2, 4]
     deadly:
       action_layout: multibinary_7
       multibinary_threshold: 0.0

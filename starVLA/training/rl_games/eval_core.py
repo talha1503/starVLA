@@ -1439,13 +1439,16 @@ class RlGamesEvalRunner:
         save: bool = True,
         episode_seed_overrides: Dict[str, Dict[int, int | None]] | None = None,
     ) -> EvalResult:
-        tasks = self._get_tasks()
+        tasks = [
+            task_name
+            for task_name in self._get_tasks()
+            if getattr(self._task_stage_cfg(task_name, stage), "enabled", True)
+        ]
         per_latency: Dict[str, Dict] = {}
 
         rollout_plan = [
             (task_name, latency)
             for task_name in tasks
-            if getattr(self._task_stage_cfg(task_name, stage), "enabled", True)
             for latency in self._get_latency_values(stage=stage, task=task_name)
         ]
         total_rollouts = len(rollout_plan)
