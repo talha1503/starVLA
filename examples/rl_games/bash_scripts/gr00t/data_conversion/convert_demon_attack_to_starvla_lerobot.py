@@ -135,9 +135,9 @@ def _demon_attack_column_candidates(
         return [_resolve_demon_attack_columns(dataset_name, split, want_latency, dataset_source_subdir)]
 
     base_candidates = (
-        DemonAttackColumns(frame="t", reward="reward", done="done", latency="latency", latency_ms="latency_ms"),
         DemonAttackColumns(frame="decision_step", reward="raw_reward", done=None, latency="latency_raw_frames", latency_ms="latency_ms"),
         DemonAttackColumns(frame="decision_step", reward="raw_reward", done=None, latency="latency", latency_ms="latency_ms"),
+        DemonAttackColumns(frame="t", reward="reward", done="done", latency="latency", latency_ms="latency_ms"),
         DemonAttackColumns(frame="t", reward="reward", done="done", latency="latency_raw_frames", latency_ms="latency_ms"),
     )
     if want_latency:

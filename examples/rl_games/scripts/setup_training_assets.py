@@ -1153,6 +1153,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
             "atlantis": (15.0, 4),
         }[task_name]
         task_fps, task_obs_stride_raw_frames = task_timing
+        task_target_latency_unit = "raw_frames" if task_name in {"asterix", "atlantis"} else "observation_steps"
 
         base_converted_name = str(_get_task_value(task_cfg, "converted_name", default=f"{task_name}_cross_task_train"))
         converted_base = _derived_dataset_name(
@@ -1172,7 +1173,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
             dataset_config_name=prompt_config_name,
             dataset_source_subdir=prompt_subdir,
             source_latency_column="latency_raw_frames",
-            target_latency_unit="observation_steps",
+            target_latency_unit=task_target_latency_unit,
             obs_stride_raw_frames=task_obs_stride_raw_frames,
             latencies=required_latencies,
         )
@@ -1215,7 +1216,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 and manifest.get("max_episodes") == max_episodes
                 and manifest.get("fps") == task_fps
                 and manifest.get("obs_stride_raw_frames") == task_obs_stride_raw_frames
-                and manifest.get("target_latency_unit") == "observation_steps"
+                and manifest.get("target_latency_unit") == task_target_latency_unit
                 and manifest.get("source_latency_column") == "latency_raw_frames"
             )
 
@@ -1244,7 +1245,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 "strict": True,
                 "allow_mixed_latency_prompts": allow_mixed,
                 "source_latency_column": "latency_raw_frames",
-                "target_latency_unit": "observation_steps",
+                "target_latency_unit": task_target_latency_unit,
                 "obs_stride_raw_frames": task_obs_stride_raw_frames,
             }
             if action_layout and "action_layout" in inspect.signature(verify_dataset).parameters:
@@ -1272,7 +1273,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 "fps": task_fps,
                 "obs_stride_raw_frames": task_obs_stride_raw_frames,
                 "source_latency_column": "latency_raw_frames",
-                "target_latency_unit": "observation_steps",
+                "target_latency_unit": task_target_latency_unit,
                 "source_rows_unit": "decision_step",
             }
             if action_layout:
