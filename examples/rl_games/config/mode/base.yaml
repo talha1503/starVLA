@@ -19,6 +19,7 @@ rl_games:
     post_train:
       enabled: true
       latencies: [0, 1, 2, 3, 4]
+      latencies_from_prompt_map: false
       num_episodes: 5
       max_steps_per_episode: 3600
 

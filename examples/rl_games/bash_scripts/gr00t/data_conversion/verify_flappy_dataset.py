@@ -9,8 +9,17 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
+import pyarrow as pa
 
-_LATENCY_SUBDIR_RE = re.compile(r"(fix_latency_)\d+(_)")
+try:
+    from datasets.exceptions import DatasetGenerationError
+except Exception:
+    class DatasetGenerationError(Exception):
+        pass
+
+
+_LATENCY_SUBDIR_RE = re.compile(r"((?:fix|fixed)_latency_)\d+(_)")
+READ_SCHEMA_EXCEPTIONS = (ValueError, KeyError, FileNotFoundError, pa.ArrowInvalid, DatasetGenerationError)
 
 
 def latency_subdir_for(template: str, latency: int) -> str | None:
@@ -99,10 +108,15 @@ def _load_hf_dataset(
         # verification so train loading is not blocked by that naming mismatch.
         "verification_mode": "no_checks",
     }
-    if dataset_source_subdir not in (None, ""):
-        load_kwargs["data_dir"] = str(dataset_source_subdir)
     if dataset_config_name not in (None, ""):
         return load_dataset(dataset_name, dataset_config_name, **load_kwargs)
+    if dataset_source_subdir not in (None, ""):
+        source_subdir = str(dataset_source_subdir)
+        try:
+            return load_dataset(dataset_name, source_subdir, **load_kwargs)
+        except (ValueError, FileNotFoundError):
+            load_kwargs["data_dir"] = source_subdir
+            return load_dataset(dataset_name, **load_kwargs)
     return load_dataset(dataset_name, **load_kwargs)
 
 
@@ -121,6 +135,24 @@ def _load_train_split(
             return ds.filter(lambda row: str(row["split"]).lower() == "train")
         return ds
 
+    def _load_remote_parquet(subdir: str | None):
+        if subdir in (None, "") or Path(dataset_name).expanduser().exists():
+            return None
+        remote_file = f"hf://datasets/{dataset_name}/{str(subdir).strip('/')}/train.parquet"
+        load_columns = list(columns) if columns is not None else None
+        if load_columns is not None and "split" not in load_columns:
+            load_columns.append("split")
+        try:
+            ds = load_dataset("parquet", data_files=[remote_file], split="train", cache_dir=cache_dir, columns=load_columns)
+        except READ_SCHEMA_EXCEPTIONS:
+            if columns is None:
+                return None
+            try:
+                ds = load_dataset("parquet", data_files=[remote_file], split="train", cache_dir=cache_dir, columns=columns)
+            except READ_SCHEMA_EXCEPTIONS:
+                return None
+        return _filter_internal_split(ds)
+
     def _load_one(subdir: str | None):
         local_files = _local_parquet_files(dataset_name, subdir)
         if local_files is not None:
@@ -129,11 +161,15 @@ def _load_train_split(
                 load_columns.append("split")
             try:
                 ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=load_columns)
-            except (ValueError, KeyError):
+            except READ_SCHEMA_EXCEPTIONS:
                 if columns is None:
                     raise
                 ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=columns)
             return _filter_internal_split(ds)
+
+        remote_ds = _load_remote_parquet(subdir)
+        if remote_ds is not None:
+            return remote_ds
 
         try:
             ds = _load_hf_dataset(
@@ -141,7 +177,7 @@ def _load_train_split(
                 split="train", cache_dir=cache_dir, columns=columns,
             )
             return _filter_internal_split(ds)
-        except (ValueError, KeyError):
+        except READ_SCHEMA_EXCEPTIONS:
             load_columns = list(columns or [])
             if "split" not in load_columns:
                 load_columns.append("split")

@@ -1,6 +1,11 @@
-cd ${WORKSPACE_DIR}
+#!/usr/bin/env bash
+set -euo pipefail
 
-git clone https://github.com/ZihanWang314/latency-sensitive-bench
+cd "${WORKSPACE_DIR}"
+
+if [[ ! -d "${WORKSPACE_DIR}/latency-sensitive-bench/.git" ]]; then
+  git clone https://github.com/ZihanWang314/latency-sensitive-bench
+fi
 
 cd "${WORKSPACE_DIR}/latency-sensitive-bench"
 

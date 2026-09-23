@@ -5,6 +5,12 @@ CODE_ROOT="${CODE_ROOT:-/home/ubuntu/talha}"
 DATA_WORKSPACE_DIR="${DATA_WORKSPACE_DIR:-/mnt/local/talha}"
 export CODE_ROOT DATA_WORKSPACE_DIR
 
+export HF_HOME="${DATA_WORKSPACE_DIR}/.cache/huggingface"
+export HF_HUB_CACHE="${HF_HOME}/hub"
+export HUGGINGFACE_HUB_CACHE="${HF_HOME}/hub"
+export TRANSFORMERS_CACHE="${HF_HOME}/transformers"
+mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE"
+
 if [[ ! -d "${CODE_ROOT}/starVLA" ]]; then
   echo "[error] missing StarVLA repo: ${CODE_ROOT}/starVLA" >&2
   exit 2
@@ -64,7 +70,7 @@ WORKSPACE_DIR="${CODE_ROOT}" bash "${CODE_ROOT}/starVLA/examples/rl_games/bash_s
 mkdir -p "${DATA_WORKSPACE_DIR}"
 export PYTHONPATH="${CODE_ROOT}/latency-sensitive-bench:${PYTHONPATH:-}"
 
-python examples/rl_games/scripts/launch_train.py \
+CUDA_VISIBLE_DEVICES=2 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
     env=flappy \
     init=bridge \
@@ -72,25 +78,28 @@ python examples/rl_games/scripts/launch_train.py \
     run_id="openvla_bridge_flappy_rtx3090_profile_1000ep_7k2steps_final" \
     trainer.distributed_backend=none \
     workspace_dir="$DATA_WORKSPACE_DIR" \
+    ++wandb_tags='["final_vla_profiling_training","flappy","openvla","rtx3090_profile"]' \
+    ++training_latency_condition=rtx3090_profile \
+    ++wandb_group="final_vla_profiling_training" \
     wandb_entity="talha1503" \
     checkpoint.hf_repo_id="latency-sensitive-bench/openvla_bridge_flappy_rtx3090_profile_1000ep_7k2steps_final" \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="latency-sensitive-bench/openvla_bridge_flappy_rtx3090_profile_1000ep_7k2steps_final" \
-    dataset.source_hf=latency-sensitive-bench/memory-rollouts \
+    dataset.source_hf=latency-sensitive-bench/profile-rollouts-v2 \
     dataset.source_subdir=flappy_openvla_rtx3090_profile_1000ep_7k2steps \
     dataset.target_latency_unit=raw_frames \
-    checkpoint.local.keep_last_n=2 \
+    checkpoint.local.keep_last_n=1 \
     checkpoint.save_best_model=False \
     trainer.max_train_steps=5000 \
     trainer.save_interval=5000 \
     trainer.num_warmup_steps=0 \
     trainer.eval_interval=5000 \
     trainer.logging_frequency=1 \
-    trainer.gradient_accumulation_steps=16 \
-    datasets.vla_data.per_device_batch_size=16 \
+    trainer.gradient_accumulation_steps=4 \
+    datasets.vla_data.per_device_batch_size=32 \
     rl_games.env_eval.mid_train.enabled=false \
     rl_games.env_eval.post_train.enabled=true \
     rl_games.env_eval.eval_backend=latency_bench \
-    rl_games.env_eval.post_train.latencies=[0,1,2,3,4,5] \
+    ++rl_games.env_eval.post_train.latencies_from_prompt_map=true \
     rl_games.env_eval.post_train.num_episodes=100 \
     rl_games.env_eval.post_train.max_steps_per_episode=3600 

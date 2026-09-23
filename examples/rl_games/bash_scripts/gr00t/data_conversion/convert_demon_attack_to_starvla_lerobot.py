@@ -14,6 +14,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import datasets
 from datasets import load_dataset
+try:
+    from datasets.exceptions import DatasetGenerationError
+except Exception:
+    class DatasetGenerationError(Exception):
+        pass
 from PIL import Image
 from tqdm import tqdm
 
@@ -37,6 +42,7 @@ STATE_DIM = 1
 BRIDGE_STATE_DIM = 7
 DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN = "observation.context_images"
 EpisodeKey = int | tuple[int, int]
+READ_SCHEMA_EXCEPTIONS = (ValueError, KeyError, FileNotFoundError, pa.ArrowInvalid, DatasetGenerationError)
 
 
 class DemonAttackColumns(NamedTuple):
@@ -134,9 +140,9 @@ def _demon_attack_column_candidates(
         return [_resolve_demon_attack_columns(dataset_name, split, want_latency, dataset_source_subdir)]
 
     base_candidates = (
-        DemonAttackColumns(frame="t", reward="reward", done="done", latency="latency", latency_ms="latency_ms"),
         DemonAttackColumns(frame="decision_step", reward="raw_reward", done=None, latency="latency_raw_frames", latency_ms="latency_ms"),
         DemonAttackColumns(frame="decision_step", reward="raw_reward", done=None, latency="latency", latency_ms="latency_ms"),
+        DemonAttackColumns(frame="t", reward="reward", done="done", latency="latency", latency_ms="latency_ms"),
         DemonAttackColumns(frame="t", reward="reward", done="done", latency="latency_raw_frames", latency_ms="latency_ms"),
     )
     if want_latency:
@@ -165,10 +171,15 @@ def _load_hf_dataset(
         # metadata-only mismatch block train/validation loading.
         "verification_mode": "no_checks",
     }
-    if dataset_source_subdir not in (None, ""):
-        load_kwargs["data_dir"] = str(dataset_source_subdir)
     if dataset_config_name not in (None, ""):
         return load_dataset(dataset_name, dataset_config_name, **load_kwargs)
+    if dataset_source_subdir not in (None, ""):
+        source_subdir = str(dataset_source_subdir)
+        try:
+            return load_dataset(dataset_name, source_subdir, **load_kwargs)
+        except (ValueError, FileNotFoundError):
+            load_kwargs["data_dir"] = source_subdir
+            return load_dataset(dataset_name, **load_kwargs)
     return load_dataset(dataset_name, **load_kwargs)
 
 
@@ -188,6 +199,30 @@ def _load_split(
             return ds.filter(lambda row: str(row["split"]).lower() in split_values)
         return ds
 
+    def _load_remote_parquet(subdir: str | None):
+        if subdir in (None, "") or Path(dataset_name).expanduser().exists():
+            return None
+        split_files = ["train.parquet"] if split == "train" else ["validation.parquet", "val.parquet", "test.parquet"]
+        load_columns = list(columns) if columns is not None else None
+        if load_columns is not None and "split" not in load_columns:
+            load_columns.append("split")
+        last_exc: Exception | None = None
+        for split_file in split_files:
+            remote_file = f"hf://datasets/{dataset_name}/{str(subdir).strip('/')}/{split_file}"
+            try:
+                ds = load_dataset("parquet", data_files=[remote_file], split="train", cache_dir=cache_dir, columns=load_columns)
+            except READ_SCHEMA_EXCEPTIONS as exc:
+                last_exc = exc
+                if columns is None:
+                    continue
+                try:
+                    ds = load_dataset("parquet", data_files=[remote_file], split="train", cache_dir=cache_dir, columns=columns)
+                except READ_SCHEMA_EXCEPTIONS as retry_exc:
+                    last_exc = retry_exc
+                    continue
+            return _filter_internal_split(ds)
+        return None
+
     def _load_one(subdir: str | None):
         local_files = _local_parquet_files(dataset_name, split, subdir)
         if local_files is not None:
@@ -196,11 +231,15 @@ def _load_split(
                 load_columns.append("split")
             try:
                 ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=load_columns)
-            except (ValueError, KeyError):
+            except READ_SCHEMA_EXCEPTIONS:
                 if columns is None:
                     raise
                 ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=columns)
             return _filter_internal_split(ds)
+
+        remote_ds = _load_remote_parquet(subdir)
+        if remote_ds is not None:
+            return remote_ds
 
         if split == "train":
             try:
@@ -209,7 +248,7 @@ def _load_split(
                     split="train", cache_dir=cache_dir, columns=columns,
                 )
                 return _filter_internal_split(ds)
-            except (ValueError, KeyError):
+            except READ_SCHEMA_EXCEPTIONS:
                 pass
         else:
             for candidate in ("validation", "val", "test"):
@@ -220,7 +259,7 @@ def _load_split(
                     )
                     if len(ds) > 0:
                         return _filter_internal_split(ds)
-                except (ValueError, KeyError):
+                except READ_SCHEMA_EXCEPTIONS:
                     continue
 
         load_columns = list(columns or [])
@@ -231,7 +270,7 @@ def _load_split(
                 dataset_name, dataset_config_name, subdir,
                 split="train", cache_dir=cache_dir, columns=load_columns or None,
             )
-        except (ValueError, KeyError):
+        except READ_SCHEMA_EXCEPTIONS:
             if columns is None:
                 raise
             ds_all = _load_hf_dataset(
