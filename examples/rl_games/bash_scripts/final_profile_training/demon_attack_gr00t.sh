@@ -5,6 +5,13 @@ CODE_ROOT="${CODE_ROOT:-/home/ubuntu/talha}"
 DATA_WORKSPACE_DIR="${DATA_WORKSPACE_DIR:-/mnt/local/talha}"
 export CODE_ROOT DATA_WORKSPACE_DIR
 
+mkdir -p "${DATA_WORKSPACE_DIR}"
+mkdir -p "${DATA_WORKSPACE_DIR}/.cache/huggingface"
+export HF_HOME="${DATA_WORKSPACE_DIR}/.cache/huggingface"
+export HUGGINGFACE_HUB_CACHE="${DATA_WORKSPACE_DIR}/.cache/huggingface/hub"
+export HF_HUB_CACHE="${DATA_WORKSPACE_DIR}/.cache/huggingface/hub"
+export TRANSFORMERS_CACHE="${DATA_WORKSPACE_DIR}/.cache/huggingface/transformers"
+
 if [[ ! -d "${CODE_ROOT}/starVLA" ]]; then
   echo "[error] missing StarVLA repo: ${CODE_ROOT}/starVLA" >&2
   exit 2
@@ -61,7 +68,6 @@ conda activate starvla_rl_games_gr00t
 
 WORKSPACE_DIR="${CODE_ROOT}" bash "${CODE_ROOT}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
 
-mkdir -p "${DATA_WORKSPACE_DIR}"
 export PYTHONPATH="${CODE_ROOT}/latency-sensitive-bench:${PYTHONPATH:-}"
 
 python examples/rl_games/scripts/launch_train.py \
@@ -72,7 +78,11 @@ python examples/rl_games/scripts/launch_train.py \
     run_id="gr00t_bridge_demon_attack_rtx3090_profile_1000ep_7k2steps_final_action_1e-5_backbone_1e-6" \
     trainer.distributed_backend=none \
     workspace_dir="$DATA_WORKSPACE_DIR" \
+    paths.run_root_dir="$DATA_WORKSPACE_DIR/results/Checkpoints" \
+    paths.dataset_local_dir="$DATA_WORKSPACE_DIR/playground/Datasets/rl_games" \
+    paths.base_model_dir="$DATA_WORKSPACE_DIR/playground/Pretrained_models/Qwen3-VL-4B-Instruct" \
     wandb_entity="talha1503" \
+    ++wandb_group=final_profile_training \
     checkpoint.hf_repo_id="latency-sensitive-bench/gr00t_bridge_demon_attack_rtx3090_profile_1000ep_7k2steps_final_action_1e-5_backbone_1e-6" \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="latency-sensitive-bench/gr00t_bridge_demon_attack_rtx3090_profile_1000ep_7k2steps_final_action_1e-5_backbone_1e-6" \
@@ -98,5 +108,6 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.env_eval.post_train.enabled=true \
     rl_games.env_eval.eval_backend=latency_bench \
     rl_games.env_eval.post_train.latencies=[0,2,4,6,8] \
+    rl_games.env_eval.post_train.latencies_from_prompt_map=true \
     rl_games.env_eval.post_train.num_episodes=100 \
     rl_games.env_eval.post_train.max_steps_per_episode=3600

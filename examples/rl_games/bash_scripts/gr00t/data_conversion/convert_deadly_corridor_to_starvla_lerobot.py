@@ -192,10 +192,15 @@ def _load_hf_dataset(
         # metadata-only mismatch block train/validation loading.
         "verification_mode": "no_checks",
     }
-    if dataset_source_subdir not in (None, ""):
-        load_kwargs["data_dir"] = str(dataset_source_subdir)
     if dataset_config_name not in (None, ""):
         return load_dataset(dataset_name, dataset_config_name, **load_kwargs)
+    if dataset_source_subdir not in (None, ""):
+        source_subdir = str(dataset_source_subdir)
+        try:
+            return load_dataset(dataset_name, source_subdir, **load_kwargs)
+        except (ValueError, FileNotFoundError):
+            load_kwargs["data_dir"] = source_subdir
+            return load_dataset(dataset_name, **load_kwargs)
     return load_dataset(dataset_name, **load_kwargs)
 
 

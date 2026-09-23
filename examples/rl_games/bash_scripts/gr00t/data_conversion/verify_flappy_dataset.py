@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-_LATENCY_SUBDIR_RE = re.compile(r"(fix_latency_)\d+(_)")
+_LATENCY_SUBDIR_RE = re.compile(r"((?:fix|fixed)_latency_)\d+(_)")
 
 
 def latency_subdir_for(template: str, latency: int) -> str | None:
@@ -99,10 +99,15 @@ def _load_hf_dataset(
         # verification so train loading is not blocked by that naming mismatch.
         "verification_mode": "no_checks",
     }
-    if dataset_source_subdir not in (None, ""):
-        load_kwargs["data_dir"] = str(dataset_source_subdir)
     if dataset_config_name not in (None, ""):
         return load_dataset(dataset_name, dataset_config_name, **load_kwargs)
+    if dataset_source_subdir not in (None, ""):
+        source_subdir = str(dataset_source_subdir)
+        try:
+            return load_dataset(dataset_name, source_subdir, **load_kwargs)
+        except (ValueError, FileNotFoundError):
+            load_kwargs["data_dir"] = source_subdir
+            return load_dataset(dataset_name, **load_kwargs)
     return load_dataset(dataset_name, **load_kwargs)
 
 

@@ -15,11 +15,15 @@ rl_games:
       demon_attack: discrete_ce
       defend_the_line: discrete_ce
       deadly_corridor: multibinary_bce
+      asterix: asterix_factorized_ce
+      atlantis: discrete_ce
     loss_weight_by_task:
       flappy: 1.0
       demon_attack: 1.0
       defend_the_line: 1.0
       deadly_corridor: 1.0
+      asterix: 1.0
+      atlantis: 1.0
     eval_tasks:
       flappy:
         prompt_map_path: null
@@ -67,6 +71,36 @@ rl_games:
           num_episodes: null
           max_steps_per_episode: null
       deadly_corridor:
+        prompt_map_path: null
+        frameskip: 4
+        image_size: 224
+        task_description: null
+        mid_train:
+          enabled: true
+          latencies: null
+          num_episodes: null
+          max_steps_per_episode: null
+        post_train:
+          enabled: true
+          latencies: null
+          num_episodes: null
+          max_steps_per_episode: null
+      asterix:
+        prompt_map_path: null
+        frameskip: 4
+        image_size: 224
+        task_description: null
+        mid_train:
+          enabled: true
+          latencies: null
+          num_episodes: null
+          max_steps_per_episode: null
+        post_train:
+          enabled: true
+          latencies: null
+          num_episodes: null
+          max_steps_per_episode: null
+      atlantis:
         prompt_map_path: null
         frameskip: 4
         image_size: 224

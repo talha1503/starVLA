@@ -699,51 +699,79 @@ def _ensure_rl_games_lerobot_dataset(
     obs_stride_raw_frames = round(env_fps / obs_fps)
     prompt_map = dataset_dir / "latency_prompt_map.json"
 
-    def _manifest_matches(dataset_path: Path) -> bool:
+    def _manifest_mismatch_reasons(dataset_path: Path) -> list[str]:
         from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import resolve_latency_subdirs
 
+        reasons: list[str] = []
         manifest_path = dataset_path / "manifest.json"
         if not manifest_path.exists():
-            return True
+            return reasons
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except Exception:
-            return False
+        except Exception as exc:
+            return [f"{manifest_path} is unreadable: {exc}"]
         if str(manifest.get("action_carrier", "native")) != action_carrier:
-            return False
+            reasons.append(
+                f"action_carrier mismatch: manifest={manifest.get('action_carrier', 'native')!r} expected={action_carrier!r}"
+            )
         if (manifest.get("source_config") or None) != source_config_name:
-            return False
+            reasons.append(
+                f"source_config mismatch: manifest={(manifest.get('source_config') or None)!r} expected={source_config_name!r}"
+            )
         if (manifest.get("source_subdir") or None) != source_subdir:
-            return False
+            reasons.append(
+                f"source_subdir mismatch: manifest={(manifest.get('source_subdir') or None)!r} expected={source_subdir!r}"
+            )
         if action_layout and ("action_layout" not in manifest or str(manifest["action_layout"]) != action_layout):
-            return False
+            reasons.append(
+                f"action_layout mismatch: manifest={manifest.get('action_layout')!r} expected={action_layout!r}"
+            )
         if mixed_latency and manifest.get("latency_metadata") is not True:
-            return False
+            reasons.append("latency_metadata missing/false for mixed-latency run")
         if manifest.get("fps") != obs_fps:
-            return False
+            reasons.append(f"fps mismatch: manifest={manifest.get('fps')!r} expected={obs_fps!r}")
         if manifest.get("obs_stride_raw_frames") != obs_stride_raw_frames:
-            return False
+            reasons.append(
+                f"obs_stride_raw_frames mismatch: manifest={manifest.get('obs_stride_raw_frames')!r} expected={obs_stride_raw_frames!r}"
+            )
         if manifest.get("target_latency_unit") != target_latency_unit:
-            return False
+            reasons.append(
+                f"target_latency_unit mismatch: manifest={manifest.get('target_latency_unit')!r} expected={target_latency_unit!r}"
+            )
         if manifest.get("source_latency_column") != source_latency_column:
-            return False
+            reasons.append(
+                f"source_latency_column mismatch: manifest={manifest.get('source_latency_column')!r} expected={source_latency_column!r}"
+            )
         expected_latency_filter = getattr(args, "latency_filter", None)
         if expected_latency_filter is not None:
             manifest_latency_filter = manifest.get("latency_filter")
             if manifest_latency_filter != [int(value) for value in expected_latency_filter]:
-                return False
+                reasons.append(
+                    f"latency_filter mismatch: manifest={manifest_latency_filter!r} "
+                    f"expected={[int(value) for value in expected_latency_filter]!r}"
+                )
             expected_subdirs = [str(s) for s in resolve_latency_subdirs(source_subdir, expected_latency_filter)]
             if manifest.get("latency_subdirs") != expected_subdirs:
-                return False
+                reasons.append(
+                    f"latency_subdirs mismatch: manifest={manifest.get('latency_subdirs')!r} expected={expected_subdirs!r}"
+                )
         expected_episodes_per_latency = getattr(args, "episodes_per_latency", None)
         if expected_episodes_per_latency is not None:
             if manifest.get("episodes_per_latency") != int(expected_episodes_per_latency):
-                return False
+                reasons.append(
+                    f"episodes_per_latency mismatch: manifest={manifest.get('episodes_per_latency')!r} "
+                    f"expected={int(expected_episodes_per_latency)!r}"
+                )
         expected_max_episodes = getattr(args, "max_episodes", None)
         if expected_max_episodes is not None:
             if manifest.get("max_episodes") != int(expected_max_episodes):
-                return False
-        return True
+                reasons.append(
+                    f"max_episodes mismatch: manifest={manifest.get('max_episodes')!r} expected={int(expected_max_episodes)!r}"
+                )
+        return reasons
+
+    def _manifest_matches(dataset_path: Path) -> bool:
+        return not _manifest_mismatch_reasons(dataset_path)
 
     def _mixed_prompt_map_ready() -> bool:
         if not mixed_latency:
@@ -837,16 +865,25 @@ def _ensure_rl_games_lerobot_dataset(
             )
         _write_sorted_prompt_map(prompt_map, merged)
 
-    rebuild = (
-        force
-        or not _dataset_ready(dataset_dir)
-        or not _dataset_ready(eval_dataset_dir)
-        or not _manifest_matches(dataset_dir)
-        or not _manifest_matches(eval_dataset_dir)
-        or not _mixed_prompt_map_ready()
-    )
+    rebuild_reasons: list[str] = []
+    if force:
+        rebuild_reasons.append("dataset.setup_force or dataset.force_download is true")
+    if not _dataset_ready(dataset_dir):
+        rebuild_reasons.append(f"train dataset is not ready: {dataset_dir}")
+    if not _dataset_ready(eval_dataset_dir):
+        rebuild_reasons.append(f"eval dataset is not ready: {eval_dataset_dir}")
+    for reason in _manifest_mismatch_reasons(dataset_dir):
+        rebuild_reasons.append(f"train manifest: {reason}")
+    for reason in _manifest_mismatch_reasons(eval_dataset_dir):
+        rebuild_reasons.append(f"eval manifest: {reason}")
+    if not _mixed_prompt_map_ready():
+        rebuild_reasons.append(f"mixed latency prompt map is not ready: {prompt_map}")
+    rebuild = bool(rebuild_reasons)
     converted = False
     if rebuild:
+        print("[setup] rebuilding converted dataset because:", file=sys.stderr, flush=True)
+        for reason in rebuild_reasons:
+            print(f"[setup]   - {reason}", file=sys.stderr, flush=True)
         if not args.source_dataset_hf:
             raise ValueError(
                 f"{dataset_dir} is not ready; pass --source-dataset-hf so setup can verify and convert it"

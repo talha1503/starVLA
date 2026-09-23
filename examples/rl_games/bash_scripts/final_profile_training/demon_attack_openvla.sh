@@ -64,7 +64,7 @@ WORKSPACE_DIR="${CODE_ROOT}" bash "${CODE_ROOT}/starVLA/examples/rl_games/bash_s
 mkdir -p "${DATA_WORKSPACE_DIR}"
 export PYTHONPATH="${CODE_ROOT}/latency-sensitive-bench:${PYTHONPATH:-}"
 
-python examples/rl_games/scripts/launch_train.py \
+CUDA_VISIBLE_DEVICES=0 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
     env=demon_attack \
     init=bridge \
@@ -73,10 +73,13 @@ python examples/rl_games/scripts/launch_train.py \
     trainer.distributed_backend=none \
     workspace_dir="$DATA_WORKSPACE_DIR" \
     wandb_entity="talha1503" \
+    ++wandb_tags='["final_vla_profiling_training","demon_attack","openvla","rtx3090_profile"]' \
+    ++training_latency_condition=rtx3090_profile \
+    ++wandb_group="final_vla_profiling_training" \
     checkpoint.hf_repo_id="latency-sensitive-bench/openvla_bridge_demon_attack_rtx3090_profile_1000ep_7k2steps_final" \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="latency-sensitive-bench/openvla_bridge_demon_attack_rtx3090_profile_1000ep_7k2steps_final" \
-    dataset.source_hf=latency-sensitive-bench/memory-rollouts \
+    dataset.source_hf=latency-sensitive-bench/profile-rollouts-v2 \
     dataset.source_subdir=demon_attack_openvla_rtx3090_profile_1000ep_7k2steps \
     dataset.target_latency_unit=raw_frames \
     checkpoint.local.keep_last_n=1 \
@@ -94,6 +97,6 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.env_eval.mid_train.max_steps_per_episode=3600 \
     rl_games.env_eval.post_train.enabled=true \
     rl_games.env_eval.eval_backend=latency_bench \
-    rl_games.env_eval.post_train.latencies=[0,1,2,3,4,5,6,7,8] \
+    ++rl_games.env_eval.post_train.latencies_from_prompt_map=true \
     rl_games.env_eval.post_train.num_episodes=100 \
     rl_games.env_eval.post_train.max_steps_per_episode=3600

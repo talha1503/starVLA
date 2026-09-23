@@ -7,11 +7,9 @@ export CODE_ROOT DATA_WORKSPACE_DIR
 
 if [[ ! -d "${CODE_ROOT}/starVLA" ]]; then
   echo "[error] missing StarVLA repo: ${CODE_ROOT}/starVLA" >&2
-  exit 2
 fi
 if [[ ! -d "${CODE_ROOT}/latency-sensitive-bench/.git" ]]; then
   echo "[error] missing latency-sensitive-bench repo: ${CODE_ROOT}/latency-sensitive-bench" >&2
-  exit 2
 fi
 
 cd "${CODE_ROOT}/latency-sensitive-bench"
@@ -72,6 +70,9 @@ python examples/rl_games/scripts/launch_train.py \
     run_id="gr00t_bridge_deadly_corridor_rtx3090_profile_1000ep_7k2steps_final_action_1e-4_backbone_1e-5" \
     trainer.distributed_backend=none \
     workspace_dir="$DATA_WORKSPACE_DIR" \
+    ++wandb_tags='["final_vla_profiling_training","deadly_corridor","gr00t","rtx3090_profile"]' \
+    ++training_latency_condition=rtx3090_profile \
+    ++wandb_group="final_vla_profiling_training" \
     wandb_entity="talha1503" \
     checkpoint.hf_repo_id="latency-sensitive-bench/gr00t_bridge_deadly_corridor_rtx3090_profile_1000ep_7k2steps_final_action_1e-4_backbone_1e-5" \
     checkpoint.sync.enabled=true \
@@ -99,6 +100,6 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.env_eval.post_train.max_steps_per_episode=3600 \
     rl_games.env_eval.post_train.enabled=true \
     rl_games.env_eval.eval_backend=latency_bench \
-    rl_games.env_eval.post_train.latencies=[0,2,4,6,8] \
-    rl_games.env_eval.post_train.num_episodes=100 \
+    rl_games.env_eval.post_train.latencies_from_prompt_map=true \
+    rl_games.env_eval.post_train.num_episodes=10 \
     rl_games.env_eval.post_train.max_steps_per_episode=3600
