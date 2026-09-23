@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import sys
 
+import torch
 from torch.utils.data import DataLoader, Dataset
 
 
@@ -23,6 +24,24 @@ class _WorkerEnvDataset(Dataset):
             "CUDA_VISIBLE_DEVICES": os.environ["CUDA_VISIBLE_DEVICES"],
             **{key: os.environ.get(key, "<unset>") for key in _DISTRIBUTED_ENV_KEYS},
         }
+
+
+class _RefreshGenerationDataset(Dataset):
+    def __init__(self) -> None:
+        self.shared_generation = torch.zeros((), dtype=torch.int64).share_memory_()
+        self.local_generation = 0
+
+    def __len__(self):
+        return 16
+
+    def __getitem__(self, index):
+        generation = int(self.shared_generation.item())
+        if generation != self.local_generation:
+            self.local_generation = generation
+        return os.getpid(), self.local_generation
+
+    def refresh(self):
+        self.shared_generation.add_(1)
 
 
 def test_cpu_only_worker_context_cleans_spawn_environment_and_restores_parent(monkeypatch):
@@ -99,3 +118,29 @@ def test_cpu_only_dataloader_kwargs_supports_persistent_workers(monkeypatch):
     assert loader.persistent_workers is True
     assert worker_env["CUDA_VISIBLE_DEVICES"] == [""]
     assert os.environ["CUDA_VISIBLE_DEVICES"] == "0,1"
+
+
+def test_persistent_workers_keep_pids_and_drop_prefetched_previous_generation():
+    dataset = _RefreshGenerationDataset()
+    loader = DataLoader(
+        dataset,
+        batch_size=1,
+        num_workers=2,
+        **build_cpu_only_dataloader_kwargs(
+            2,
+            pin_memory=False,
+            persistent_workers=True,
+            prefetch_factor=2,
+        ),
+    )
+    first = iter(loader)
+    before = [next(first) for _ in range(4)]
+    dataset.refresh()
+    second = iter(loader)
+    after = [next(second) for _ in range(4)]
+
+    before_pids = {int(pid.item()) for pid, _generation in before}
+    after_pids = {int(pid.item()) for pid, _generation in after}
+    assert before_pids == after_pids
+    assert {int(generation.item()) for _pid, generation in before} == {0}
+    assert {int(generation.item()) for _pid, generation in after} == {1}

@@ -2566,6 +2566,34 @@ class LeRobotMixtureDataset(Dataset):
         """The indices of the primary datasets."""
         return self._primary_dataset_indices
 
+    def _replace_data_mixture(
+        self,
+        data_mixture: Sequence[tuple[LeRobotSingleDataset, float]],
+    ) -> None:
+        """Replace the active sources while retaining this dataset object's worker state."""
+        self.datasets = [dataset for dataset, _weight in data_mixture]
+        raw_sampling_weights = np.asarray(
+            [weight for _dataset, weight in data_mixture], dtype=np.float64
+        )
+        self._dataset_lengths = np.asarray(
+            [len(dataset) for dataset in self.datasets], dtype=np.int64
+        )
+        self._dataset_sampling_weights = raw_sampling_weights.copy()
+        if self.balance_dataset_weights:
+            self._dataset_sampling_weights *= self._dataset_lengths
+        self._dataset_sampling_weights /= self._dataset_sampling_weights.sum()
+
+        self._trajectory_sampling_weights = []
+        for dataset in self.datasets:
+            weights = np.ones(len(dataset.trajectory_lengths), dtype=np.float64)
+            if self.balance_trajectory_weights:
+                weights *= dataset.trajectory_lengths
+            weights /= weights.sum()
+            self._trajectory_sampling_weights.append(weights)
+
+        self._primary_dataset_indices = raw_sampling_weights == 1.0
+        self._rebuild_step_order(self.epoch)
+
     def __str__(self) -> str:
         dataset_descriptions = []
         for dataset, weight in zip(self.datasets, self.dataset_sampling_weights):

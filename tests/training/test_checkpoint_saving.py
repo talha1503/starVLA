@@ -98,6 +98,7 @@ def test_model_only_checkpoint_does_not_save_full_training_state(tmp_path: Path)
         {
             "output_dir": str(tmp_path),
             "datasets": {"vla_data": {"per_device_batch_size": 1}},
+            "trainer": {},
             "checkpoint": {
                 "save_best_model": False,
                 "save_final_model": True,
@@ -133,6 +134,122 @@ def test_model_only_checkpoint_does_not_save_full_training_state(tmp_path: Path)
     assert model_path.exists()
     assert not state_path.exists()
     assert json.loads(summary_path.read_text(encoding="utf-8").strip()) == {"steps": 400}
+
+
+def test_completed_dagger_boundary_refreshes_dataset_without_reopening_service(tmp_path: Path) -> None:
+    class Dataset:
+        def __init__(self) -> None:
+            self.refreshes = 0
+
+        def refresh_custom_mixture(self) -> None:
+            self.refreshes += 1
+
+    class Loader:
+        def __init__(self) -> None:
+            self.dataset = Dataset()
+            self.iterator_count = 0
+
+        def __iter__(self):
+            self.iterator_count += 1
+            return iter(())
+
+    control_dir = tmp_path / "control"
+    control_dir.mkdir()
+    metrics = {"round": 2, "eval/mean_length": 42.0}
+    (control_dir / "step_500.continue.json").write_text(
+        json.dumps({"metrics": metrics}), encoding="utf-8"
+    )
+    trainer = VLATrainer.__new__(VLATrainer)
+    trainer._dagger_control_dir = control_dir
+    trainer.completed_steps = 500
+    trainer.accelerator = _FakeAccelerator()
+    trainer.vla_train_dataloader = Loader()
+    trainer.graceful_stop_requested = False
+    logged = []
+    trainer._log_wandb = logged.append
+
+    assert trainer._wait_for_dagger_round() is True
+    assert not (control_dir / "step_500.ready").exists()
+    assert trainer.vla_train_dataloader.dataset.refreshes == 1
+    assert trainer.vla_train_dataloader.iterator_count == 1
+    assert logged == [metrics]
+
+
+def test_dagger_boundary_serves_eval_model_then_restores_training(tmp_path, monkeypatch) -> None:
+    from latency_bench.integrations import starvla_resident_dagger
+    from latency_bench.policy import starvla
+
+    class Model(torch.nn.Linear):
+        def __init__(self):
+            super().__init__(2, 1)
+            self.memory_resets = 0
+
+        def reset_memory(self):
+            self.memory_resets += 1
+
+    class Accelerator(_FakeAccelerator):
+        process_index = 0
+
+        def unwrap_model(self, model):
+            return model
+
+    class Dataset:
+        def __init__(self):
+            self.refreshes = 0
+
+        def refresh_custom_mixture(self):
+            self.refreshes += 1
+
+    class Loader:
+        def __init__(self):
+            self.dataset = Dataset()
+
+        def __iter__(self):
+            return iter(())
+
+    control_dir = tmp_path / "control"
+    control_dir.mkdir()
+    (control_dir / "resident_policy.json").write_text(json.dumps({
+        "socket_dir": str(control_dir), "policy": {}
+    }))
+    model = Model()
+    parameters_before = [parameter.detach().clone() for parameter in model.parameters()]
+    policy = SimpleNamespace(predict_batch=lambda observations: observations)
+    served = []
+    inference_modes = []
+    monkeypatch.setattr(
+        starvla,
+        "build_live_starvla_policy",
+        lambda **kwargs: served.append((kwargs["framework"], kwargs["framework"].training)) or policy,
+    )
+    monkeypatch.setattr(
+        starvla_resident_dagger,
+        "serve_resident_inference",
+        lambda **kwargs: (
+            inference_modes.append(torch.is_inference_mode_enabled())
+            or {"metrics": {"round": 2}}
+        ),
+    )
+    trainer = VLATrainer.__new__(VLATrainer)
+    trainer._dagger_control_dir = control_dir
+    trainer.completed_steps = 500
+    trainer.accelerator = Accelerator()
+    trainer.model = model
+    trainer.config = OmegaConf.create({"datasets": {"vla_data": {}}})
+    trainer.vla_train_dataloader = Loader()
+    trainer.graceful_stop_requested = False
+    trainer._log_wandb = lambda metrics: None
+
+    assert trainer._wait_for_dagger_round() is True
+    assert served == [(model, False)]
+    assert inference_modes == [True]
+    assert all(
+        torch.equal(before, after)
+        for before, after in zip(parameters_before, model.parameters(), strict=True)
+    )
+    assert model.training is True
+    assert model.memory_resets == 1
+    assert trainer.vla_train_dataloader.dataset.refreshes == 1
 
 
 def test_round_resume_restores_optimizer_and_lr_schedule(tmp_path, monkeypatch):

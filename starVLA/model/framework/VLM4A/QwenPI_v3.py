@@ -321,10 +321,17 @@ class Qwen_PI_v3(baseframework):
             )
             repeated_diffusion_steps = 2  # No repeat for the large action FM to save memory.
             actions_target_repeated = actions_target.repeat(repeated_diffusion_steps, 1, 1)
-            action_valid_mask = None
-            if "action_valid_mask" in examples[0]:
-                action_valid_mask = torch.as_tensor(
-                    np.array([example["action_valid_mask"] for example in examples]),
+            action_prefix_mask = None
+            action_loss_mask = None
+            if "action_prefix_mask" in examples[0]:
+                action_prefix_mask = torch.as_tensor(
+                    np.array([example["action_prefix_mask"] for example in examples]),
+                    device=base_hidden.device,
+                    dtype=torch.bool,
+                )[:, -self.action_horizon :].repeat(repeated_diffusion_steps, 1)
+            if "action_loss_mask" in examples[0]:
+                action_loss_mask = torch.as_tensor(
+                    np.array([example["action_loss_mask"] for example in examples]),
                     device=base_hidden.device,
                     dtype=torch.bool,
                 )[:, -self.action_horizon :].repeat(repeated_diffusion_steps, 1)
@@ -341,7 +348,8 @@ class Qwen_PI_v3(baseframework):
                 actions_target_repeated,
                 state_repeated,
                 return_clean_actions=self.task_objective is not None,
-                action_valid_mask=action_valid_mask,
+                action_prefix_mask=action_prefix_mask,
+                action_loss_mask=action_loss_mask,
             )
             if self.task_objective is None:
                 action_loss = action_result
@@ -387,6 +395,16 @@ class Qwen_PI_v3(baseframework):
             batch_images = [to_pil_preserve(example["image"]) for example in examples]  # List[List[PIL.Image]]
         instructions = [example["lang"] for example in examples]  # List[str]
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # List[ndarray] or None
+        action_prefix = (
+            [example["action_prefix"] for example in examples]
+            if "action_prefix" in examples[0]
+            else None
+        )
+        action_prefix_mask = (
+            [example["action_prefix_mask"] for example in examples]
+            if "action_prefix_mask" in examples[0]
+            else None
+        )
 
         with _stage(profiler, "starvla_state_instruction_ms"):
             if self.state_encoding == "discretized_text":
@@ -409,11 +427,24 @@ class Qwen_PI_v3(baseframework):
             if state is not None
             else None
         )
+        action_prefix = (
+            torch.from_numpy(np.array(action_prefix)).to(base_hidden.device, dtype=base_hidden.dtype)
+            if action_prefix is not None
+            else None
+        )
+        action_prefix_mask = (
+            torch.from_numpy(np.array(action_prefix_mask)).to(base_hidden.device, dtype=torch.bool)
+            if action_prefix_mask is not None
+            else None
+        )
         # Step 2: run the flow-matching sampler to produce the denoised action chunk.
         with _stage(profiler, "starvla_action_sampler_ms"):
             with torch.autocast("cuda", dtype=torch.float32):
                 pred_actions = self.action_model.predict_action(
-                    vl_embs_list, state
+                    vl_embs_list,
+                    state,
+                    action_prefix=action_prefix,
+                    action_prefix_mask=action_prefix_mask,
                 )  # (B, action_horizon, action_dim)
 
         with _stage(profiler, "starvla_to_numpy_ms"):
