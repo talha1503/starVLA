@@ -51,6 +51,8 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.save_best_model=false \
     checkpoint.local.keep_last_n=1 \
     trainer.max_train_steps=15000 \
+    datasets.vla_data.sequential_step_sampling=true \
+    datasets.vla_data.shuffle=true \
     trainer.num_warmup_steps=0 \
     trainer.eval_interval=15000 \
     trainer.save_interval=15000 \
