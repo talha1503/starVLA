@@ -387,7 +387,13 @@ def build_trainer_command(cfg: Any, setup: dict[str, Any], workspace_dir: Path, 
     prompt_map = setup.get("latency_prompt_map_path")
     if prompt_map not in (None, ""):
         _append_leaf_override(cmd, "rl_games.env_eval.latency.prompt_map_path", prompt_map)
+    eval_tasks_cfg = _cfg_get(cfg, "rl_games.cross_task.eval_tasks") or {}
+    if OmegaConf.is_config(eval_tasks_cfg):
+        eval_tasks_cfg = OmegaConf.to_container(eval_tasks_cfg, resolve=True)
+    eval_task_names = set(eval_tasks_cfg) if isinstance(eval_tasks_cfg, dict) else set()
     for task_name, task_prompt_map in (setup.get("cross_task_prompt_maps") or {}).items():
+        if task_name not in eval_task_names:
+            continue
         _append_leaf_override(cmd, f"rl_games.cross_task.eval_tasks.{task_name}.prompt_map_path", task_prompt_map)
 
     return cmd

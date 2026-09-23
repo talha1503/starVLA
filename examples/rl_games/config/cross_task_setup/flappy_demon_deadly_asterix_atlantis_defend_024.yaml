@@ -51,15 +51,15 @@ rl_games:
         weight: 1.0
       - name: deadly_corridor
         role: C
-        train_source_hf: latency-sensitive-bench/deadly_corridor_200ep
-        prompt_source_hf: latency-sensitive-bench/deadly_corridor_200ep
-        train_source_subdir: deadly_corridor_fix_latency_0_200ep
-        prompt_source_subdir: deadly_corridor_fix_latency_0_200ep
-        converted_name: deadly_corridor_mixed_024_200ep_cross_train
+        train_source_hf: latency-sensitive-bench/deadly_1000ep
+        prompt_source_hf: latency-sensitive-bench/deadly_1000ep
+        train_source_subdir: deadly_corridor_fix_latency_0_1000ep
+        prompt_source_subdir: deadly_corridor_fix_latency_0_1000ep
+        converted_name: deadly_corridor_mixed_024_1000ep_cross_train
         train_latency_filter: [0, 2, 4]
         eval_latency_filter: [0, 2, 4]
         episodes_per_latency: null
-        max_episodes: 200
+        max_episodes: 1000
         action_layout: multibinary_7
         weight: 1.0
       - name: asterix
@@ -108,11 +108,11 @@ rl_games:
           enabled: false
           latencies: [0, 2, 4]
           num_episodes: 5
-          max_steps_per_episode: 2000
+          max_steps_per_episode: 3600
         post_train:
           latencies: [0, 2, 4]
           num_episodes: 20
-          max_steps_per_episode: 2000
+          max_steps_per_episode: 3600
       demon_attack:
         frameskip: 4
         image_size: 224
@@ -130,45 +130,6 @@ rl_games:
         frameskip: 4
         image_size: 224
         task_description: "You are playing Deadly Corridor in VizDoom. Choose actions from MOVE_FORWARD, MOVE_BACKWARD, MOVE_LEFT, MOVE_RIGHT, TURN_LEFT, TURN_RIGHT, ATTACK."
-        mid_train:
-          enabled: false
-          latencies: [0, 2, 4]
-          num_episodes: 5
-          max_steps_per_episode: 3600
-        post_train:
-          latencies: [0, 2, 4]
-          num_episodes: 20
-          max_steps_per_episode: 3600
-      asterix:
-        frameskip: 4
-        image_size: 224
-        task_description: "Collect useful objects and avoid lyres. Choose exactly one action from: noop, up, right, left, down, upright, upleft, downright, downleft."
-        mid_train:
-          enabled: false
-          latencies: [0, 2, 4]
-          num_episodes: 5
-          max_steps_per_episode: 3600
-        post_train:
-          latencies: [0, 2, 4]
-          num_episodes: 20
-          max_steps_per_episode: 3600
-      atlantis:
-        frameskip: 4
-        image_size: 224
-        task_description: "Defend Atlantis by firing at descending enemies. Choose exactly one action from: noop, fire, rightfire, leftfire."
-        mid_train:
-          enabled: false
-          latencies: [0, 2, 4]
-          num_episodes: 5
-          max_steps_per_episode: 3600
-        post_train:
-          latencies: [0, 2, 4]
-          num_episodes: 20
-          max_steps_per_episode: 3600
-      defend_the_line:
-        frameskip: 4
-        image_size: 224
-        task_description: "You are playing Defend the Line in VizDoom. Your goal is to survive by turning toward enemies and shooting them before they reach you. The available actions are: TURN_LEFT, TURN_RIGHT, and ATTACK. Choose the best next action from the current visual observation."
         mid_train:
           enabled: false
           latencies: [0, 2, 4]

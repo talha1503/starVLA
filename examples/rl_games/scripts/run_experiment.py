@@ -382,7 +382,10 @@ def _trainer_command(cfg: dict[str, Any], setup: dict[str, Any], workspace_dir: 
     prompt_map = setup.get("latency_prompt_map_path")
     if prompt_map:
         _append_leaf_override(cmd, "rl_games.env_eval.latency.prompt_map_path", prompt_map)
+    eval_task_names = set((_get(cfg, "rl_games.cross_task.eval_tasks", {}) or {}).keys())
     for task_name, task_prompt_map in (setup.get("cross_task_prompt_maps") or {}).items():
+        if task_name not in eval_task_names:
+            continue
         _append_leaf_override(cmd, f"rl_games.cross_task.eval_tasks.{task_name}.prompt_map_path", task_prompt_map)
 
     return cmd

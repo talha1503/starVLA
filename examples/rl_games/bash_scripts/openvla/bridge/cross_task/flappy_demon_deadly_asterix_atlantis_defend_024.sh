@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
+WORKSPACE_DIR="${WORKSPACE_DIR:-/home/ubuntu/talha}"
 DATA_WORKSPACE_DIR="${DATA_WORKSPACE_DIR:-/mnt/local/talha}"
 export WORKSPACE_DIR DATA_WORKSPACE_DIR
 
@@ -26,9 +26,10 @@ export HF_HUB_CACHE="${DATA_WORKSPACE_DIR}/.cache/huggingface/hub"
 export TRANSFORMERS_CACHE="${DATA_WORKSPACE_DIR}/.cache/huggingface/transformers"
 export PYTHONPATH="${WORKSPACE_DIR}/latency-sensitive-bench:${PYTHONPATH:-}"
 
-RUN_ID="${RUN_ID:-openvla_bridge_cross_mixed_all_024_200ep_exp1}"
+RUN_ID="${RUN_ID:-openvla_bridge_cross_mixed_all_024_5env200ep_deadly1000ep_exp1}"
 HF_REPO_ID="${HF_REPO_ID:-latency-sensitive-bench/${RUN_ID}}"
 MAX_EPISODES_PER_ENV="${MAX_EPISODES_PER_ENV:-200}"
+MAX_EPISODES_DEADLY="${MAX_EPISODES_DEADLY:-1000}"
 MIX_LATENCIES="${MIX_LATENCIES:-[0,2,4]}"
 
 python examples/rl_games/scripts/launch_train.py \
@@ -49,10 +50,10 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.sync.repo_id="${HF_REPO_ID}" \
     checkpoint.save_best_model=false \
     checkpoint.local.keep_last_n=1 \
-    trainer.max_train_steps=26250 \
+    trainer.max_train_steps=15000 \
     trainer.num_warmup_steps=0 \
-    trainer.eval_interval=26250 \
-    trainer.save_interval=26250 \
+    trainer.eval_interval=15000 \
+    trainer.save_interval=15000 \
     trainer.logging_frequency=1 \
     trainer.gradient_accumulation_steps=8 \
     trainer.per_latency_eval_num_batches=5 \
@@ -89,15 +90,15 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.1.episodes_per_latency=null \
     rl_games.cross_task.train_tasks.1.max_episodes="${MAX_EPISODES_PER_ENV}" \
     rl_games.cross_task.train_tasks.2.name=deadly_corridor \
-    rl_games.cross_task.train_tasks.2.converted_name=deadly_corridor_mixed_024_200ep_cross_train \
-    rl_games.cross_task.train_tasks.2.train_source_hf=latency-sensitive-bench/deadly_corridor_200ep \
-    rl_games.cross_task.train_tasks.2.prompt_source_hf=latency-sensitive-bench/deadly_corridor_200ep \
-    rl_games.cross_task.train_tasks.2.train_source_subdir=deadly_corridor_fix_latency_0_200ep \
-    rl_games.cross_task.train_tasks.2.prompt_source_subdir=deadly_corridor_fix_latency_0_200ep \
+    rl_games.cross_task.train_tasks.2.converted_name=deadly_corridor_mixed_024_1000ep_cross_train \
+    rl_games.cross_task.train_tasks.2.train_source_hf=latency-sensitive-bench/deadly_1000ep \
+    rl_games.cross_task.train_tasks.2.prompt_source_hf=latency-sensitive-bench/deadly_1000ep \
+    rl_games.cross_task.train_tasks.2.train_source_subdir=deadly_corridor_fix_latency_0_1000ep \
+    rl_games.cross_task.train_tasks.2.prompt_source_subdir=deadly_corridor_fix_latency_0_1000ep \
     rl_games.cross_task.train_tasks.2.train_latency_filter="${MIX_LATENCIES}" \
     rl_games.cross_task.train_tasks.2.eval_latency_filter="${MIX_LATENCIES}" \
     rl_games.cross_task.train_tasks.2.episodes_per_latency=null \
-    rl_games.cross_task.train_tasks.2.max_episodes="${MAX_EPISODES_PER_ENV}" \
+    rl_games.cross_task.train_tasks.2.max_episodes="${MAX_EPISODES_DEADLY}" \
     rl_games.cross_task.train_tasks.2.action_layout=multibinary_7 \
     rl_games.cross_task.train_tasks.3.name=asterix \
     rl_games.cross_task.train_tasks.3.converted_name=asterix_mixed_024_200ep_cross_train \
@@ -132,5 +133,4 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.5.max_episodes="${MAX_EPISODES_PER_ENV}" \
     rl_games.env_eval.eval_backend=eval_core \
     rl_games.env_eval.deadly.action_layout=multibinary_7 \
-    rl_games.env_eval.deadly.multibinary_threshold=0.0 \
-    rl_games.env_eval.asterix.action_layout=factorized_6
+    rl_games.env_eval.deadly.multibinary_threshold=0.0
