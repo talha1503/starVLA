@@ -37,6 +37,7 @@ STATE_DIM = 1
 BRIDGE_STATE_DIM = 7
 DEFAULT_CONTEXT_IMAGES_OUTPUT_COLUMN = "observation.context_images"
 EpisodeKey = int | tuple[int, int]
+READ_SCHEMA_EXCEPTIONS = (ValueError, KeyError, pa.ArrowInvalid)
 
 
 class FlappyColumns(NamedTuple):
@@ -159,9 +160,9 @@ def _flappy_column_candidates(
         ]
 
     base_candidates = (
-        FlappyColumns(frame="t", reward="reward", done="done", latency="latency", latency_ms="latency_ms"),
         FlappyColumns(frame="decision_step", reward="raw_reward", done=None, latency="latency_raw_frames", latency_ms="latency_ms"),
         FlappyColumns(frame="decision_step", reward="raw_reward", done=None, latency="latency", latency_ms="latency_ms"),
+        FlappyColumns(frame="t", reward="reward", done="done", latency="latency", latency_ms="latency_ms"),
         FlappyColumns(frame="t", reward="reward", done="done", latency="latency_raw_frames", latency_ms="latency_ms"),
     )
     if want_latency:
@@ -272,7 +273,7 @@ def _load_split(
                 load_columns.append("split")
             try:
                 ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=load_columns)
-            except (ValueError, KeyError):
+            except READ_SCHEMA_EXCEPTIONS:
                 if columns is None:
                     raise
                 ds = load_dataset("parquet", data_files=local_files, split="train", cache_dir=cache_dir, columns=columns)
@@ -289,7 +290,7 @@ def _load_split(
                 )
                 ds = _cast_image_columns_to_encoded_bytes(ds, image_columns)
                 return _filter_internal_split(ds)
-            except (ValueError, KeyError):
+            except READ_SCHEMA_EXCEPTIONS:
                 pass
         else:
             for candidate in ("validation", "val", "test"):
@@ -301,7 +302,7 @@ def _load_split(
                     if len(ds) > 0:
                         ds = _cast_image_columns_to_encoded_bytes(ds, image_columns)
                         return _filter_internal_split(ds)
-                except (ValueError, KeyError):
+                except READ_SCHEMA_EXCEPTIONS:
                     continue
 
         load_columns = list(columns or [])
@@ -312,7 +313,7 @@ def _load_split(
                 dataset_name, dataset_config_name, subdir,
                 split="train", cache_dir=cache_dir, columns=load_columns or None,
             )
-        except (ValueError, KeyError):
+        except READ_SCHEMA_EXCEPTIONS:
             if columns is None:
                 raise
             ds_all = _load_hf_dataset(
