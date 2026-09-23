@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import inspect
 import json
 import os
@@ -1320,7 +1321,8 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
     mixture_name = "cross__" + "__".join(converted_names[task] for task in sorted(converted_names))
     mixture_name = _safe_token(mixture_name)
     eval_mixture_name = f"{mixture_name}__val"
-    custom_mixtures_path = data_root_dir / "_generated_mixtures" / f"{mixture_name}.json"
+    mixture_file_name = f"cross_{hashlib.sha1(mixture_name.encode('utf-8')).hexdigest()[:16]}.json"
+    custom_mixtures_path = data_root_dir / "_generated_mixtures" / mixture_file_name
     custom_mixtures_path.parent.mkdir(parents=True, exist_ok=True)
     custom_mixtures_path.write_text(
         json.dumps({mixture_name: mixture_entries, eval_mixture_name: val_mixture_entries}, indent=2),
