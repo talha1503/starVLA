@@ -59,9 +59,14 @@ def _resolve_robot_type(
     is used to identify which embodiment is requested.  In those mixtures
     the ``robot_type`` field of each entry **matches** the top-level key in
     ``dataset_statistics.json``, so ``unnorm_key`` serves as the selector.
+    Inference bundles can store the resolved robot_type directly when their
+    training mixture is not installed on the inference host.
     """
+    vla_data = model_cfg["datasets"]["vla_data"]
+    if "robot_type" in vla_data:
+        return vla_data["robot_type"]
     try:
-        data_mix = model_cfg["datasets"]["vla_data"]["data_mix"]
+        data_mix = vla_data["data_mix"]
     except (KeyError, TypeError) as e:
         raise KeyError(
             "ckpt config.yaml is missing `datasets.vla_data.data_mix`; "

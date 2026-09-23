@@ -889,6 +889,13 @@ class LeRobotSingleDataset(Dataset):
                     f"Dataset statistics cache is missing or invalid after sync: {stats_path}"
                 )
 
+        manifest_path = self.dataset_path / "manifest.json"
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest.get("state_source") == "decision_v1":
+                le_statistics["observation.state"]["min"] = manifest["state_normalization"]["min"]
+                le_statistics["observation.state"]["max"] = manifest["state_normalization"]["max"]
+
         for stat in le_statistics.values():
             DatasetStatisticalValues.model_validate(stat)
 
@@ -1976,11 +1983,14 @@ class LeRobotSingleDataset(Dataset):
         le_key = le_state_or_action_cfg[key].original_key
         if le_key is None:
             le_key = key
-        # Get the data array, shape: (T, D)
+        # Read only the requested steps. Some game episodes contain 18,000
+        # embedded RGB rows; stacking the whole trajectory for each sampled
+        # state/action makes dataloader time proportional to episode length.
         assert self.curr_traj_data is not None, f"No data found for {trajectory_id=}"
         assert le_key in self.curr_traj_data.columns, f"No {le_key} found in {trajectory_id=}"
-        data_array: np.ndarray = np.stack(
-            [np.stack(value) for value in self.curr_traj_data[le_key]]
+        padded_indices = np.clip(step_indices, 0, max_length - 1)
+        data_array = np.stack(
+            [np.stack(self.curr_traj_data[le_key].iloc[int(index)]) for index in padded_indices]
         )
         le_indices = np.arange(
             le_state_or_action_cfg[key].start,
@@ -1989,15 +1999,11 @@ class LeRobotSingleDataset(Dataset):
         data_array = data_array[..., le_indices]
         # Get the state or action configuration
         state_or_action_cfg = getattr(self.metadata.modalities, modality)[key]
-
-        # Pad the data
-        return self.retrieve_data_and_pad(
-            array=data_array,
-            step_indices=step_indices,
-            max_length=max_length,
-            padding_strategy="first_last" if state_or_action_cfg.absolute else "zero",
-            # padding_strategy="zero",           # HACK for realdata
-        )
+        output = np.zeros(data_array.shape)
+        output[:] = data_array
+        if not state_or_action_cfg.absolute:
+            output[(step_indices < 0) | (step_indices >= max_length)] = 0
+        return output
 
     def get_language(
         self,

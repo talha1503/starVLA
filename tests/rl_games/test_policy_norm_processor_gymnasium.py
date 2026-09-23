@@ -32,3 +32,9 @@ def test_unknown_static_mixture_still_fails() -> None:
 
     with pytest.raises(KeyError, match="unregistered_custom_mix"):
         _resolve_robot_type(config)
+
+
+def test_history_vla_bundle_resolves_explicit_robot_type() -> None:
+    config = {"datasets": {"vla_data": {"robot_type": "rl_games_flappy"}}}
+
+    assert _resolve_robot_type(config) == "rl_games_flappy"

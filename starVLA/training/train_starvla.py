@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import signal
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Tuple
@@ -487,6 +488,12 @@ def prepare_data(cfg, accelerator, output_dir) -> tuple[DataLoader, DataLoader |
     return vla_train_dataloader, vla_eval_dataloader
 
 
+def build_initial_framework(cfg):
+    """Initialize the backbone and fresh action modules with the configured seed."""
+    set_seed(cfg.seed)
+    return build_framework(cfg)
+
+
 def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler._LRScheduler]:
     """Set optimizer and scheduler."""
     param_groups = build_param_lr_groups(model=model, cfg=cfg)
@@ -632,9 +639,7 @@ class VLATrainer(TrainerUtils):
 
     def prepare_training(self):
         _configure_torch_dynamo_recompile_limits()
-        if "stop_after_steps" in self.config.trainer or self._dagger_control_dir is not None:
-            # Round-boundary resumes must restore the same LR schedule position.
-            self.accelerator.register_for_checkpointing(self.lr_scheduler)
+        self.accelerator.register_for_checkpointing(self.lr_scheduler)
 
         rank = dist.get_rank() if dist.is_initialized() else 0
         seed = self.config.seed + rank if hasattr(self.config, "seed") else rank + 3047
@@ -678,6 +683,7 @@ class VLATrainer(TrainerUtils):
             self._adjust_lr_scheduler_for_resume()
 
         self._init_wandb()
+        self.accelerator.wait_for_everyone()
 
     def _calculate_total_batch_size(self):
         """Calculate global batch size."""
@@ -1058,8 +1064,8 @@ class VLATrainer(TrainerUtils):
         if self.completed_steps % self.config.trainer.logging_frequency == 0 and self.accelerator.is_main_process:
             last_lrs = self.lr_scheduler.get_last_lr()
             for i, group in enumerate(self.optimizer.param_groups):
-                group_name = group.get("name", str(i))
-                metrics[f"learning_rate/{group_name}"] = last_lrs[i] if i < len(last_lrs) else last_lrs[-1]
+                group_name = group["name"]
+                metrics[f"learning_rate/{group_name}"] = last_lrs[i]
             dataset_size = len(self.vla_train_dataloader.dataset)
             metrics["epoch"] = round(
                 calculate_epoch_progress(
@@ -2611,7 +2617,7 @@ def main(cfg) -> None:
         logger.info("✅ Configuration wrapped for access tracking")
 
         output_dir = setup_directories(cfg=cfg)
-        vla = build_framework(cfg)
+        vla = build_initial_framework(cfg)
         vla = _preload_model_checkpoint_before_accelerator(cfg=cfg, model=vla)
 
         distributed_backend = str(getattr(cfg.trainer, "distributed_backend", "deepspeed")).lower()
@@ -2648,7 +2654,8 @@ def main(cfg) -> None:
     finally:
         if trainer is not None:
             trainer.cleanup_runtime()
-        _destroy_distributed_process_group(use_barrier=normal_completion)
+        if sys.exc_info()[0] is None:
+            _destroy_distributed_process_group(use_barrier=normal_completion)
         _restore_signal_handlers(previous_signal_handlers)
 
 

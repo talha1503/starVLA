@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import random
+
+import numpy as np
 from types import SimpleNamespace
 
 import pytest
@@ -252,7 +255,8 @@ def test_dagger_boundary_serves_eval_model_then_restores_training(tmp_path, monk
     assert trainer.vla_train_dataloader.dataset.refreshes == 1
 
 
-def test_round_resume_restores_optimizer_and_lr_schedule(tmp_path, monkeypatch):
+@pytest.mark.parametrize("round_boundary", [False, True])
+def test_round_resume_restores_optimizer_and_lr_schedule(tmp_path, monkeypatch, round_boundary):
     from accelerate import Accelerator
 
     monkeypatch.setattr(VLATrainer, '_init_wandb', lambda self: None)
@@ -262,8 +266,7 @@ def test_round_resume_restores_optimizer_and_lr_schedule(tmp_path, monkeypatch):
         cfg = OmegaConf.create({
             'output_dir': str(output), 'seed': 0,
             'datasets': {'vla_data': {'per_device_batch_size': 1}},
-            'trainer': {'stop_after_steps': 2 if checkpoint is None else 4,
-                        'max_train_steps': 4, 'is_resume': checkpoint is not None,
+            'trainer': {'max_train_steps': 4, 'is_resume': checkpoint is not None,
                         'pretrained_checkpoint': None if checkpoint is None else str(checkpoint),
                         'freeze_modules': '', 'freeze_vit': False,
                         'freeze_tied_embedding': False, 'freeze_llm_layers': []},
@@ -272,6 +275,8 @@ def test_round_resume_restores_optimizer_and_lr_schedule(tmp_path, monkeypatch):
                            'local': {'keep_last_n': 0},
                            'sync': {'enabled': False, 'repo_id': None, 'keep_last_n': 0}},
         })
+        if round_boundary:
+            cfg.trainer.stop_after_steps = 2 if checkpoint is None else 4
         model = torch.nn.Linear(2, 1)
         optimizer = torch.optim.AdamW(model.parameters(), lr=0.1)
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: 1 - step / 5)
@@ -290,13 +295,31 @@ def test_round_resume_restores_optimizer_and_lr_schedule(tmp_path, monkeypatch):
     update(original)
     update(original)
     original._save_checkpoint()
+    expected_torch = torch.rand(5)
+    expected_numpy = np.random.random(5)
+    expected_python = random.random()
     resumed = make_trainer(tmp_path / 'resumed',
                            Path(original.checkpoint_dir) / 'steps_2_state')
     assert resumed.completed_steps == 2
     assert resumed.lr_scheduler.last_epoch == original.lr_scheduler.last_epoch
     assert resumed.optimizer.param_groups[0]['lr'] == original.optimizer.param_groups[0]['lr']
+    torch.testing.assert_close(torch.rand(5), expected_torch)
+    np.testing.assert_array_equal(np.random.random(5), expected_numpy)
+    assert random.random() == expected_python
     update(original)
     update(resumed)
     for expected, actual in zip(original.model.parameters(), resumed.model.parameters()):
         torch.testing.assert_close(actual, expected)
     assert resumed.lr_scheduler.get_last_lr() == original.lr_scheduler.get_last_lr()
+
+
+def test_fresh_action_head_initialization_uses_configured_seed(monkeypatch):
+    monkeypatch.setattr(train_starvla, "build_framework", lambda cfg: torch.nn.Linear(11, 6))
+    cfg = OmegaConf.create({"seed": 42})
+    first = train_starvla.build_initial_framework(cfg)
+    torch.randn(100)
+    second = train_starvla.build_initial_framework(cfg)
+    for expected, actual in zip(first.parameters(), second.parameters()):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    different = train_starvla.build_initial_framework(OmegaConf.create({"seed": 43}))
+    assert not torch.equal(first.weight, different.weight)
