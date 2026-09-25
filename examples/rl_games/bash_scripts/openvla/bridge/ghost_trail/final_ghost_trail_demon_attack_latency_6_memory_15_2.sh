@@ -10,7 +10,7 @@ conda activate starvla_rl_games_openvla
 
 bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
 
-export PYTHONPATH="${WORKSPACE_DIR}/latency-sensitive-bench:${PYTHONPATH:-}"
+export PYTHONPATH="${WORKSPACE_DIR}/placeholder:${PYTHONPATH:-}"
 
 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
@@ -23,11 +23,11 @@ python examples/rl_games/scripts/launch_train.py \
     launch.num_processes=2 \
     paths.accelerate_config=starVLA/config/deepseeds/deepspeed_zero2.yaml \
     workspace_dir="$WORKSPACE_DIR" \
-    wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_bridge_demon_attack_fixed_latency_6_200ep_7k2steps_ghost15_2_exp3" \
+    wandb_entity="anonymous" \
+    checkpoint.hf_repo_id="placeholder/openvla_bridge_demon_attack_fixed_latency_6_200ep_7k2steps_ghost15_2_exp3" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_bridge_demon_attack_fixed_latency_6_200ep_7k2steps_ghost15_2_exp3" \
-    dataset.source_hf="latency-sensitive-bench/memory-rollouts" \
+    checkpoint.sync.repo_id="placeholder/openvla_bridge_demon_attack_fixed_latency_6_200ep_7k2steps_ghost15_2_exp3" \
+    dataset.source_hf="placeholder/memory-rollouts" \
     dataset.source_subdir="demon_attack_fixed_latency_6_200ep_7k2steps_ghost15_2" \
     dataset.latency_filter=[6] \
     datasets.vla_data.sequential_step_sampling=true \

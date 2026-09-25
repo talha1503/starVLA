@@ -233,7 +233,7 @@ def make_exact_color_segmenter(target_rgb: "tuple[int, int, int]", tolerance: in
 
 # Empirically measured: Demon Attack's player ship renders as this exact RGB,
 # always exactly 44 pixels, with zero variation observed across episodes
-# 0, 1, 2, 5, and 10 (latency-sensitive-bench/demon_attack_200ep, latency 0).
+# 0, 1, 2, 5, and 10 (placeholder/demon_attack_200ep, latency 0).
 DEMON_ATTACK_SHIP_RGB = (184, 70, 162)
 
 

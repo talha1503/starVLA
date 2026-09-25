@@ -1,5 +1,5 @@
 # Copyright 2025 InternVLA-M1. All rights reserved.
-# Modified by [Jinhui YE/ HKUST University] in [2025].
+# Modified by [Anonymous Author/ Anonymous Institution] in [2025].
 # Modification: [add fake sample and predict_action to match with starVLA].
 """
 InternVLA M1 framework:

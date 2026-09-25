@@ -6,7 +6,7 @@ last hidden state as a single full forward. This is the correctness foundation t
 streaming KV memory is built on.
 
 Run with the starVLA env, e.g.:
-  /home/lixinyuan/miniconda3/envs/starvla_rl_games_gr00t/bin/python -m pytest \
+  /path/to/conda/envs/starvla_rl_games_gr00t/bin/python -m pytest \
     starVLA/tests/test_kv_memory_equivalence.py -q
 """
 

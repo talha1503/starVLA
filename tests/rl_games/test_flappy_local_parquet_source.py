@@ -236,7 +236,7 @@ def test_convert_flappy_hf_loader_passes_dataset_config_name(
     monkeypatch.setattr(convert_flappy, "load_dataset", fake_load_dataset)
 
     result = convert_flappy._load_hf_dataset(
-        "latency-sensitive-bench/dataset-filter-comparison",
+        "placeholder/dataset-filter-comparison",
         "flappy_clean_v1",
         None,
         split="train",
@@ -247,7 +247,7 @@ def test_convert_flappy_hf_loader_passes_dataset_config_name(
     assert result == "dataset"
     assert calls == [
         (
-            ("latency-sensitive-bench/dataset-filter-comparison", "flappy_clean_v1"),
+            ("placeholder/dataset-filter-comparison", "flappy_clean_v1"),
             {
                 "split": "train",
                 "cache_dir": "/tmp/cache",
@@ -272,7 +272,7 @@ def test_convert_flappy_hf_loader_passes_dataset_source_subdir(
     monkeypatch.setattr(convert_flappy, "load_dataset", fake_load_dataset)
 
     result = convert_flappy._load_hf_dataset(
-        "latency-sensitive-bench/flappy_200ep",
+        "placeholder/flappy_200ep",
         None,
         "flappy_fix_latency_0_200ep",
         split="train",
@@ -283,7 +283,7 @@ def test_convert_flappy_hf_loader_passes_dataset_source_subdir(
     assert result == "dataset"
     assert calls == [
         (
-            ("latency-sensitive-bench/flappy_200ep",),
+            ("placeholder/flappy_200ep",),
             {
                 "split": "train",
                 "cache_dir": "/tmp/cache",
@@ -325,7 +325,7 @@ def test_convert_flappy_index_split_retries_canonical_hf_columns(
     monkeypatch.setattr(convert_flappy, "load_dataset", fake_load_dataset)
 
     ds, columns = convert_flappy._load_index_split(
-        "latency-sensitive-bench/flappy_200ep",
+        "placeholder/flappy_200ep",
         "train",
         cache_dir="/tmp/cache",
         want_latency=True,
@@ -387,7 +387,7 @@ def test_convert_flappy_zero_latency_index_split_retries_canonical_hf_columns(
     monkeypatch.setattr(convert_flappy, "load_dataset", fake_load_dataset)
 
     ds, columns = convert_flappy._load_index_split(
-        "latency-sensitive-bench/flappy_200ep",
+        "placeholder/flappy_200ep",
         "train",
         cache_dir="/tmp/cache",
         want_latency=False,

@@ -108,7 +108,7 @@ def test_flappy_history_converter_downloads_each_source_shard(
         repo_type: str,
         cache_dir: str | None,
     ) -> str:
-        assert repo_id == "latency-sensitive-bench/memory-rollouts"
+        assert repo_id == "placeholder/memory-rollouts"
         assert repo_type == "dataset"
         assert cache_dir == "/cache"
         downloaded_paths.append(filename)
@@ -118,7 +118,7 @@ def test_flappy_history_converter_downloads_each_source_shard(
 
     local_paths = list(
         CONVERTER._downloaded_hub_shards(
-            "latency-sensitive-bench/memory-rollouts",
+            "placeholder/memory-rollouts",
             repo_paths,
             "/cache",
         )
@@ -148,7 +148,7 @@ def test_flappy_history_converter_builds_context_with_episode_local_left_padding
     manifest = converter._convert_split(
         [source_path],
         output_dir,
-        "latency-sensitive-bench/memory-rollouts",
+        "placeholder/memory-rollouts",
         "flappy_fixed_latency_3_200ep_7k2steps",
         "train",
         None,

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CODE_ROOT="${CODE_ROOT:-/home/ubuntu/talha}"
-DATA_WORKSPACE_DIR="${DATA_WORKSPACE_DIR:-/mnt/local/talha}"
+CODE_ROOT="${CODE_ROOT:-/path/to/workspace}"
+DATA_WORKSPACE_DIR="${DATA_WORKSPACE_DIR:-/path/to/data}"
 export CODE_ROOT DATA_WORKSPACE_DIR
 
 export HF_HOME="${DATA_WORKSPACE_DIR}/.cache/huggingface"
@@ -15,12 +15,12 @@ if [[ ! -d "${CODE_ROOT}/starVLA" ]]; then
   echo "[error] missing StarVLA repo: ${CODE_ROOT}/starVLA" >&2
   exit 2
 fi
-if [[ ! -d "${CODE_ROOT}/latency-sensitive-bench/.git" ]]; then
-  echo "[error] missing latency-sensitive-bench repo: ${CODE_ROOT}/latency-sensitive-bench" >&2
+if [[ ! -d "${CODE_ROOT}/placeholder/.git" ]]; then
+  echo "[error] missing placeholder repo: ${CODE_ROOT}/placeholder" >&2
   exit 2
 fi
 
-cd "${CODE_ROOT}/latency-sensitive-bench"
+cd "${CODE_ROOT}/placeholder"
 git config --global url."https://github.com/".insteadOf git@github.com:
 git config --global url."https://github.com/".insteadOf ssh://git@github.com/
 git config -f .gitmodules submodule.flappy-bird-gymnasium.url https://github.com/mindorigin150/flappy-bird-gymnasium.git
@@ -68,7 +68,7 @@ conda activate starvla_rl_games_openvla
 WORKSPACE_DIR="${CODE_ROOT}" bash "${CODE_ROOT}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
 
 mkdir -p "${DATA_WORKSPACE_DIR}"
-export PYTHONPATH="${CODE_ROOT}/latency-sensitive-bench:${PYTHONPATH:-}"
+export PYTHONPATH="${CODE_ROOT}/placeholder:${PYTHONPATH:-}"
 
 CUDA_VISIBLE_DEVICES=2 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
@@ -81,11 +81,11 @@ CUDA_VISIBLE_DEVICES=2 python examples/rl_games/scripts/launch_train.py \
     ++wandb_tags='["final_vla_profiling_training","flappy","openvla","rtx3090_profile"]' \
     ++training_latency_condition=rtx3090_profile \
     ++wandb_group="final_vla_profiling_training" \
-    wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="latency-sensitive-bench/openvla_bridge_flappy_rtx3090_profile_1000ep_7k2steps_final" \
+    wandb_entity="anonymous" \
+    checkpoint.hf_repo_id="placeholder/openvla_bridge_flappy_rtx3090_profile_1000ep_7k2steps_final" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="latency-sensitive-bench/openvla_bridge_flappy_rtx3090_profile_1000ep_7k2steps_final" \
-    dataset.source_hf=latency-sensitive-bench/profile-rollouts-v2 \
+    checkpoint.sync.repo_id="placeholder/openvla_bridge_flappy_rtx3090_profile_1000ep_7k2steps_final" \
+    dataset.source_hf=placeholder/profile-rollouts-v2 \
     dataset.source_subdir=flappy_openvla_rtx3090_profile_1000ep_7k2steps \
     dataset.target_latency_unit=raw_frames \
     checkpoint.local.keep_last_n=1 \

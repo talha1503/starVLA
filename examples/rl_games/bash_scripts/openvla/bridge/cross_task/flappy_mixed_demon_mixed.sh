@@ -12,7 +12,7 @@ conda activate starvla_rl_games_openvla
 
 bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
 
-export PYTHONPATH="${WORKSPACE_DIR}/latency-sensitive-bench:${PYTHONPATH:-}"
+export PYTHONPATH="${WORKSPACE_DIR}/placeholder:${PYTHONPATH:-}"
 
 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
@@ -23,10 +23,10 @@ python examples/rl_games/scripts/launch_train.py \
     run_id="openvla_bridge_cross_flappy_024_demon_024_clean_data_exp3" \
     trainer.distributed_backend=none \
     workspace_dir="$WORKSPACE_DIR" \
-    wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_024_clean_data_exp3" \
+    wandb_entity="anonymous" \
+    checkpoint.hf_repo_id="placeholder/openvla_bridge_cross_flappy_024_demon_024_clean_data_exp3" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_bridge_cross_flappy_024_demon_024_clean_data_exp3" \
+    checkpoint.sync.repo_id="placeholder/openvla_bridge_cross_flappy_024_demon_024_clean_data_exp3" \
     checkpoint.save_best_model=false \
     trainer.max_train_steps=10500 \
     trainer.num_warmup_steps=0 \
@@ -45,15 +45,15 @@ python examples/rl_games/scripts/launch_train.py \
     trainer.per_latency_eval_num_batches=5 \
     rl_games.cross_task.train_tasks.0.name=demon_attack \
     rl_games.cross_task.train_tasks.0.converted_name=demon_attack_024_200ep_cross_train \
-    rl_games.cross_task.train_tasks.0.train_source_hf=latency-sensitive-bench/demon_attack_200ep \
-    rl_games.cross_task.train_tasks.0.prompt_source_hf=latency-sensitive-bench/demon_attack_200ep \
+    rl_games.cross_task.train_tasks.0.train_source_hf=placeholder/demon_attack_200ep \
+    rl_games.cross_task.train_tasks.0.prompt_source_hf=placeholder/demon_attack_200ep \
     rl_games.cross_task.train_tasks.0.train_latency_filter=[0,2,4] \
     rl_games.cross_task.train_tasks.0.eval_latency_filter=[0,2,4] \
     rl_games.cross_task.train_tasks.0.episodes_per_latency=40 \
     rl_games.cross_task.train_tasks.1.name=flappy \
     rl_games.cross_task.train_tasks.1.converted_name=flappy_024_200ep_cross_train \
-    rl_games.cross_task.train_tasks.1.train_source_hf=latency-sensitive-bench/flappy_200ep \
-    rl_games.cross_task.train_tasks.1.prompt_source_hf=latency-sensitive-bench/flappy_200ep \
+    rl_games.cross_task.train_tasks.1.train_source_hf=placeholder/flappy_200ep \
+    rl_games.cross_task.train_tasks.1.prompt_source_hf=placeholder/flappy_200ep \
     rl_games.cross_task.train_tasks.1.train_latency_filter=[0,2,4] \
     rl_games.cross_task.train_tasks.1.eval_latency_filter=[0,2,4] \
     rl_games.cross_task.train_tasks.1.episodes_per_latency=40 \

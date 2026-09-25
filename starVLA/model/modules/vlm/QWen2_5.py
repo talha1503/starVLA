@@ -1,6 +1,6 @@
 # Copyright 2025 starVLA community. All rights reserved.
 # Licensed under the MIT License, Version 1.0 (the "License");
-# Implemented by [Jinhui YE / HKUST University] in [2025].
+# Implemented by [Anonymous Author / Anonymous Institution] in [2025].
 
 import time
 from typing import List, Optional
@@ -296,7 +296,7 @@ class _QWen_VL_Interface(nn.Module):
         if profile_timing:
             build_timing["timing/qwen_processor"] = time.perf_counter() - t_processor
 
-        # if solutions, mask out the non solution tokens in labels --> @JinhuiYE can we mask out system prompt?
+        # if solutions, mask out the non solution tokens in labels --> @anonymous can we mask out system prompt?
         if solutions is not None:
             action_token_min = _ACTION_TOKEN_MIN  # how can we know this range? --> we has other way for this, but is slower see qwenhelix branch
             action_token_max = _ACTION_TOKEN_MAX  # here only for fast_tokenizer, see starVLA/model/modules/vlm/tools/add_qwen_special_tokens/README.md

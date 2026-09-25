@@ -1,7 +1,7 @@
 # Copyright 2025 NVIDIA Corp. and affiliates. All rights reserved.
-# Modified by [Fangjing Wang/ SUST University] in [2025]. 
+# Modified by [Anonymous Author/ Anonymous Institution] in [2025].
 # Modification: [return raw data and suport multi-dataset mixture].
-# Modified by [Jinhui YE/ HKUST University] in [2025]. 
+# Modified by [Anonymous Author/ Anonymous Institution] in [2025].
 # Modification: [suport topdowm processing, suport param from config].
 
 import json
@@ -126,7 +126,7 @@ def make_LeRobotSingleDataset(
     :param crop_obs_camera: Whether to crop the observation camera images.
     :return: A LeRobotSingleDataset object.
     """
-    
+
     data_config = ROBOT_TYPE_CONFIG_MAP[robot_type]
     modality_config = _modality_config_with_dataset_indices(data_config=data_config, data_cfg=data_cfg)
     transforms = data_config.transform()
@@ -151,7 +151,7 @@ def make_LeRobotSingleDataset(
         embodiment_tag = EmbodimentTag.NEW_EMBODIMENT
     else:
         embodiment_tag = ROBOT_TYPE_TO_EMBODIMENT_TAG[robot_type]
-    
+
     video_backend = data_cfg.get("video_backend", "decord") if data_cfg else "torchvision_av"
     dataset = LeRobotSingleDataset(
         dataset_path=dataset_path,
@@ -193,8 +193,8 @@ def get_vla_dataset(
     delete_pause_frame = data_cfg.get("delete_pause_frame", False)
     mixture_spec = get_dataset_named_mixture(data_mix)
     included_datasets, filtered_mixture_spec = set(), []
-    for d_name, d_weight, robot_type in mixture_spec:  
-        dataset_key = (d_name, robot_type)  
+    for d_name, d_weight, robot_type in mixture_spec:
+        dataset_key = (d_name, robot_type)
         if dataset_key in included_datasets:
             print(f"Skipping Duplicate Dataset: `{(d_name, d_weight, robot_type)}`")
             continue

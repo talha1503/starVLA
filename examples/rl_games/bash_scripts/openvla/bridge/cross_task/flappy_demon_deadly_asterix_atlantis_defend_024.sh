@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKSPACE_DIR="${WORKSPACE_DIR:-/home/ubuntu/talha}"
-DATA_WORKSPACE_DIR="${DATA_WORKSPACE_DIR:-/mnt/local/talha}"
+WORKSPACE_DIR="${WORKSPACE_DIR:-/path/to/workspace}"
+DATA_WORKSPACE_DIR="${DATA_WORKSPACE_DIR:-/path/to/data}"
 export WORKSPACE_DIR DATA_WORKSPACE_DIR
 
 bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh"
@@ -24,10 +24,10 @@ export HF_HOME="${DATA_WORKSPACE_DIR}/.cache/huggingface"
 export HUGGINGFACE_HUB_CACHE="${DATA_WORKSPACE_DIR}/.cache/huggingface/hub"
 export HF_HUB_CACHE="${DATA_WORKSPACE_DIR}/.cache/huggingface/hub"
 export TRANSFORMERS_CACHE="${DATA_WORKSPACE_DIR}/.cache/huggingface/transformers"
-export PYTHONPATH="${WORKSPACE_DIR}/latency-sensitive-bench:${PYTHONPATH:-}"
+export PYTHONPATH="${WORKSPACE_DIR}/placeholder:${PYTHONPATH:-}"
 
 RUN_ID="${RUN_ID:-openvla_bridge_cross_mixed_all_024_5env200ep_deadly1000ep_exp1}"
-HF_REPO_ID="${HF_REPO_ID:-latency-sensitive-bench/${RUN_ID}}"
+HF_REPO_ID="${HF_REPO_ID:-placeholder/${RUN_ID}}"
 MAX_EPISODES_PER_ENV="${MAX_EPISODES_PER_ENV:-200}"
 MAX_EPISODES_DEADLY="${MAX_EPISODES_DEADLY:-1000}"
 MIX_LATENCIES="${MIX_LATENCIES:-[0,2,4]}"
@@ -44,7 +44,7 @@ python examples/rl_games/scripts/launch_train.py \
     paths.run_root_dir="${DATA_WORKSPACE_DIR}/results/Checkpoints" \
     paths.dataset_local_dir="${DATA_WORKSPACE_DIR}/playground/Datasets/rl_games" \
     paths.base_model_dir="${DATA_WORKSPACE_DIR}/playground/Pretrained_models/Qwen3-VL-4B-Instruct" \
-    wandb_entity="talha1503" \
+    wandb_entity="anonymous" \
     checkpoint.hf_repo_id="${HF_REPO_ID}" \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="${HF_REPO_ID}" \
@@ -76,8 +76,8 @@ python examples/rl_games/scripts/launch_train.py \
     framework.action_model.action_layout=bridge_cross_task_7 \
     rl_games.cross_task.train_tasks.0.name=flappy \
     rl_games.cross_task.train_tasks.0.converted_name=flappy_mixed_024_200ep_cross_train \
-    rl_games.cross_task.train_tasks.0.train_source_hf=latency-sensitive-bench/flappy_200ep \
-    rl_games.cross_task.train_tasks.0.prompt_source_hf=latency-sensitive-bench/flappy_200ep \
+    rl_games.cross_task.train_tasks.0.train_source_hf=placeholder/flappy_200ep \
+    rl_games.cross_task.train_tasks.0.prompt_source_hf=placeholder/flappy_200ep \
     rl_games.cross_task.train_tasks.0.train_source_subdir=flappy_fix_latency_0_200ep \
     rl_games.cross_task.train_tasks.0.prompt_source_subdir=flappy_fix_latency_0_200ep \
     rl_games.cross_task.train_tasks.0.train_latency_filter="${MIX_LATENCIES}" \
@@ -86,8 +86,8 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.0.max_episodes="${MAX_EPISODES_PER_ENV}" \
     rl_games.cross_task.train_tasks.1.name=demon_attack \
     rl_games.cross_task.train_tasks.1.converted_name=demon_attack_mixed_024_200ep_cross_train \
-    rl_games.cross_task.train_tasks.1.train_source_hf=latency-sensitive-bench/demon_attack_200ep \
-    rl_games.cross_task.train_tasks.1.prompt_source_hf=latency-sensitive-bench/demon_attack_200ep \
+    rl_games.cross_task.train_tasks.1.train_source_hf=placeholder/demon_attack_200ep \
+    rl_games.cross_task.train_tasks.1.prompt_source_hf=placeholder/demon_attack_200ep \
     rl_games.cross_task.train_tasks.1.train_source_subdir=demon_attack_fix_latency_0_200ep \
     rl_games.cross_task.train_tasks.1.prompt_source_subdir=demon_attack_fix_latency_0_200ep \
     rl_games.cross_task.train_tasks.1.train_latency_filter="${MIX_LATENCIES}" \
@@ -96,8 +96,8 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.1.max_episodes="${MAX_EPISODES_PER_ENV}" \
     rl_games.cross_task.train_tasks.2.name=deadly_corridor \
     rl_games.cross_task.train_tasks.2.converted_name=deadly_corridor_mixed_024_1000ep_cross_train \
-    rl_games.cross_task.train_tasks.2.train_source_hf=latency-sensitive-bench/deadly_1000ep \
-    rl_games.cross_task.train_tasks.2.prompt_source_hf=latency-sensitive-bench/deadly_1000ep \
+    rl_games.cross_task.train_tasks.2.train_source_hf=placeholder/deadly_1000ep \
+    rl_games.cross_task.train_tasks.2.prompt_source_hf=placeholder/deadly_1000ep \
     rl_games.cross_task.train_tasks.2.train_source_subdir=deadly_corridor_fix_latency_0_1000ep \
     rl_games.cross_task.train_tasks.2.prompt_source_subdir=deadly_corridor_fix_latency_0_1000ep \
     rl_games.cross_task.train_tasks.2.train_latency_filter="${MIX_LATENCIES}" \
@@ -107,8 +107,8 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.2.action_layout=multibinary_7 \
     rl_games.cross_task.train_tasks.3.name=asterix \
     rl_games.cross_task.train_tasks.3.converted_name=asterix_mixed_024_200ep_cross_train \
-    rl_games.cross_task.train_tasks.3.train_source_hf=latency-sensitive-bench/asterix_200ep \
-    rl_games.cross_task.train_tasks.3.prompt_source_hf=latency-sensitive-bench/asterix_200ep \
+    rl_games.cross_task.train_tasks.3.train_source_hf=placeholder/asterix_200ep \
+    rl_games.cross_task.train_tasks.3.prompt_source_hf=placeholder/asterix_200ep \
     rl_games.cross_task.train_tasks.3.train_source_subdir=asterix_fixed_latency_0_200ep_7k2steps \
     rl_games.cross_task.train_tasks.3.prompt_source_subdir=asterix_fixed_latency_0_200ep_7k2steps \
     rl_games.cross_task.train_tasks.3.train_latency_filter="${MIX_LATENCIES}" \
@@ -118,8 +118,8 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.3.action_layout=factorized_6 \
     rl_games.cross_task.train_tasks.4.name=atlantis \
     rl_games.cross_task.train_tasks.4.converted_name=atlantis_mixed_024_200ep_cross_train \
-    rl_games.cross_task.train_tasks.4.train_source_hf=latency-sensitive-bench/atlantis_200ep \
-    rl_games.cross_task.train_tasks.4.prompt_source_hf=latency-sensitive-bench/atlantis_200ep \
+    rl_games.cross_task.train_tasks.4.train_source_hf=placeholder/atlantis_200ep \
+    rl_games.cross_task.train_tasks.4.prompt_source_hf=placeholder/atlantis_200ep \
     rl_games.cross_task.train_tasks.4.train_source_subdir=atlantis_fixed_latency_0_200ep_7k2steps \
     rl_games.cross_task.train_tasks.4.prompt_source_subdir=atlantis_fixed_latency_0_200ep_7k2steps \
     rl_games.cross_task.train_tasks.4.train_latency_filter="${MIX_LATENCIES}" \
@@ -128,8 +128,8 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.4.max_episodes="${MAX_EPISODES_PER_ENV}" \
     rl_games.cross_task.train_tasks.5.name=defend_the_line \
     rl_games.cross_task.train_tasks.5.converted_name=defend_the_line_mixed_024_200ep_cross_train \
-    rl_games.cross_task.train_tasks.5.train_source_hf=latency-sensitive-bench/defend_the_line_200ep \
-    rl_games.cross_task.train_tasks.5.prompt_source_hf=latency-sensitive-bench/defend_the_line_200ep \
+    rl_games.cross_task.train_tasks.5.train_source_hf=placeholder/defend_the_line_200ep \
+    rl_games.cross_task.train_tasks.5.prompt_source_hf=placeholder/defend_the_line_200ep \
     rl_games.cross_task.train_tasks.5.train_source_subdir=defend_the_line_fixed_latency_0_200ep_7k2steps \
     rl_games.cross_task.train_tasks.5.prompt_source_subdir=defend_the_line_fixed_latency_0_200ep_7k2steps \
     rl_games.cross_task.train_tasks.5.train_latency_filter="${MIX_LATENCIES}" \

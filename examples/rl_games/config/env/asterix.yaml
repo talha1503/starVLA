@@ -16,8 +16,8 @@ rl_games:
       noop_max: 30
 
 dataset:
-  single_source_hf: latency-sensitive-bench/memory-rollouts
-  mixed_source_hf: latency-sensitive-bench/memory-rollouts
+  single_source_hf: placeholder/memory-rollouts
+  mixed_source_hf: placeholder/memory-rollouts
   single_converted_name: asterix_train
   mixed_converted_name: asterix_mixed_latency_train
   single_latency_filter: null

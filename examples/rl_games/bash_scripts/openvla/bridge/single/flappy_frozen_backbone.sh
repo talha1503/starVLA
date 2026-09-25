@@ -12,11 +12,11 @@ python examples/rl_games/scripts/launch_train.py \
     run_id="openvla_bridge_flappy_single_latency_frozen_backbone_exp1" \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
-    wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha1503/openvla_bridge_flappy_single_latency_frozen_backbone_exp1" \
+    wandb_entity="anonymous" \
+    checkpoint.hf_repo_id="placeholder/openvla_bridge_flappy_single_latency_frozen_backbone_exp1" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha1503/openvla_bridge_flappy_single_latency_frozen_backbone_exp1" \
-    dataset.source_hf="latency-sensitive-bench/flappy_200ep" \
+    checkpoint.sync.repo_id="placeholder/openvla_bridge_flappy_single_latency_frozen_backbone_exp1" \
+    dataset.source_hf="placeholder/flappy_200ep" \
     dataset.source_subdir=flappy_fix_latency_0_200ep \
     checkpoint.local.keep_last_n=1 \
     checkpoint.save_best_model=false \

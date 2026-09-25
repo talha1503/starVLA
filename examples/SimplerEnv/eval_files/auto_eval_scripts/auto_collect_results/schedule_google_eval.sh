@@ -1,11 +1,11 @@
-cd /mnt/petrelfs/yejinhui/Projects/llavavla
+cd /path/to/starvla
 # conda activate starvlaSAM
 
-MODEL_DIR=/mnt/petrelfs/yejinhui/Projects/llavavla/results/Checkpoints/1017_Qwen3PI
+MODEL_DIR=/path/to/starvla/results/Checkpoints/1017_Qwen3PI
 
 step=55000
 
-SCR_ROOT=/mnt/petrelfs/yejinhui/Projects/llavavla/examples/SimplerEnv/eval_scripts/
+SCR_ROOT=/path/to/starvla/examples/SimplerEnv/eval_scripts/
 
 MODEL_PATH=${MODEL_DIR}/checkpoints/steps_${step}_pytorch_model.pt
 LOG_PATH=${MODEL_DIR}/checkpoints/client_logs/steps_${step}

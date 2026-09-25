@@ -14,11 +14,11 @@ python examples/rl_games/scripts/launch_train.py \
     run_id="openvla_bridge_deadly_corridor_fix_latency_2_clean_data_bce_exp2" \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
-    wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_bridge_deadly_corridor_fix_latency_2_clean_data_bce_exp2" \
+    wandb_entity="anonymous" \
+    checkpoint.hf_repo_id="placeholder/openvla_bridge_deadly_corridor_fix_latency_2_clean_data_bce_exp2" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_bridge_deadly_corridor_fix_latency_2_clean_data_bce_exp2" \
-    dataset.source_hf=latency-sensitive-bench/deadly_1000ep \
+    checkpoint.sync.repo_id="placeholder/openvla_bridge_deadly_corridor_fix_latency_2_clean_data_bce_exp2" \
+    dataset.source_hf=placeholder/deadly_1000ep \
     dataset.source_subdir=deadly_corridor_fix_latency_2_1000ep \
     checkpoint.local.keep_last_n=1 \
     checkpoint.save_best_model=false \

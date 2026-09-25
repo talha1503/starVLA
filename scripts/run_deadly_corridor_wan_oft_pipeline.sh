@@ -20,9 +20,9 @@ Options:
   --context-window <N>        Context window size (default: 5)
   --max-episodes <N>          Maximum source episodes per split (default: 1000)
   --max-train-steps <N>       Training steps (default: 2000)
-  --benchmark-root <path>     latency-sensitive-bench checkout (default: sibling checkout)
+  --benchmark-root <path>     placeholder checkout (default: sibling checkout)
   --dataset-cache-dir <path>  Optional Hugging Face cache directory
-  --upload-repo <repo>        HF model repo for run upload (default: latency-sensitive-bench/deadly_corridor_1000ep)
+  --upload-repo <repo>        HF model repo for run upload (default: placeholder/deadly_corridor_1000ep)
   --upload-path <path>        Path inside the HF repo (default: <run_id>)
   --run-id <id>               Override run id
   --skip-env-setup            Do not run examples/rl_games/install/bootstrap.sh
@@ -41,16 +41,16 @@ MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-2000}"
 PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-4}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-32}"
 EFFECTIVE_BATCH_SIZE="${EFFECTIVE_BATCH_SIZE:-$((PER_DEVICE_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS))}"
-WANDB_ENTITY_VALUE="${WANDB_ENTITY:-dongqianyu99-zhejiang-university}"
+WANDB_ENTITY_VALUE="${WANDB_ENTITY:-anonymous}"
 WANDB_PROJECT_VALUE="${WANDB_PROJECT:-starVLA_rl_games}"
-DATASET_REPO="latency-sensitive-bench/memory-rollouts"
+DATASET_REPO="placeholder/memory-rollouts"
 DATASET_CONFIG="deadly_corridor_fixed_latency_6_1000ep_7k2steps"
 DATASET_CACHE_DIR="${DATASET_CACHE_DIR:-}"
 BENCHMARK_ROOT="${LATENCY_BENCH_ROOT:-}"
 LATENCY_RAW_FRAMES=6
 RUN_ROOT_DIR="${RUN_ROOT_DIR:-results/Checkpoints}"
 RUN_ID="${RUN_ID:-}"
-UPLOAD_REPO="${UPLOAD_REPO:-latency-sensitive-bench/deadly_corridor_1000ep}"
+UPLOAD_REPO="${UPLOAD_REPO:-placeholder/deadly_corridor_1000ep}"
 UPLOAD_PATH_IN_REPO="${UPLOAD_PATH_IN_REPO:-}"
 BASE_MODEL_REPO="${BASE_MODEL_REPO:-Wan-AI/Wan2.2-TI2V-5B-Diffusers}"
 BASE_MODEL_DIR="${BASE_MODEL_DIR:-playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers}"
@@ -144,7 +144,7 @@ cd "${REPO_ROOT}"
 if [[ -z "${BENCHMARK_ROOT}" ]]; then
   BENCHMARK_ROOT="$(git -C "${REPO_ROOT}" rev-parse --show-superproject-working-tree)"
   if [[ -z "${BENCHMARK_ROOT}" ]]; then
-    BENCHMARK_ROOT="${REPO_ROOT}/../latency-sensitive-bench"
+    BENCHMARK_ROOT="${REPO_ROOT}/../placeholder"
   fi
 fi
 CONVERTED_DATA_ROOT="data/deadly_corridor_fix_latency_${LATENCY_RAW_FRAMES}_${MAX_EPISODES}ep_context${CONTEXT_WINDOW}"
@@ -249,7 +249,7 @@ if [[ "${SKIP_ENV_SETUP}" != "true" ]]; then
   if [[ ! -f "${BENCHMARK_ROOT}/pyproject.toml" ]] \
     || [[ ! -d "${BENCHMARK_ROOT}/latency_bench" ]] \
     || [[ ! -f "${BENCHMARK_ROOT}/third_party/flappy-bird-gymnasium/setup.py" ]]; then
-    echo "[deadly-wanoft-fixed] Invalid latency-sensitive-bench checkout: ${BENCHMARK_ROOT}" >&2
+    echo "[deadly-wanoft-fixed] Invalid placeholder checkout: ${BENCHMARK_ROOT}" >&2
     echo "[deadly-wanoft-fixed] Pass --benchmark-root with a checkout whose submodules are initialized." >&2
     exit 1
   fi

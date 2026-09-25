@@ -12,13 +12,13 @@ set -euo pipefail
 # then pushes to an env-specific Hugging Face dataset repo as a separate config.
 
 WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
-BENCH_DIR="${BENCH_DIR:-${WORKSPACE_DIR}/latency-sensitive-bench}"
+BENCH_DIR="${BENCH_DIR:-${WORKSPACE_DIR}/placeholder}"
 CONDA_ENV="${CONDA_ENV:-latency}"
 
-HF_MODEL_REPO_ID="${HF_MODEL_REPO_ID:-latency-sensitive-bench/paper-experiment-models}"
-DEFEND_THE_LINE_HF_REPO="${DEFEND_THE_LINE_HF_REPO:-latency-sensitive-bench/defend_the_line_200ep}"
-ASTERIX_HF_REPO="${ASTERIX_HF_REPO:-latency-sensitive-bench/asterix_200ep}"
-ATLANTIS_HF_REPO="${ATLANTIS_HF_REPO:-latency-sensitive-bench/atlantis_200ep}"
+HF_MODEL_REPO_ID="${HF_MODEL_REPO_ID:-placeholder/paper-experiment-models}"
+DEFEND_THE_LINE_HF_REPO="${DEFEND_THE_LINE_HF_REPO:-placeholder/defend_the_line_200ep}"
+ASTERIX_HF_REPO="${ASTERIX_HF_REPO:-placeholder/asterix_200ep}"
+ATLANTIS_HF_REPO="${ATLANTIS_HF_REPO:-placeholder/atlantis_200ep}"
 HF_PRIVATE="${HF_PRIVATE:-0}"
 HF_MAX_SHARD_SIZE="${HF_MAX_SHARD_SIZE:-500MB}"
 
@@ -53,15 +53,15 @@ Usage:
 
 Expected on the Vast box:
   WORKSPACE_DIR=/workspace
-  /workspace/latency-sensitive-bench exists
+  /workspace/placeholder exists
   conda env "latency" exists
   HF_TOKEN or HUGGINGFACE_HUB_TOKEN is set if the repos are private or uploads require auth
 
 Useful overrides:
-  BENCH_DIR=/path/to/latency-sensitive-bench
+  BENCH_DIR=/path/to/placeholder
   CONDA_ENV=latency
   LOCAL_MODEL_ROOT=/mnt/models/paper-experiment-models
-  OUTPUT_ROOT=/mnt/data/small_model_rollouts
+  OUTPUT_ROOT=/path/to/small_model_rollouts
   NUM_ENVS=24 REPLAY_NUM_ENVS=24 IMAGE_WRITER_WORKERS=24
   FILTER_PRESET=none
   EPISODE_RETURN_GT=1000
@@ -70,9 +70,9 @@ Useful overrides:
   ATLANTIS_EPISODE_RETURN_GT=...
   ASTERIX_SEED=11 ATLANTIS_SEED=14
   HF_PRIVATE=1
-  DEFEND_THE_LINE_HF_REPO=latency-sensitive-bench/defend_the_line_200ep
-  ASTERIX_HF_REPO=latency-sensitive-bench/asterix_200ep
-  ATLANTIS_HF_REPO=latency-sensitive-bench/atlantis_200ep
+  DEFEND_THE_LINE_HF_REPO=placeholder/defend_the_line_200ep
+  ASTERIX_HF_REPO=placeholder/asterix_200ep
+  ATLANTIS_HF_REPO=placeholder/atlantis_200ep
 EOF
 }
 
@@ -82,7 +82,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 if [[ ! -d "${BENCH_DIR}" ]]; then
-  echo "latency-sensitive-bench not found at BENCH_DIR=${BENCH_DIR}" >&2
+  echo "placeholder not found at BENCH_DIR=${BENCH_DIR}" >&2
   exit 2
 fi
 

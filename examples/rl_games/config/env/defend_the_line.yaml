@@ -11,8 +11,8 @@ rl_games:
     task_description: "You are playing Defend the Line in VizDoom. Your goal is to survive by turning toward enemies and shooting them before they reach you. The available actions are: TURN_LEFT, TURN_RIGHT, and ATTACK. Choose the best next action from the current visual observation."
 
 dataset:
-  single_source_hf: latency-sensitive-bench/memory-rollouts
-  mixed_source_hf: latency-sensitive-bench/memory-rollouts
+  single_source_hf: placeholder/memory-rollouts
+  mixed_source_hf: placeholder/memory-rollouts
   single_converted_name: defend_the_line_train
   mixed_converted_name: defend_the_line_mixed_latency_train
   single_latency_filter: null

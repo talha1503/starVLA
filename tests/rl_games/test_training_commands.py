@@ -513,7 +513,7 @@ def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path
 
     assert "--mode <" not in script_text
     assert "\n    --mode)" not in script_text
-    assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
+    assert 'DATASET_REPO="placeholder/memory-rollouts"' in script_text
     assert 'DATASET_CONFIG="flappy_fixed_latency_3_200ep_7k2steps"' in script_text
     assert "LATENCY=3" in script_text
     assert "examples/rl_games/install/bootstrap.sh" in script_text
@@ -540,7 +540,7 @@ def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path
     )
     assert "train_flappy_wan_oft_curriculum_cumulative.sh" not in script_text
     assert "train_flappy_wan_oft_curriculum_exclusive.sh" not in script_text
-    assert "UPLOAD_REPO=\"${UPLOAD_REPO:-latency-sensitive-bench/wanoft_flappy_200ep}\"" in script_text
+    assert "UPLOAD_REPO=\"${UPLOAD_REPO:-placeholder/wanoft_flappy_200ep}\"" in script_text
     assert "UPLOAD_PATH_IN_REPO=\"${UPLOAD_PATH_IN_REPO:-${RUN_ID}}\"" in script_text
     assert "--image-sequence-length \"${CONTEXT_WINDOW}\"" in script_text
     assert "hf upload \"${UPLOAD_REPO}\" \"${RUN_DIR}\" \"${UPLOAD_PATH_IN_REPO}\"" in script_text
@@ -565,7 +565,7 @@ def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_histor
     assert training_command_path.exists()
     assert "--latency <" not in script_text
     assert "\n    --latency)" not in script_text
-    assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
+    assert 'DATASET_REPO="placeholder/memory-rollouts"' in script_text
     assert 'DATASET_CONFIG="demon_attack_fixed_latency_6_200ep_7k2steps"' in script_text
     assert "LATENCY_RAW_FRAMES=6" in script_text
     assert 'CONDA_ENV_NAME="starvla_rl_games_wan_oft"' in script_text
@@ -618,7 +618,7 @@ def test_deadly_corridor_wan_oft_pipeline_uses_fixed_latency_history_data_withou
     script_text = script_path.read_text(encoding="utf-8")
 
     assert training_command_path.exists()
-    assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
+    assert 'DATASET_REPO="placeholder/memory-rollouts"' in script_text
     assert 'DATASET_CONFIG="deadly_corridor_fixed_latency_6_1000ep_7k2steps"' in script_text
     assert "LATENCY_RAW_FRAMES=6" in script_text
     assert 'CONDA_ENV_NAME="starvla_rl_games_wan_oft"' in script_text
@@ -750,12 +750,12 @@ def test_openvla_defendtheline_deadly_zero_setup_matches_competitor_budget() -> 
     train_tasks = OmegaConf.to_container(cfg.rl_games.cross_task.train_tasks, resolve=True)
 
     assert [task["name"] for task in train_tasks] == ["defend_the_line", "deadly_corridor"]
-    assert train_tasks[0]["train_source_hf"] == "latency-sensitive-bench/memory-rollouts"
+    assert train_tasks[0]["train_source_hf"] == "placeholder/memory-rollouts"
     assert train_tasks[0]["train_source_subdir"] == "defend_the_line_fixed_latency_0_1000ep_7k2steps"
     assert train_tasks[0]["train_latency_filter"] == [0]
     assert train_tasks[0]["eval_latency_filter"] == [0]
     assert train_tasks[0]["episodes_per_latency"] == 40
-    assert train_tasks[1]["train_source_hf"] == "latency-sensitive-bench/deadly_1000ep"
+    assert train_tasks[1]["train_source_hf"] == "placeholder/deadly_1000ep"
     assert train_tasks[1]["train_latency_filter"] == [0]
     assert train_tasks[1]["eval_latency_filter"] == [0, 2, 4]
     assert train_tasks[1]["episodes_per_latency"] == 1000
@@ -1309,7 +1309,7 @@ def test_memory_upload_scripts_drop_training_state_before_upload() -> None:
 
     for script_path in script_paths:
         script_text = script_path.read_text(encoding="utf-8")
-        if "hf upload latency-sensitive-bench/memory" not in script_text:
+        if "hf upload placeholder/memory" not in script_text:
             continue
         assert 'compgen -G "${CHECKPOINT_DIR}/steps_*_model.safetensors"' in script_text, script_path
         assert 'find "${CHECKPOINT_DIR}" -maxdepth 1 -type d -name "steps_*_state" -exec rm -rf {} +' in script_text, script_path

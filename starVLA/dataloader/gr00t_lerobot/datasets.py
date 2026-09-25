@@ -144,7 +144,7 @@ def calculate_dataset_statistics(parquet_paths: list[Path]) -> dict:
 
 def _normalize_action_mode(mode: str) -> str:
     """Normalize action mode names to {abs, delta, rel}.""" 
-    # @gaoning plz move this, we want dataloader to be independent of the action mode logic, we can move this to transform or a separate utils tool to handle lerobot dataset
+    # @anonymous plz move this, we want dataloader to be independent of the action mode logic, we can move this to transform or a separate utils tool to handle lerobot dataset
     mode = str(mode).lower()
     if mode in {"absolute", "raw"}:
         mode = "abs"
@@ -1564,7 +1564,7 @@ class LeRobotSingleDataset(Dataset):
         data = {}
         # Get the data for all modalities # just for action base data
         self.curr_traj_data = self.get_trajectory_data(trajectory_id)
-        # TODO @JinhuiYE The logic below is poorly implemented. Data reading should be directly based on curr_traj_data.
+        # TODO @anonymous The logic below is poorly implemented. Data reading should be directly based on curr_traj_data.
         for modality in self.modality_keys:
             # Get the data corresponding to each key in the modality
             for key in self.modality_keys[modality]:

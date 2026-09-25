@@ -35,7 +35,7 @@ Thank you for contributing to StarVLA! To ensure the more stable development of 
 # Fork the repo on GitHub, then:
 git clone https://github.com/<your-username>/starVLA.git
 cd starVLA
-git remote add upstream https://github.com/starVLA/starVLA.git
+git remote add upstream https://github.com/placeholder/placeholder.git
 ```
 
 ### 2. Create a Feature Branch
@@ -226,7 +226,7 @@ None / Yes: ...
 ## Need Help?
 
 - **Office Hours**: Every Friday afternoon — fill in the [Cooperation Form](https://forms.gle/R4VvgiVveULibTCCA).
-- **Discussions**: Use [GitHub Issues](https://github.com/starVLA/starVLA/issues) for technical questions.
+- **Discussions**: Use [GitHub Issues](https://github.com/placeholder/placeholder/issues) for technical questions.
 - **Quick questions**: Tag a maintainer in your PR comments.
 
 ---

@@ -44,7 +44,7 @@ accelerate launch \
   --run_root_dir ${run_root_dir} \
   --run_id ${run_id} \
   --wandb_project starVLA_robocasa \
-  --wandb_entity jinhuiye \
+  --wandb_entity anonymous \
   # --is_debug True
 
 

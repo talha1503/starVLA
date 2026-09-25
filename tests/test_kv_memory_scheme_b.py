@@ -13,7 +13,7 @@ that are easy to get wrong:
 - for an episode-start sample the fed-frame order equals eval's (cadence consistency).
 
 Run with the starVLA env, e.g.:
-  /home/lixinyuan/miniconda3/envs/starvla_rl_games_gr00t/bin/python -m pytest \
+  /path/to/conda/envs/starvla_rl_games_gr00t/bin/python -m pytest \
     starVLA/tests/test_kv_memory_scheme_b.py -q
 """
 

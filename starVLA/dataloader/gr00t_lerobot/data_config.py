@@ -840,7 +840,7 @@ class AgilexDataConfig:
     ]
     action_keys = [
         "action.left_joints",
-        "action.right_joints",#@JinhuiYE this order is different from Dataset
+        "action.right_joints",#@anonymous this order is different from Dataset
         "action.left_gripper",
         "action.right_gripper",
     ]
@@ -919,7 +919,7 @@ class AgilexData50Config:
     ]
     action_keys = [
         "action.left_joints",
-        "action.right_joints",  # @JinhuiYE this order is different from Dataset
+        "action.right_joints",  # @anonymous this order is different from Dataset
         "action.left_gripper",
         "action.right_gripper",
     ]

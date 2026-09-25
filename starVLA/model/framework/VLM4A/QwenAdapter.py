@@ -1,7 +1,7 @@
 # Copyright 2025 starVLA community. All rights reserved.
 # Licensed under the MIT License, Version 1.0 (the "License");
-# Implemented by [Junqiu YU / Fudan University] in [2025].
-# Design and Merged by [Jinhui YE / HKUST University] in [2025].
+# Implemented by [Anonymous Author / Anonymous Institution] in [2025].
+# Design and Merged by [Anonymous Author / Anonymous Institution] in [2025].
 """
 Qwen-Adapter Framework
 A lightweight implementation that Qwen-VL + Adapter Action head to directly predict continuous actions

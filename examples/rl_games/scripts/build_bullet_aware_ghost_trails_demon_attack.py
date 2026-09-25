@@ -25,7 +25,7 @@ from examples.rl_games.scripts.image_patching import DEMON_ATTACK_SHIP_RGB, _req
 
 import cv2
 
-DATASET_NAME = "latency-sensitive-bench/demon_attack_200ep"
+DATASET_NAME = "placeholder/demon_attack_200ep"
 DATASET_SUBDIR = "demon_attack_fix_latency_0_200ep"
 
 SCRIPT_DIR = Path(__file__).parent

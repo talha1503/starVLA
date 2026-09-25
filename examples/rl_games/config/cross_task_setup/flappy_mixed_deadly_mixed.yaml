@@ -16,8 +16,8 @@ rl_games:
     train_tasks:
       - name: flappy
         role: A
-        train_source_hf: talha1503/flappy_bird_mixed_latency_parquet
-        prompt_source_hf: talha1503/flappy_bird_mixed_latency_parquet
+        train_source_hf: placeholder/flappy_bird_mixed_latency_parquet
+        prompt_source_hf: placeholder/flappy_bird_mixed_latency_parquet
         converted_name: flappy_mixed_latency_train
         train_latency_filter: [0, 1, 2, 3, 4]
         episodes_per_latency: 50

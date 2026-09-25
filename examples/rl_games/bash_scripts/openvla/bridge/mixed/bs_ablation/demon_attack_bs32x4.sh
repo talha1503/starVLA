@@ -18,11 +18,11 @@ python examples/rl_games/scripts/launch_train.py \
     run_id="openvla_demon_attack_mixed_latency_clean_exp2_bs32x4" \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
-    wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_demon_attack_mixed_latency_clean_exp2_bs32x4" \
+    wandb_entity="anonymous" \
+    checkpoint.hf_repo_id="placeholder/openvla_demon_attack_mixed_latency_clean_exp2_bs32x4" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_demon_attack_mixed_latency_clean_exp2_bs32x4" \
-    dataset.source_hf="latency-sensitive-bench/demon_attack_200ep" \
+    checkpoint.sync.repo_id="placeholder/openvla_demon_attack_mixed_latency_clean_exp2_bs32x4" \
+    dataset.source_hf="placeholder/demon_attack_200ep" \
     dataset.latency_filter=[0,2,4,6,8] \
     datasets.vla_data.sequential_step_sampling=true \
     datasets.vla_data.shuffle=true \

@@ -2,7 +2,7 @@
 """Build 5 sanity-check ghost-trail composites for Demon Attack's player ship.
 
 For `--num-sets` random positions in a single episode of
-latency-sensitive-bench/demon_attack_200ep (latency 0), this takes the 8
+placeholder/demon_attack_200ep (latency 0), this takes the 8
 frames ending at that position (the last is the "current" frame, the
 preceding up-to-7 are the ghost trail), runs build_ghost_trail_image on them
 with an exact-color ship segmenter and no occlusion/scroll (Demon Attack's
@@ -34,7 +34,7 @@ from examples.rl_games.scripts.image_patching import (
     select_ghost_frames,
 )
 
-DATASET_NAME = "latency-sensitive-bench/demon_attack_200ep"
+DATASET_NAME = "placeholder/demon_attack_200ep"
 DATASET_SUBDIR = "demon_attack_fix_latency_0_200ep"
 TRAIL_LEN = 7  # ghosts
 LOOKBACK = 60  # how far back to search for `TRAIL_LEN` well-separated ghosts

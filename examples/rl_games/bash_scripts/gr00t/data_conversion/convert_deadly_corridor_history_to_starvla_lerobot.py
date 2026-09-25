@@ -24,7 +24,7 @@ from examples.rl_games.bash_scripts.gr00t.data_conversion import (
 )
 
 
-DEFAULT_DATASET_NAME = "latency-sensitive-bench/memory-rollouts"
+DEFAULT_DATASET_NAME = "placeholder/memory-rollouts"
 DEFAULT_DATASET_CONFIG_NAME = (
     "deadly_corridor_fixed_latency_6_1000ep_7k2steps"
 )

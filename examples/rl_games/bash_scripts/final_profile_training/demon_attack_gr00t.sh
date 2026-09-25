@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CODE_ROOT="${CODE_ROOT:-/home/ubuntu/talha}"
-DATA_WORKSPACE_DIR="${DATA_WORKSPACE_DIR:-/mnt/local/talha}"
+CODE_ROOT="${CODE_ROOT:-/path/to/workspace}"
+DATA_WORKSPACE_DIR="${DATA_WORKSPACE_DIR:-/path/to/data}"
 export CODE_ROOT DATA_WORKSPACE_DIR
 
 mkdir -p "${DATA_WORKSPACE_DIR}"
@@ -16,12 +16,12 @@ if [[ ! -d "${CODE_ROOT}/starVLA" ]]; then
   echo "[error] missing StarVLA repo: ${CODE_ROOT}/starVLA" >&2
   exit 2
 fi
-if [[ ! -d "${CODE_ROOT}/latency-sensitive-bench/.git" ]]; then
-  echo "[error] missing latency-sensitive-bench repo: ${CODE_ROOT}/latency-sensitive-bench" >&2
+if [[ ! -d "${CODE_ROOT}/placeholder/.git" ]]; then
+  echo "[error] missing placeholder repo: ${CODE_ROOT}/placeholder" >&2
   exit 2
 fi
 
-cd "${CODE_ROOT}/latency-sensitive-bench"
+cd "${CODE_ROOT}/placeholder"
 git config --global url."https://github.com/".insteadOf git@github.com:
 git config --global url."https://github.com/".insteadOf ssh://git@github.com/
 git config -f .gitmodules submodule.flappy-bird-gymnasium.url https://github.com/mindorigin150/flappy-bird-gymnasium.git
@@ -68,7 +68,7 @@ conda activate starvla_rl_games_gr00t
 
 WORKSPACE_DIR="${CODE_ROOT}" bash "${CODE_ROOT}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
 
-export PYTHONPATH="${CODE_ROOT}/latency-sensitive-bench:${PYTHONPATH:-}"
+export PYTHONPATH="${CODE_ROOT}/placeholder:${PYTHONPATH:-}"
 
 python examples/rl_games/scripts/launch_train.py \
     model=gr00t \
@@ -81,12 +81,12 @@ python examples/rl_games/scripts/launch_train.py \
     paths.run_root_dir="$DATA_WORKSPACE_DIR/results/Checkpoints" \
     paths.dataset_local_dir="$DATA_WORKSPACE_DIR/playground/Datasets/rl_games" \
     paths.base_model_dir="$DATA_WORKSPACE_DIR/playground/Pretrained_models/Qwen3-VL-4B-Instruct" \
-    wandb_entity="talha1503" \
+    wandb_entity="anonymous" \
     ++wandb_group=final_profile_training \
-    checkpoint.hf_repo_id="latency-sensitive-bench/gr00t_bridge_demon_attack_rtx3090_profile_1000ep_7k2steps_final_action_1e-5_backbone_1e-6" \
+    checkpoint.hf_repo_id="placeholder/gr00t_bridge_demon_attack_rtx3090_profile_1000ep_7k2steps_final_action_1e-5_backbone_1e-6" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="latency-sensitive-bench/gr00t_bridge_demon_attack_rtx3090_profile_1000ep_7k2steps_final_action_1e-5_backbone_1e-6" \
-    dataset.source_hf=latency-sensitive-bench/memory-rollouts \
+    checkpoint.sync.repo_id="placeholder/gr00t_bridge_demon_attack_rtx3090_profile_1000ep_7k2steps_final_action_1e-5_backbone_1e-6" \
+    dataset.source_hf=placeholder/memory-rollouts \
     dataset.source_subdir=demon_attack_gr00t_rtx3090_profile_1000ep_7k2steps \
     dataset.target_latency_unit=raw_frames \
     checkpoint.local.keep_last_n=1 \

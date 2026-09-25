@@ -25,7 +25,7 @@ from PIL import Image, ImageDraw
 
 STARVLA_ROOT = Path(__file__).resolve().parents[3]
 NU_ROOT = STARVLA_ROOT.parent
-LATENCY_BENCH_ROOT = NU_ROOT / "latency-sensitive-bench"
+LATENCY_BENCH_ROOT = NU_ROOT / "placeholder"
 if str(STARVLA_ROOT) not in sys.path:
     sys.path.insert(0, str(STARVLA_ROOT))
 if str(LATENCY_BENCH_ROOT) not in sys.path:

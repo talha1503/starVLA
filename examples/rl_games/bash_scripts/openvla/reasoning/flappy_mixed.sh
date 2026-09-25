@@ -7,7 +7,7 @@ set -euo pipefail
 cd /workspace/starVLA
 conda activate starvla_rl_games_openvla
 
-HF_REPO_ID="talha15032/openvla_bridge_flappy_latency_mixed_exp2"
+HF_REPO_ID="placeholder/openvla_bridge_flappy_latency_mixed_exp2"
 HF_INCLUDE="steps_5000_state/**"
 CKPT_SUBPATH="steps_5000_state"
 BASE_VLM_REPO="Qwen/Qwen3-VL-4B-Instruct"
@@ -17,7 +17,7 @@ PER_CLASS_SAMPLES="${PER_CLASS_SAMPLES:-10}"
 SPLIT="${SPLIT:-validation}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-256}"
 OUTPUT_CSV="/workspace/outputs/reasoning/flappy_mixed/reasoning_traces.csv"
-HF_OUTPUT_REPO="talha15032/reasoning_trace_2"
+HF_OUTPUT_REPO="placeholder/reasoning_trace_2"
 HF_OUTPUT_SUBDIR="flappy_mixed"
 LIVE_EVAL_EPISODES="${LIVE_EVAL_EPISODES:-2}"
 LIVE_EVAL_LATENCIES="${LIVE_EVAL_LATENCIES:-0}"

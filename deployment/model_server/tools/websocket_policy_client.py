@@ -1,6 +1,6 @@
 # Copyright 2025 starVLA community. All rights reserved.
 # Licensed under the MIT License, Version 1.0 (the "License");
-# Implemented by [Jinhui YE / HKUST University] in [2025].
+# Implemented by [Anonymous Author / Anonymous Institution] in [2025].
 
 import logging
 import os

@@ -1,6 +1,6 @@
 # Copyright 2025 starVLA community. All rights reserved.
 # Licensed under the MIT License, Version 1.0 (the "License");
-# Implemented by Jinhui YE / HKUST University] in [2025].
+# Implemented by Anonymous Author / Anonymous Institution] in [2025].
 """
 QwenPI_v3 Framework
 A Qwen2.5-VL / Qwen3-VL + layer-wise cross-DiT flow-matching action head.
@@ -9,7 +9,7 @@ Released checkpoint
 ─────────────────────────────
 - Qwen3-VL-4B + Bridge V2 + RT-1 (OXE) co-training, 69.8% avg success on
   SimplerEnv WidowX:
-  https://huggingface.co/StarVLA/Qwen3VL-PI_v3-Bridge-RT_1
+  https://huggingface.co/placeholder/Qwen3VL-PI_v3-Bridge-RT_1
 
 Key improvements over QwenPI
 ─────────────────────────────
@@ -505,7 +505,7 @@ if __name__ == "__main__":
     cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Qwen3-VL-4B-Instruct"
 
     model = Qwen_PI_v3(cfg)
-    # ckpt="/mnt/petrelfs/yejinhui/Projects/llavavla/results/Checkpoints/1011_qwenpi/checkpoints/need_steps_10000_pytorch_model.pt"
+    # ckpt="/path/to/starvla/results/Checkpoints/1011_qwenpi/checkpoints/need_steps_10000_pytorch_model.pt"
     # model = Qwen_PI.from_pretrained(ckpt)
     print(model)
 

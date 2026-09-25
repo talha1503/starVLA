@@ -1,5 +1,5 @@
 # Copyright 2025 CogACT. All rights reserved.
-# Modified by [Jinhui YE/ HKUST University] in [2025].
+# Modified by [Anonymous Author/ Anonymous Institution] in [2025].
 # Modification: [add global config ].
 """
 Diffusion-based action prediction head (DiT variant).

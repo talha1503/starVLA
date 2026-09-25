@@ -2,7 +2,7 @@
 
 This document describes how to **train and evaluate StarVLA models on the Calvin benchmark**, including dataset preparation, training configuration, and evaluation procedures.
 
-> **Note:** Calvin benchmark experiments were conducted by the UNT team. For inquiries, please contact Zhijie Song (1600013008@pku.edu.cn) or Feng Yan (bphengyan@163.com).
+> **Note:** Calvin benchmark experiments were conducted by an external benchmark team. Contact details are omitted for anonymous review.
 
 
 ---
@@ -136,6 +136,5 @@ Additionally, you need to modify the following paths in `eval_calvin.py`:
 * `eval_sequences_path`: Path to evaluation sequences JSON file (default: `"/path/to/calvin/eval_sequences.json"`)
 
 For convenience, we provide a reference evaluation sequence file at `examples/calvin/eval_files/eval_sequences.json`, which can be used directly.
-
 
 

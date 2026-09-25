@@ -24,7 +24,7 @@ from examples.rl_games.bash_scripts.gr00t.data_conversion import (
 )
 
 
-DEFAULT_DATASET_NAME = "latency-sensitive-bench/memory-rollouts"
+DEFAULT_DATASET_NAME = "placeholder/memory-rollouts"
 DEFAULT_DATASET_CONFIG_NAME = "demon_attack_fixed_latency_6_200ep_7k2steps"
 DEFAULT_OUTPUT_DIR = Path(
     "data/demon_attack_fix_latency_6_200ep_context5/demon_attack_train__bridge"

@@ -111,7 +111,7 @@ def test_demon_attack_history_converter_builds_wanoft_context_dataset(
     manifest = CONVERTER._convert_split(
         [source_path],
         output_dir,
-        "latency-sensitive-bench/memory-rollouts",
+        "placeholder/memory-rollouts",
         "demon_attack_fixed_latency_6_200ep_7k2steps",
         "train",
         None,

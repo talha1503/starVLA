@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--hf-repo-id",
         default="",
-        help="HF model repo to download the checkpoint from, e.g. talha15032/openvla_bridge_flappy_latency_mixed_exp2.",
+        help="HF model repo to download the checkpoint from, e.g. placeholder/openvla_bridge_flappy_latency_mixed_exp2.",
     )
     p.add_argument(
         "--hf-include",
@@ -126,7 +126,7 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Extra Hydra override(s) for reconstruction (repeatable), e.g. architecture-affecting launch overrides.",
     )
-    p.add_argument("--dataset-name", default="latency-sensitive-bench/flappy_200ep")
+    p.add_argument("--dataset-name", default="placeholder/flappy_200ep")
     p.add_argument("--split", default="val")
     p.add_argument("--env-name", default="flappy", choices=sorted(ENV_ACTION_LABELS))
     p.add_argument(
@@ -160,7 +160,7 @@ def parse_args() -> argparse.Namespace:
     )
     # --- upload results (CSV + frames + metadata) to HuggingFace ---
     p.add_argument("--push-to-hub", action="store_true", help="Upload the CSV + frames + metadata to HF after the run.")
-    p.add_argument("--hf-output-repo", default="talha15032/reasoning_trace", help="HF dataset repo to upload results to.")
+    p.add_argument("--hf-output-repo", default="placeholder/reasoning_trace", help="HF dataset repo to upload results to.")
     p.add_argument(
         "--hf-output-subdir",
         default="",

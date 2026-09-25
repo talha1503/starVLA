@@ -1,6 +1,6 @@
 # Copyright 2025 starVLA community. All rights reserved.
 # Licensed under the MIT License, Version 1.0 (the "License");
-# Implemented by [Jinhui YE / HKUST University] in [2025].
+# Implemented by [Anonymous Author / Anonymous Institution] in [2025].
 
 """
 Qwen-Fast Framework
@@ -14,7 +14,7 @@ Key Points:
   - Autoregressive action tokens derived from discretized / symbolized continuous actions
 
 Note: How to add special tokens to Qwen2.5:
-  download our model checkpoint with special tokens added: https://huggingface.co/StarVLA/Qwen2.5-VL-3B-Instruct-Action
+  download our model checkpoint with special tokens added: https://huggingface.co/placeholder/Qwen2.5-VL-3B-Instruct-Action
 """
 
 from dataclasses import dataclass, field

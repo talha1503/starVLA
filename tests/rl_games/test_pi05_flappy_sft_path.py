@@ -727,14 +727,14 @@ def test_launch_train_setup_namespace_forwards_dataset_config_name(tmp_path: Pat
         init="bridge",
         mode="single",
         overrides=[
-            "dataset.source_hf=latency-sensitive-bench/dataset-filter-comparison",
+            "dataset.source_hf=placeholder/dataset-filter-comparison",
             "dataset.config_name=flappy_clean_v1",
         ],
     )
 
     setup_args = launch_train.setup_namespace_from_cfg(cfg, tmp_path, "results/Checkpoints")
 
-    assert setup_args.source_dataset_hf == "latency-sensitive-bench/dataset-filter-comparison"
+    assert setup_args.source_dataset_hf == "placeholder/dataset-filter-comparison"
     assert setup_args.source_dataset_config_name == "flappy_clean_v1"
 
 
@@ -746,14 +746,14 @@ def test_launch_train_setup_namespace_forwards_dataset_source_subdir(tmp_path: P
         init="bridge",
         mode="single",
         overrides=[
-            "dataset.source_hf=latency-sensitive-bench/flappy_200ep",
+            "dataset.source_hf=placeholder/flappy_200ep",
             "dataset.source_subdir=flappy_fix_latency_0_200ep",
         ],
     )
 
     setup_args = launch_train.setup_namespace_from_cfg(cfg, tmp_path, "results/Checkpoints")
 
-    assert setup_args.source_dataset_hf == "latency-sensitive-bench/flappy_200ep"
+    assert setup_args.source_dataset_hf == "placeholder/flappy_200ep"
     assert setup_args.source_dataset_subdir == "flappy_fix_latency_0_200ep"
 
 

@@ -114,7 +114,7 @@ def _load_state_dict_allowing_qwen_tied_lm_head(
 
 
 # PreTrainedModel, AutoModel, PretrainedConfig,  are so good, find sometime to study them
-# TODO @JinhuiYE find sometime to merge yaml config with transformer config
+# TODO @anonymous find sometime to merge yaml config with transformer config
 
 
 class baseframework(PreTrainedModel):

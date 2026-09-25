@@ -181,7 +181,7 @@ def test_demon_attack_index_split_retries_canonical_hf_columns(
     monkeypatch.setattr(demon, "load_dataset", fake_load_dataset)
 
     ds, columns = demon._load_index_split(
-        "talha1503/demon_attack_mixed_latency_parquet",
+        "placeholder/demon_attack_mixed_latency_parquet",
         "train",
         cache_dir="/tmp/cache",
         want_latency=True,
@@ -237,7 +237,7 @@ def test_demon_attack_zero_latency_index_split_retries_canonical_hf_columns(
     monkeypatch.setattr(demon, "load_dataset", fake_load_dataset)
 
     ds, columns = demon._load_index_split(
-        "talha1503/demon_attack_zero_latency_parquet",
+        "placeholder/demon_attack_zero_latency_parquet",
         "train",
         cache_dir="/tmp/cache",
         want_latency=False,
@@ -363,7 +363,7 @@ def test_deadly_corridor_index_split_retries_canonical_hf_columns(
     monkeypatch.setattr(deadly, "load_dataset", fake_load_dataset)
 
     ds, columns = deadly._load_index_split(
-        "talha1503/deadly_corridor_mixed_latency_parquet",
+        "placeholder/deadly_corridor_mixed_latency_parquet",
         "train",
         cache_dir="/tmp/cache",
         want_latency=True,
@@ -405,7 +405,7 @@ def test_deadly_corridor_zero_latency_index_split_retries_canonical_hf_columns(
     monkeypatch.setattr(deadly, "load_dataset", fake_load_dataset)
 
     ds, columns = deadly._load_index_split(
-        "talha1503/deadly_corridor_zero_latency_parquet",
+        "placeholder/deadly_corridor_zero_latency_parquet",
         "train",
         cache_dir="/tmp/cache",
         want_latency=False,

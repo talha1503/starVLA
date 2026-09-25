@@ -17,7 +17,7 @@ Options:
   --max-episodes <N>          Maximum source episodes per split (default: 200)
   --max-train-steps <N>       Training steps (default: 2000)
   --dataset-cache-dir <path>  Optional Hugging Face cache directory
-  --upload-repo <repo>        HF model repo for run upload (default: latency-sensitive-bench/wanoft_flappy_200ep)
+  --upload-repo <repo>        HF model repo for run upload (default: placeholder/wanoft_flappy_200ep)
   --upload-path <path>        Path inside the HF repo (default: <run_id>)
   --run-id <id>               Override run id
   --skip-env-setup            Do not run examples/rl_games/install/bootstrap.sh
@@ -37,15 +37,15 @@ PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-4}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-32}"
 EFFECTIVE_BATCH_SIZE="${EFFECTIVE_BATCH_SIZE:-$((PER_DEVICE_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS))}"
 POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"
-WANDB_ENTITY_VALUE="${WANDB_ENTITY:-dongqianyu99-zhejiang-university}"
+WANDB_ENTITY_VALUE="${WANDB_ENTITY:-anonymous}"
 WANDB_PROJECT_VALUE="${WANDB_PROJECT:-starVLA_rl_games}"
-DATASET_REPO="latency-sensitive-bench/memory-rollouts"
+DATASET_REPO="placeholder/memory-rollouts"
 DATASET_CONFIG="flappy_fixed_latency_3_200ep_7k2steps"
 DATASET_CACHE_DIR="${DATASET_CACHE_DIR:-}"
 LATENCY=3
 RUN_ROOT_DIR="${RUN_ROOT_DIR:-results/Checkpoints}"
 RUN_ID="${RUN_ID:-}"
-UPLOAD_REPO="${UPLOAD_REPO:-latency-sensitive-bench/wanoft_flappy_200ep}"
+UPLOAD_REPO="${UPLOAD_REPO:-placeholder/wanoft_flappy_200ep}"
 UPLOAD_PATH_IN_REPO="${UPLOAD_PATH_IN_REPO:-}"
 BASE_MODEL_REPO="${BASE_MODEL_REPO:-Wan-AI/Wan2.2-TI2V-5B-Diffusers}"
 BASE_MODEL_DIR="${BASE_MODEL_DIR:-playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers}"

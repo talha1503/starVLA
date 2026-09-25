@@ -31,8 +31,8 @@ rl_games:
     train_tasks:
       - name: flappy
         role: A
-        train_source_hf: latency-sensitive-bench/flappy_200ep
-        prompt_source_hf: latency-sensitive-bench/flappy_200ep
+        train_source_hf: placeholder/flappy_200ep
+        prompt_source_hf: placeholder/flappy_200ep
         train_source_subdir: flappy_fix_latency_0_200ep
         prompt_source_subdir: flappy_fix_latency_0_200ep
         converted_name: flappy_mixed_024_200ep_cross_train
@@ -43,8 +43,8 @@ rl_games:
         weight: 1.0
       - name: demon_attack
         role: B
-        train_source_hf: latency-sensitive-bench/demon_attack_200ep
-        prompt_source_hf: latency-sensitive-bench/demon_attack_200ep
+        train_source_hf: placeholder/demon_attack_200ep
+        prompt_source_hf: placeholder/demon_attack_200ep
         train_source_subdir: demon_attack_fix_latency_0_200ep
         prompt_source_subdir: demon_attack_fix_latency_0_200ep
         converted_name: demon_attack_mixed_024_200ep_cross_train
@@ -55,8 +55,8 @@ rl_games:
         weight: 1.0
       - name: deadly_corridor
         role: C
-        train_source_hf: latency-sensitive-bench/deadly_1000ep
-        prompt_source_hf: latency-sensitive-bench/deadly_1000ep
+        train_source_hf: placeholder/deadly_1000ep
+        prompt_source_hf: placeholder/deadly_1000ep
         train_source_subdir: deadly_corridor_fix_latency_0_1000ep
         prompt_source_subdir: deadly_corridor_fix_latency_0_1000ep
         converted_name: deadly_corridor_mixed_024_1000ep_cross_train
@@ -68,8 +68,8 @@ rl_games:
         weight: 1.0
       - name: asterix
         role: D
-        train_source_hf: latency-sensitive-bench/asterix_200ep
-        prompt_source_hf: latency-sensitive-bench/asterix_200ep
+        train_source_hf: placeholder/asterix_200ep
+        prompt_source_hf: placeholder/asterix_200ep
         train_source_subdir: asterix_fixed_latency_0_200ep_7k2steps
         prompt_source_subdir: asterix_fixed_latency_0_200ep_7k2steps
         converted_name: asterix_mixed_024_200ep_cross_train
@@ -81,8 +81,8 @@ rl_games:
         weight: 1.0
       - name: atlantis
         role: E
-        train_source_hf: latency-sensitive-bench/atlantis_200ep
-        prompt_source_hf: latency-sensitive-bench/atlantis_200ep
+        train_source_hf: placeholder/atlantis_200ep
+        prompt_source_hf: placeholder/atlantis_200ep
         train_source_subdir: atlantis_fixed_latency_0_200ep_7k2steps
         prompt_source_subdir: atlantis_fixed_latency_0_200ep_7k2steps
         converted_name: atlantis_mixed_024_200ep_cross_train
@@ -93,8 +93,8 @@ rl_games:
         weight: 1.0
       - name: defend_the_line
         role: F
-        train_source_hf: latency-sensitive-bench/defend_the_line_200ep
-        prompt_source_hf: latency-sensitive-bench/defend_the_line_200ep
+        train_source_hf: placeholder/defend_the_line_200ep
+        prompt_source_hf: placeholder/defend_the_line_200ep
         train_source_subdir: defend_the_line_fixed_latency_0_200ep_7k2steps
         prompt_source_subdir: defend_the_line_fixed_latency_0_200ep_7k2steps
         converted_name: defend_the_line_mixed_024_200ep_cross_train

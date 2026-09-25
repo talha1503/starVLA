@@ -1,26 +1,26 @@
 #!/bin/bash
 
 echo `which python`
-########### Environment setup — adapted for HKUST cluster ###########
+########### Environment setup — adapted for Anonymous Institution cluster ###########
 # Environment setup
-cd /mnt/petrelfs/yejinhui/Projects/starVLA
-export star_vla_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/starVLA/bin/python
-export sim_python=/mnt/petrelfs/share/yejinhui/Envs/miniconda3/envs/dinoact/bin/python
-export SimplerEnv_PATH=/mnt/petrelfs/share/yejinhui/Projects/SimplerEnv
+cd /path/to/starvla
+export star_vla_python=/path/to/conda/envs/starVLA/bin/python
+export sim_python=/path/to/conda/envs/dinoact/bin/python
+export SimplerEnv_PATH=/path/to/SimplerEnv
 export PYTHONPATH=$(pwd):${PYTHONPATH}
 base_port=6350 
 
 # export DEBUG=1
-########### Environment setup — adapted for HKUST cluster ###########
+########### Environment setup — adapted for Anonymous Institution cluster ###########
 
 MODEL_PATH=$1
-# MODEL_PATH=/mnt/petrelfs/yejinhui/Projects/starVLA/results/Checkpoints/1120_bridge_rt_1_QwenDual_florence/checkpoints/steps_11000_pytorch_model.pt
+# MODEL_PATH=/path/to/starvla/results/Checkpoints/1120_bridge_rt_1_QwenDual_florence/checkpoints/steps_11000_pytorch_model.pt
 TSET_NUM=4 # repeat each task 4 times
 run_count=0
 
 if [ -z "$MODEL_PATH" ]; then
   echo "❌ MODEL_PATH not provided as the first argument; using default"
-  export MODEL_PATH="/mnt/petrelfs/yejinhui/Projects/starVLA/results/Checkpoints/1007_qwenLargefm/checkpoints/steps_20000_pytorch_model.pt"
+  export MODEL_PATH="/path/to/starvla/results/Checkpoints/1007_qwenLargefm/checkpoints/steps_20000_pytorch_model.pt"
 fi
 
 ckpt_path=${MODEL_PATH}

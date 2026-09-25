@@ -17,8 +17,8 @@ rl_games:
     train_tasks:
       - name: defend_the_line
         role: A
-        train_source_hf: latency-sensitive-bench/memory-rollouts
-        prompt_source_hf: latency-sensitive-bench/memory-rollouts
+        train_source_hf: placeholder/memory-rollouts
+        prompt_source_hf: placeholder/memory-rollouts
         train_source_subdir: defend_the_line_fixed_latency_0_1000ep_7k2steps
         prompt_source_subdir: defend_the_line_fixed_latency_0_1000ep_7k2steps
         converted_name: defend_the_line_zero_latency_train
@@ -29,8 +29,8 @@ rl_games:
         weight: 1.0
       - name: deadly_corridor
         role: B
-        train_source_hf: latency-sensitive-bench/deadly_1000ep
-        prompt_source_hf: latency-sensitive-bench/deadly_1000ep
+        train_source_hf: placeholder/deadly_1000ep
+        prompt_source_hf: placeholder/deadly_1000ep
         converted_name: deadly_corridor_zero_latency_train
         train_latency_filter: [0]
         eval_latency_filter: [0, 2, 4]

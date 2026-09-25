@@ -10,12 +10,9 @@ message: >-
   metadata from this file.
 type: software
 authors:
-  - name: starVLA Community
-identifiers:
-  - type: doi
-    value: 10.5281/zenodo.18264214
-repository-code: 'https://github.com/starVLA/starVLA'
-url: 'https://starvla.github.io/'
+  - name: Anonymous Authors
+repository-code: 'omitted for anonymous review'
+url: 'omitted for anonymous review'
 abstract: >-
   A modular, Lego-like codebase for developing
   Vision-Language-Action models.

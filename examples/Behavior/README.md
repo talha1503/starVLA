@@ -1,6 +1,6 @@
 <!-- # Copyright 2025 starVLA community. All rights reserved.
 # Licensed under the MIT License, Version 1.0 (the "License"); 
-# Implemented by [Zixuan Wang / HKUST] in [2025]. -->
+# Implemented by [Zixuan Wang / Anonymous Institution] in [2025]. -->
 # 🚧Under construction
 This document provides instructions to run our framework with the [BEHAVIOR-1K Benchmark](https://github.com/StanfordVL/BEHAVIOR-1K). We follow the structure of [2025 BEHAVIOR Challenge](https://behavior.stanford.edu/challenge/index.html) so that you can train and evaluate on the 50 full-length household tasks. 
 

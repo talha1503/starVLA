@@ -129,7 +129,7 @@ def test_deadly_corridor_history_converter_builds_wanoft_context_dataset(
     manifest = CONVERTER._convert_split(
         [source_path],
         output_dir,
-        "latency-sensitive-bench/memory-rollouts",
+        "placeholder/memory-rollouts",
         "deadly_corridor_fixed_latency_6_1000ep_7k2steps",
         "train",
         None,

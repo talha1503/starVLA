@@ -35,7 +35,7 @@ paths:
 # Setup downloads this HF dataset if converted_name is missing or setup_force=true,
 # then converts it into the StarVLA/LeRobot layout and writes dataset statistics.
 dataset:
-  source_hf: latency-sensitive-bench/deadly_corridor_mixed_latency_parquet
+  source_hf: placeholder/deadly_corridor_mixed_latency_parquet
   converted_name: deadly_corridor_train
   latency_filter: [0]
   force_download: false

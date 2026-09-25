@@ -35,7 +35,7 @@ paths:
 # Setup downloads this HF dataset if converted_name is missing or setup_force=true,
 # then converts it into the StarVLA/LeRobot layout and writes dataset statistics.
 dataset:
-  source_hf: talha1503/demon_attack_zero_latency_parquet
+  source_hf: placeholder/demon_attack_zero_latency_parquet
   converted_name: demon_attack_train
   force_download: false
   setup_force: false

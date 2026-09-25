@@ -114,7 +114,7 @@ def test_independent_wandb_run_records_eval_provenance(monkeypatch, tmp_path) ->
 
     args = SimpleNamespace(
         wandb_project="starVLA_rl_games",
-        wandb_entity="zihanwang-ai-northwestern-university",
+        wandb_entity="anonymous",
         wandb_run_id=None,
         wandb_run_name="run__post_train__step_4000__latency_bench",
         stage="post_train",
@@ -133,7 +133,7 @@ def test_independent_wandb_run_records_eval_provenance(monkeypatch, tmp_path) ->
     assert init_calls == [
         {
             "project": "starVLA_rl_games",
-            "entity": "zihanwang-ai-northwestern-university",
+            "entity": "anonymous",
             "dir": str(tmp_path / "wandb"),
             "config": {
                 "eval_backend": "latency_bench",
@@ -179,7 +179,7 @@ def test_resumed_wandb_run_records_eval_provenance(monkeypatch, tmp_path) -> Non
 
     args = SimpleNamespace(
         wandb_project="starVLA_rl_games",
-        wandb_entity="zihanwang-ai-northwestern-university",
+        wandb_entity="anonymous",
         wandb_run_id="existing-run",
         wandb_run_name=None,
         stage="post_train",
@@ -206,14 +206,14 @@ def test_resumed_wandb_run_records_eval_provenance(monkeypatch, tmp_path) -> Non
     assert init_calls == [
         {
             "project": "starVLA_rl_games",
-            "entity": "zihanwang-ai-northwestern-university",
+            "entity": "anonymous",
             "dir": str(tmp_path / "wandb"),
             "id": "existing-run",
             "resume": "must",
         },
         {
             "project": "starVLA_rl_games",
-            "entity": "zihanwang-ai-northwestern-university",
+            "entity": "anonymous",
             "dir": str(tmp_path / "wandb"),
             "id": "existing-run",
             "resume": "must",

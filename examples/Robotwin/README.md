@@ -75,7 +75,7 @@ The model is trained using the official **RoboTwin 2.0 dataset**.
 | Turn Switch | 65 | 62 | 41 | 42 | 62 | 54 | 40 | 61 | 84 | 78 | 61 | 65 | 67 | 63 |
 | **Average** | **88.18** | **88.32** | **65.92** | **58.40** | **82.74** | **76.76** | **72.80** | **72.84** | **88.66** | **87.02** | **86.50** | **85.34** | **88.56** | **86.68** |
 
-*Note: All 50 tasks are trained within a single model, using 50 clean and 500 randomized demonstrations per task for co-training. Checkpoints can be downloaded at [Qwen3-VL-OFT-Robotwin2-All](https://huggingface.co/StarVLA/Qwen3-VL-OFT-RoboTwin2-All)*.
+*Note: All 50 tasks are trained within a single model, using 50 clean and 500 randomized demonstrations per task for co-training. Checkpoints can be downloaded at [Qwen3-VL-OFT-Robotwin2-All](https://huggingface.co/placeholder/Qwen3-VL-OFT-RoboTwin2-All)*.
 
 </details>
 
@@ -138,7 +138,7 @@ The model is trained using the official **RoboTwin 2.0 dataset**.
 | Turn Switch | 35 | 15 | 27 | 23 | 5 | 2 | 36 | 1 | 46 | 8 | 26 |
 | **Average** | **34.50** | **13.72** | **46.42** | **16.34** | **29.74** | **1.74** | **28.04** | **0.64** | **55.24** | **4.96** | **50.38** |
 
-*Note: All 50 tasks are trained within a single model, using 50 demonstrations per task (50×50 total demonstrations). Checkpoints can be downloaded at [Qwen3-VL-OFT-Robotwin2](https://huggingface.co/StarVLA/Qwen3-VL-OFT-Robotwin2)*.
+*Note: All 50 tasks are trained within a single model, using 50 demonstrations per task (50×50 total demonstrations). Checkpoints can be downloaded at [Qwen3-VL-OFT-Robotwin2](https://huggingface.co/placeholder/Qwen3-VL-OFT-Robotwin2)*.
 
 </details>
 
@@ -209,7 +209,7 @@ The model is trained using the official **RobotWin 2.0 dataset**.
 | click_bell                | 0.2300     | 0.2700     |
 | **Average**               | **0.8818** | **0.8832** |
 
-*Note: All 50 tasks are trained within a single model, using 50 + 500 demonstrations per task (50×550 total demonstrations). Checkpoints can be downloaded at [Qwen3-VL-OFT-Robotwin2-All](https://huggingface.co/StarVLA/Qwen3-VL-OFT-RoboTwin2-All)*.
+*Note: All 50 tasks are trained within a single model, using 50 + 500 demonstrations per task (50×550 total demonstrations). Checkpoints can be downloaded at [Qwen3-VL-OFT-Robotwin2-All](https://huggingface.co/placeholder/Qwen3-VL-OFT-RoboTwin2-All)*.
 
 
 </details>

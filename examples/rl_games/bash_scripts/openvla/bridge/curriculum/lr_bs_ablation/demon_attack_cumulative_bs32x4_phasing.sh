@@ -14,11 +14,11 @@ python examples/rl_games/scripts/launch_train.py \
     run_id="openvla_demon_attack_mixed_latency_curriculum_cumulative_clean_exp1_bs32x4_phasing" \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
-    wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_demon_attack_mixed_latency_curriculum_cumulative_clean_exp1_bs32x4_phasing" \
+    wandb_entity="anonymous" \
+    checkpoint.hf_repo_id="placeholder/openvla_demon_attack_mixed_latency_curriculum_cumulative_clean_exp1_bs32x4_phasing" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_demon_attack_mixed_latency_curriculum_cumulative_clean_exp1_bs32x4_phasing" \
-    dataset.source_hf="latency-sensitive-bench/demon_attack_200ep" \
+    checkpoint.sync.repo_id="placeholder/openvla_demon_attack_mixed_latency_curriculum_cumulative_clean_exp1_bs32x4_phasing" \
+    dataset.source_hf="placeholder/demon_attack_200ep" \
     dataset.latency_filter=[0,2,4,6,8] \
     datasets.vla_data.latency_curriculum.phase_steps=[300,500,800,1400,7500] \
     trainer.max_train_steps=10500 \

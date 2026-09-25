@@ -24,7 +24,7 @@ from examples.rl_games.bash_scripts.gr00t.data_conversion import (
 )
 
 
-DEFAULT_DATASET_NAME = "latency-sensitive-bench/memory-rollouts"
+DEFAULT_DATASET_NAME = "placeholder/memory-rollouts"
 DEFAULT_DATASET_CONFIG_NAME = "flappy_fixed_latency_3_200ep_7k2steps"
 DEFAULT_OUTPUT_DIR = Path("data/flappy_fix_latency_3_200ep_context5/flappy_train__bridge")
 SOURCE_OBSERVATION_FPS = 30.0

@@ -28,7 +28,7 @@ This guide walks you through the complete StarVLA workflow — from installation
 ## 0. Installation
 
 ```bash
-git clone https://github.com/starVLA/starVLA
+git clone https://github.com/placeholder/placeholder
 cd starVLA
 
 conda create -n starVLA python=3.10 -y

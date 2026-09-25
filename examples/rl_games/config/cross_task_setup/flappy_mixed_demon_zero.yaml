@@ -8,8 +8,8 @@ rl_games:
     train_tasks:
       - name: flappy
         role: A
-        train_source_hf: talha1503/flappy_bird_mixed_latency_parquet
-        prompt_source_hf: talha1503/flappy_bird_mixed_latency_parquet
+        train_source_hf: placeholder/flappy_bird_mixed_latency_parquet
+        prompt_source_hf: placeholder/flappy_bird_mixed_latency_parquet
         converted_name: flappy_mixed_latency_train
         train_latency_filter: [0, 1, 2, 3, 4]
         eval_latency_filter: null
@@ -19,8 +19,8 @@ rl_games:
         weight: 1.0
       - name: demon_attack
         role: B
-        train_source_hf: talha1503/demon_attack_zero_latency_parquet
-        prompt_source_hf: talha1503/demon_attack_mixed_latency_parquet
+        train_source_hf: placeholder/demon_attack_zero_latency_parquet
+        prompt_source_hf: placeholder/demon_attack_mixed_latency_parquet
         converted_name: demon_attack_zero_latency_train
         train_latency_filter: [0]
         eval_latency_filter: null

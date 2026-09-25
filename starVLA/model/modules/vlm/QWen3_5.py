@@ -1,7 +1,7 @@
 # Copyright 2025 starVLA community. All rights reserved.
 # Licensed under the MIT License, Version 1.0 (the "License");
 # Implemented by [Shijie LIAN/ Huazhong University of Science & Technology] in [2026].
-# Design and Merged by [Jinhui YE / HKUST University] in [2026].
+# Design and Merged by [Anonymous Author / Anonymous Institution] in [2026].
 
 from typing import Optional
 

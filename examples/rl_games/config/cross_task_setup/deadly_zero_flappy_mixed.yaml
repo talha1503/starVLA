@@ -17,8 +17,8 @@ rl_games:
     train_tasks:
       - name: flappy
         role: B
-        train_source_hf: talha1503/flappy_bird_mixed_latency_parquet
-        prompt_source_hf: talha1503/flappy_bird_mixed_latency_parquet
+        train_source_hf: placeholder/flappy_bird_mixed_latency_parquet
+        prompt_source_hf: placeholder/flappy_bird_mixed_latency_parquet
         converted_name: flappy_mixed_latency_train
         train_latency_filter: [0, 1, 2, 3, 4]
         eval_latency_filter: [0, 1, 2, 3, 4]
@@ -27,8 +27,8 @@ rl_games:
         weight: 1.0
       - name: deadly_corridor
         role: A
-        train_source_hf: talha1503/deadly_corridor_zero_latency_parquet_v2
-        prompt_source_hf: latency-sensitive-bench/deadly_corridor_mixed_latency_parquet
+        train_source_hf: placeholder/deadly_corridor_zero_latency_parquet_v2
+        prompt_source_hf: placeholder/deadly_corridor_mixed_latency_parquet
         converted_name: deadly_corridor_zero_latency_train
         train_latency_filter: [0]
         eval_latency_filter: [0, 1, 2, 3, 4]

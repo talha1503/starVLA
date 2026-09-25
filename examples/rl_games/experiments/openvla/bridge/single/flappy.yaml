@@ -35,7 +35,7 @@ paths:
 # Setup downloads this HF dataset if converted_name is missing or setup_force=true,
 # then converts it into the StarVLA/LeRobot layout and writes dataset statistics.
 dataset:
-  source_hf: talha1503/flappy_bird_zero_latency_parquet
+  source_hf: placeholder/flappy_bird_zero_latency_parquet
   converted_name: flappy_train
   force_download: false
   setup_force: false
@@ -63,10 +63,10 @@ base_model:
 # the upload destination for newly saved checkpoints when checkpoint.sync.enabled=true.
 checkpoint:
   load: auto
-  hf_repo_id: talha1503/openvla_flappy_bridge_zero_latency_exp1
+  hf_repo_id: placeholder/openvla_flappy_bridge_zero_latency_exp1
   sync:
     enabled: true
-    repo_id: talha1503/openvla_flappy_bridge_zero_latency_exp1
+    repo_id: placeholder/openvla_flappy_bridge_zero_latency_exp1
     keep_last_n: 0
   local:
     keep_last_n: 3

@@ -16,11 +16,11 @@ python examples/rl_games/scripts/launch_train.py \
     run_id="openvla_bridge_flappy_latency_mixed_exp2" \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
-    wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_bridge_flappy_latency_mixed_exp2" \
+    wandb_entity="anonymous" \
+    checkpoint.hf_repo_id="placeholder/openvla_bridge_flappy_latency_mixed_exp2" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_bridge_flappy_latency_mixed_exp2" \
-    dataset.source_hf="latency-sensitive-bench/flappy_200ep" \
+    checkpoint.sync.repo_id="placeholder/openvla_bridge_flappy_latency_mixed_exp2" \
+    dataset.source_hf="placeholder/flappy_200ep" \
     dataset.latency_filter=[0,1,2,3,4] \
     datasets.vla_data.sequential_step_sampling=true \
     trainer.per_latency_eval_num_batches=5 \

@@ -11,7 +11,7 @@ conda activate starvla_rl_games_openvla
 
 bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
 
-export PYTHONPATH="${WORKSPACE_DIR}/latency-sensitive-bench:${PYTHONPATH:-}"
+export PYTHONPATH="${WORKSPACE_DIR}/placeholder:${PYTHONPATH:-}"
 
 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
@@ -21,12 +21,12 @@ python examples/rl_games/scripts/launch_train.py \
     run_id="openvla_bridge_deadly_corridor_latency_mixed_024_exp3" \
     trainer.distributed_backend=none \
     workspace_dir="$WORKSPACE_DIR" \
-    wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_bridge_deadly_corridor_latency_mixed_024_exp3" \
+    wandb_entity="anonymous" \
+    checkpoint.hf_repo_id="placeholder/openvla_bridge_deadly_corridor_latency_mixed_024_exp3" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_bridge_deadly_corridor_latency_mixed_024_exp3" \
+    checkpoint.sync.repo_id="placeholder/openvla_bridge_deadly_corridor_latency_mixed_024_exp3" \
     checkpoint.save_best_model=false \
-    dataset.source_hf=latency-sensitive-bench/deadly_1000ep \
+    dataset.source_hf=placeholder/deadly_1000ep \
     dataset.latency_filter=[0,2,4] \
     dataset.episodes_per_latency=400 \
     dataset.converted_name=deadly_corridor_024_openvla_bridge_mixed_exp3 \

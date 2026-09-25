@@ -17,7 +17,7 @@ from examples.rl_games.bash_scripts.gr00t.data_conversion import (
 )
 
 
-DEFAULT_DATASET_NAME = "latency-sensitive-bench/memory-rollouts"
+DEFAULT_DATASET_NAME = "placeholder/memory-rollouts"
 DEFAULT_DATASET_CONFIG_NAME = "atlantis_fixed_latency_0_1000ep_7k2steps"
 DEFAULT_OUTPUT_DIR = Path(
     "data/atlantis_fix_latency_0_1000ep_context5/atlantis_train__bridge"

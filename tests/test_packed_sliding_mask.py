@@ -7,7 +7,7 @@ reproduce the streaming visibility on a tiny Qwen3-VL text model, WITHOUT the
 attention); BlockMask vs additive mask only changes speed, not the result.
 
 Run:
-  /home/lixinyuan/miniconda3/envs/starvla_rl_games_gr00t/bin/python -m pytest \
+  /path/to/conda/envs/starvla_rl_games_gr00t/bin/python -m pytest \
     starVLA/tests/test_packed_sliding_mask.py -q
 """
 import pytest

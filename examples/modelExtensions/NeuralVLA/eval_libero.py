@@ -185,7 +185,7 @@ def eval_libero(args: Args) -> None:
                     "images": [
                         observation["observation.primary"][0],
                         observation["observation.wrist_image"][0],
-                    ],  # @Junqiu Why single viewpoint?
+                    ],  # @Anonymous Why single viewpoint?
                     "states": observation["observation.states"].astype(np.float32),  # shape (n, 8)
                     "task_description": observation["instruction"][0],
                 }

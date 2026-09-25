@@ -9,7 +9,7 @@ conda activate starvla_rl_games_gr00t
 
 bash "${WORKSPACE_DIR}/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh"
 
-export PYTHONPATH="${WORKSPACE_DIR}/latency-sensitive-bench:${PYTHONPATH:-}"
+export PYTHONPATH="${WORKSPACE_DIR}/placeholder:${PYTHONPATH:-}"
 
 python examples/rl_games/scripts/launch_train.py \
     model=gr00t \
@@ -19,11 +19,11 @@ python examples/rl_games/scripts/launch_train.py \
     run_id="gr00t_bridge_demon_attack_single_latency_clean_data_exp3_action_1e-5_backbone_1e-6" \
     trainer.distributed_backend=none \
     workspace_dir="$WORKSPACE_DIR" \
-    wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/gr00t_bridge_demon_attack_single_latency_clean_data_exp3_action_1e-5_backbone_1e-6" \
+    wandb_entity="anonymous" \
+    checkpoint.hf_repo_id="placeholder/gr00t_bridge_demon_attack_single_latency_clean_data_exp3_action_1e-5_backbone_1e-6" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/gr00t_bridge_demon_attack_single_latency_clean_data_exp3_action_1e-5_backbone_1e-6" \
-    dataset.source_hf="latency-sensitive-bench/demon_attack_200ep" \
+    checkpoint.sync.repo_id="placeholder/gr00t_bridge_demon_attack_single_latency_clean_data_exp3_action_1e-5_backbone_1e-6" \
+    dataset.source_hf="placeholder/demon_attack_200ep" \
     dataset.source_subdir=demon_attack_fix_latency_0_200ep \
     checkpoint.local.keep_last_n=1 \
     checkpoint.save_best_model=false \

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-cd /home/jye624/Projcets/starVLA
+cd /path/to/projects/starVLA
 SCRIPT_PATH="./examples/LIBERO/eval_files/auto_eval_scripts/eval_libero_parall.sh"
 
 ###############################################################################

@@ -14,11 +14,11 @@ python examples/rl_games/scripts/launch_train.py \
     run_id="gr00t_bridge_flappy_mixed_latency_mini_exp1" \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
-    wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/gr00t_bridge_flappy_mixed_latency_mini_exp1" \
+    wandb_entity="anonymous" \
+    checkpoint.hf_repo_id="placeholder/gr00t_bridge_flappy_mixed_latency_mini_exp1" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/gr00t_bridge_flappy_mixed_latency_mini_exp1" \
-    dataset.source_hf="talha1503/flappy_bird_mixed_latency_parquet" \
+    checkpoint.sync.repo_id="placeholder/gr00t_bridge_flappy_mixed_latency_mini_exp1" \
+    dataset.source_hf="placeholder/flappy_bird_mixed_latency_parquet" \
     checkpoint.save_best_model=true \
     trainer.max_train_steps=2100 \
     trainer.num_warmup_steps=0 \

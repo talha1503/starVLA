@@ -16,8 +16,8 @@ We have verified that this workflow runs successfully on **NVIDIA A100** GPUs.
 
 ## ⬇️ 0. Download Checkpoints
 First, download the checkpoints from 
-- [Qwen3VL-GR00T](https://huggingface.co/StarVLA/Qwen3-VL-GR00T-Robocasa-gr1)
-- [Qwen3VL-OFT](https://huggingface.co/StarVLA/Qwen3-VL-OFT-Robocasa)
+- [Qwen3VL-GR00T](https://huggingface.co/placeholder/Qwen3-VL-GR00T-Robocasa-gr1)
+- [Qwen3VL-OFT](https://huggingface.co/placeholder/Qwen3-VL-OFT-Robocasa)
 
 ## 📦 1. Environment Setup
 

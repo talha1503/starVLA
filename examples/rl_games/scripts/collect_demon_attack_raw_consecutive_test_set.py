@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Collect a small Demon Attack raw-consecutive test set from an SF teacher.
 
-This is intentionally separate from latency-sensitive-bench's canonical
+This is intentionally separate from placeholder's canonical
 dataset exporter. It rolls out the Demon Attack latency-0 teacher, reconstructs
 consecutive raw RGB frames from the env raw-RGB stacks, selects five diverse
 15-frame windows, and renders the current bullet-aware ghost-trail diagnostics
@@ -22,7 +22,7 @@ from PIL import Image
 
 STARVLA_ROOT = Path(__file__).resolve().parents[3]
 NU_ROOT = STARVLA_ROOT.parent
-LATENCY_BENCH_ROOT = NU_ROOT / "latency-sensitive-bench"
+LATENCY_BENCH_ROOT = NU_ROOT / "placeholder"
 if str(STARVLA_ROOT) not in sys.path:
     sys.path.insert(0, str(STARVLA_ROOT))
 if str(LATENCY_BENCH_ROOT) not in sys.path:
@@ -101,7 +101,7 @@ def resolve_checkpoint_root(value: str | None) -> Path:
         "Demon Attack latency-0 checkpoint not found. Checked:\n"
         f"{checked}\n"
         "Download command from Standard Pipeline.md:\n"
-        "  hf download latency-sensitive-bench/latency-checkpoints --repo-type model "
+        "  hf download placeholder/latency-checkpoints --repo-type model "
         '--include "checkpoints_old/demon_attack_sf_same_latency_l0_seed0/**" --local-dir ./'
     )
 

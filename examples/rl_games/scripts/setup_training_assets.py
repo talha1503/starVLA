@@ -23,9 +23,9 @@ STEP_STATE_RE = re.compile(r"steps_(\d+)_state$")
 DEBUG_DATASET_RE = re.compile(r"^(?P<base>.+)(?P<debug>__debug(?:_[A-Za-z0-9_-]+)?_\d+ep)$")
 INITIALIZATION_SOURCE_MODES = {"bridge", "pre-trained", "pretrained", "backbone_bridge_factorized11"}
 DEFAULT_DATASET_SOURCE_SUBDIRS = {
-    "latency-sensitive-bench/flappy_200ep": "flappy_fix_latency_0_200ep",
-    "latency-sensitive-bench/demon_attack_200ep": "demon_attack_fix_latency_0_200ep",
-    "latency-sensitive-bench/deadly_1000ep": "deadly_corridor_fix_latency_0_1000ep",
+    "placeholder/flappy_200ep": "flappy_fix_latency_0_200ep",
+    "placeholder/demon_attack_200ep": "demon_attack_fix_latency_0_200ep",
+    "placeholder/deadly_1000ep": "deadly_corridor_fix_latency_0_1000ep",
 }
 
 
