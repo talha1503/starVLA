@@ -23,7 +23,7 @@ fi
 cd "${CODE_ROOT}/placeholder"
 git config --global url."https://github.com/".insteadOf git@github.com:
 git config --global url."https://github.com/".insteadOf ssh://git@github.com/
-git config -f .gitmodules submodule.flappy-bird-gymnasium.url https://github.com/mindorigin150/flappy-bird-gymnasium.git
+git config -f .gitmodules submodule.flappy-bird-gymnasium.url https://github.com/placeholder/flappy-bird-gymnasium.git
 git submodule sync -- third_party/starVLA third_party/flappy-bird-gymnasium third_party/sample-factory
 git submodule update --init --recursive third_party/starVLA
 git submodule update --init --recursive third_party/sample-factory

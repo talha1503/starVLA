@@ -37,7 +37,7 @@ In StarVLA (also a pun on "start VLA" ),  each functional component (model, data
 
 **[2026/04/09]** 🎯 Thanks to the [RLinf](https://rlinf.readthedocs.io) team, StarVLA now supports **RL post-training**! Check out the [StarVLA × RLinf tutorial](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/starvla.html) to get started.
 
-**[2026/04/09]** 🔥 **WM4A (World Model for Action)** is now integrated! Use pretrained video-generation DiT models (Cosmos-Predict2, Wan2.2) as backbones for action prediction. See [docs/WM4A.md](docs/WM4A.md) for architecture details and training instructions. Pretrained checkpoints are available at the [StarVLA/world-model-to-vla](https://huggingface.co/collections/StarVLA/world-model-to-vla) HuggingFace collection.
+**[2026/04/09]** 🔥 **WM4A (World Model for Action)** is now integrated! Use pretrained video-generation DiT models (Cosmos-Predict2, Wan2.2) as backbones for action prediction. See [docs/WM4A.md](docs/WM4A.md) for architecture details and training instructions. Pretrained checkpoints are available at the [placeholder](https://huggingface.co/collections/placeholder) HuggingFace collection.
 
 
 **[2026/03/29]** 🔥 Thanks to the [ABot-M0](https://github.com/amap-cvlab/ABot-Manipulation) team for providing the [pre-trained weights](https://www.modelscope.cn/models/amap_cvlab/ABot-M0-Pretrain). For `Qwen3-VL 4B`, you can reload the `qwen_vl_interface` module in various frameworks!
@@ -477,7 +477,7 @@ Community contributors are the driving force behind StarVLA's growing ecosystem.
 Thanks to all the people who have contributed to StarVLA:
 
 <a href="https://github.com/placeholder/placeholder/graphs/contributors">
-<img src="https://contrib.rocks/image?repo=starVLA/starVLA&max=100&columns=15" />
+<img src="https://contrib.rocks/image?repo=placeholder/placeholder&max=100&columns=15" />
 </a>
 
 See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines on reporting bugs, proposing features, and submitting PRs.

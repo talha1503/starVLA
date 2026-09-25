@@ -28,7 +28,7 @@ do
   hf download "$repo" --repo-type dataset --local-dir "$DEST/libero/${repo##*/}"
 done
 
-hf download "StarVLA/LLaVA-OneVision-COCO" --repo-type dataset --local-dir "$DEST/LLaVA-OneVision-COCO"
+hf download "placeholder" --repo-type dataset --local-dir "$DEST/LLaVA-OneVision-COCO"
 unzip -- "$DEST/LLaVA-OneVision-COCO/sharegpt4v_coco.zip" -d "$DEST/LLaVA-OneVision-COCO/"
 
 mkdir -p "$CUR/playground/Datasets"

@@ -32,7 +32,7 @@ The VLM data must adhere to the [QwenVL Conversations JSON Data Structure](https
 
 #### Quick Start
 
-You can download our case dataset [LLaVA-OneVision-COCO](https://huggingface.co/datasets/StarVLA/LLaVA-OneVision-COCO).  
+You can download our case dataset [LLaVA-OneVision-COCO](https://huggingface.co/datasets/placeholder).
 Unzip `sharegpt4v_coco.zip` and place it in `playground/Datasets/LLaVA-OneVision-COCO`.
 
 The resulting file structure will look like this:
@@ -117,4 +117,3 @@ This simultaneously trains the model on both robotics (VLA) and multi-modal (VLM
 ```bash
 bash examples/CoTrainVLM/train_files/run_libero_cotrain.sh
 ```
-

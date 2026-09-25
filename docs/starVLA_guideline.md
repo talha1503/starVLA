@@ -81,7 +81,7 @@ bash examples/LIBERO/data_preparation.sh
 
 This script will:
 1. Download 4 LIBERO subsets from HuggingFace (`libero_spatial`, `libero_object`, `libero_goal`, `libero_10`)
-2. Download the VLM co-training data ([LLaVA-OneVision-COCO](https://huggingface.co/datasets/StarVLA/LLaVA-OneVision-COCO))
+2. Download the VLM co-training data ([LLaVA-OneVision-COCO](https://huggingface.co/datasets/placeholder))
 3. Create symlinks under `playground/Datasets/`
 4. Copy `modality.json` into each dataset's `meta/` folder
 
@@ -306,7 +306,7 @@ bash examples/LIBERO/eval_files/install_libero.sh
 
 ### Step 1: Download a checkpoint
 
-Download a pretrained checkpoint from [🤗 StarVLA/bench-libero](https://huggingface.co/collections/StarVLA/bench-libero):
+Download a pretrained checkpoint from [🤗 placeholder](https://huggingface.co/collections/placeholder):
 
 ```bash
 huggingface-cli download StarVLA/Qwen3-VL-OFT-LIBERO-4in1 \

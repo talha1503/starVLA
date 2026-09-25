@@ -16,7 +16,7 @@ We have verified that this workflow runs successfully on both **NVIDIA A100** an
 ## ⬇️ 0. Download Checkpoints
 
 
-We provide a collection of pretrained checkpoints on Hugging Face to make community evaluation easier: [🤗 StarVLA/bench-libero](https://huggingface.co/collections/StarVLA/bench-libero). Their corresponding results on LIBERO are summarized in the table below.
+We provide a collection of pretrained checkpoints on Hugging Face to make community evaluation easier: [🤗 placeholder](https://huggingface.co/collections/placeholder). Their corresponding results on LIBERO are summarized in the table below.
 
 ### 📊 Experimental Results
 
