@@ -60,7 +60,7 @@ Expected on the Vast box:
 Useful overrides:
   BENCH_DIR=/path/to/placeholder
   CONDA_ENV=latency
-  LOCAL_MODEL_ROOT=/mnt/models/paper-experiment-models
+  LOCAL_MODEL_ROOT=/path/to/paper-experiment-models
   OUTPUT_ROOT=/path/to/small_model_rollouts
   NUM_ENVS=24 REPLAY_NUM_ENVS=24 IMAGE_WRITER_WORKERS=24
   FILTER_PRESET=none

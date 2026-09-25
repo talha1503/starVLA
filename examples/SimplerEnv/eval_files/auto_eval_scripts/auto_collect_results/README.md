@@ -106,6 +106,6 @@ DIR_GLOB='0427_oxe_bridge_rt_1_QwenPI_v3' bash summarize_widowx_all.sh
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `ROOT_BASE` | `/mnt/.../results/Checkpoints` | 实验根目录 |
+| `ROOT_BASE` | `/path/to/results/Checkpoints` | 实验根目录 |
 | `DIR_GLOB` | `0427_oxe_bridge_rt_1_QwenPI_v3` | 要扫描的实验 glob |
 | `RM_LOGS` | `false` | 没解析到 success 的日志是否删除 |

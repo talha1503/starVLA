@@ -1417,7 +1417,7 @@ python examples/rl_games/scripts/launch_train.py \
   init=bridge \
   mode=single \
   conda.env_name=starvla_openvla \
-  workspace_dir=/inspire/hdd/project/spatialintelligence/public/lzj/starVLA \
+  workspace_dir=/path/to/workspace/starVLA \
   run_id=openvla_flappy_fix_latency_0 \
   wandb_entity="$WANDB_ENTITY" \
   paths.dataset_local_dir=data/flappy_fix_latency_0_parquet \

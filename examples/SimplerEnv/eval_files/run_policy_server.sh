@@ -6,7 +6,7 @@
 cd /path/to/projects/starVLA
 export star_vla_python=/path/to/conda/envs/starVLA/bin/python
 export sim_python=/path/to/conda/envs/simpler_env/bin/python
-export SimplerEnv_PATH=/project/vonneumann1/anonymous/Projcets/SimplerEnv
+export SimplerEnv_PATH=/path/to/SimplerEnv
 export PYTHONPATH=$(pwd):${PYTHONPATH}
 export LD_LIBRARY_PATH=/path/to/conda/envs/simpler_env/lib:${LD_LIBRARY_PATH}
 port=6678 
