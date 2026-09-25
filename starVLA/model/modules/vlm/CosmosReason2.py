@@ -1,6 +1,6 @@
 # Copyright 2025 starVLA community. All rights reserved.
 # Licensed under the MIT License, Version 1.0 (the "License");
-# Implemented by [Haron Wan / CUHK Shenzhen] in [2026].
+# Implementation details are omitted for anonymous review.
 
 from typing import Optional
 
@@ -155,5 +155,4 @@ if __name__ == "__main__":
     print(SEPARATOR)
 
     print("Done!")
-
 

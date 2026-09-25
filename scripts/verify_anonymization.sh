@@ -38,7 +38,7 @@ check_no_matches() {
   fi
 }
 
-IDENTITY_PATTERN='talha|chafekar|talha1503|talha15032|northwestern|zhejiang|dongqianyu|zihanwang|lixinyuan|mindorigin150|jinhui|junqiu|fangjing|zhijie|gaoning|yejinhui|jiachen|jye624|hkust|fudan|sust|lxh|cyx|pku\.edu|gmail\.com|outlook\.com|163\.com'
+IDENTITY_PATTERN='talha|chafekar|talha1503|talha15032|northwestern|zhejiang|dongqianyu|zihanwang|lixinyuan|mindorigin150|haron|CUHK|jinhui|junqiu|fangjing|zhijie|gaoning|yejinhui|jiachen|jye624|hkust|fudan|sust|lxh|cyx|pku\.edu|gmail\.com|outlook\.com|163\.com'
 
 PATH_PATTERN='(/Users/|/home/[A-Za-z0-9_.-]+|/mnt/[A-Za-z0-9_.-]+|/gpfs/|/project/|/pfs/users/|/inspire/hdd/project/)'
 
