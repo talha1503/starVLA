@@ -1,4 +1,4 @@
-# Copyright 2025 starVLA community. All rights reserved.
+# Copyright 2025 Anonymous Authors. All rights reserved.
 # Licensed under the MIT License.
 
 """Component-based Control-Critical F1 (CC-F1) for discrete-action RL-games val.

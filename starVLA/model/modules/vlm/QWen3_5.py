@@ -1,4 +1,4 @@
-# Copyright 2025 starVLA community. All rights reserved.
+# Copyright 2025 Anonymous Authors. All rights reserved.
 # Licensed under the MIT License, Version 1.0 (the "License");
 # Implemented by [Shijie LIAN/ Huazhong University of Science & Technology] in [2026].
 # Design and Merged by [Anonymous Author / Anonymous Institution] in [2026].

@@ -38,11 +38,11 @@ check_no_matches() {
   fi
 }
 
-IDENTITY_PATTERN='talha|chafekar|talha1503|talha15032|northwestern|zhejiang|dongqianyu|zihanwang|lixinyuan|mindorigin150|haron|CUHK|jinhui|junqiu|fangjing|zhijie|gaoning|yejinhui|jiachen|jye624|hkust|fudan|sust|lxh|cyx|pku\.edu|gmail\.com|outlook\.com|163\.com'
+IDENTITY_PATTERN='talha|chafekar|talha1503|talha15032|northwestern|zhejiang|dongqianyu|zihanwang|lixinyuan|mindorigin150|haron|CUHK|jinhui|junqiu|fangjing|zhijie|gaoning|yejinhui|jiachen|jye624|hkust|fudan|sust|lxh|cyx|pku\.edu|gmail\.com|outlook\.com|163\.com|StarVLA Team|starVLA community'
 
 PATH_PATTERN='(/Users/|/home/[A-Za-z0-9_.-]+|/mnt/[A-Za-z0-9_.-]+|/gpfs/|/project/|/pfs/users/|/inspire/hdd/project/)'
 
-PUBLIC_LINK_PATTERN='talha1503/|talha15032/|latency-sensitive-bench|anonymous-latency-bench|anonymous-iclr|starvla\.github\.io|github\.com/starVLA/starVLA|repo=starVLA/starVLA|huggingface\.co/(collections/StarVLA|datasets/StarVLA|StarVLA)|huggingface\.co/[^[:space:]\)\"<>]*StarVLA|Simplicissimus-S|arxiv\.org/abs/2604'
+PUBLIC_LINK_PATTERN='talha1503/|talha15032/|latency-sensitive-bench|anonymous-latency-bench|anonymous-iclr|starvla\.github\.io|github\.com/starVLA/starVLA|repo=starVLA/starVLA|huggingface\.co/(collections/StarVLA|datasets/StarVLA|StarVLA)|huggingface\.co/[^[:space:]\)\"<>]*StarVLA|Simplicissimus-S|arxiv\.org/abs/2604|overleaf\.com/read'
 
 EMAIL_PATTERN='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
 

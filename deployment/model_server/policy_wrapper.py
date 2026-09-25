@@ -1,4 +1,4 @@
-# Copyright 2025 starVLA community. All rights reserved.
+# Copyright 2025 Anonymous Authors. All rights reserved.
 # Licensed under the MIT License.
 """Policy server wrapper.
 

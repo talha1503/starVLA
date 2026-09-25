@@ -1,4 +1,4 @@
-# Copyright 2025 starVLA community. All rights reserved.
+# Copyright 2025 Anonymous Authors. All rights reserved.
 # Licensed under the MIT License, Version 1.0 (the "License");
 """
 CosmoPredict2-OFT Framework — World Model + MLP Regression for Action Prediction.

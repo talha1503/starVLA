@@ -407,7 +407,7 @@ python examples/rl_games/scripts/launch_train.py \
 
 </details>
 
-We have more results for RoboCasa, RoboTwin 2.0, Behavior-1k, Calvin. See our [🍀 Overleaf](https://www.overleaf.com/read/qqtwrnprctkf#d5bdce), which continuously presents our real-time experimental results.
+We have more results for RoboCasa, RoboTwin 2.0, Behavior-1k, Calvin. See our [🍀 Overleaf](https://placeholder.example.com/anonymous-results), which continuously presents our real-time experimental results.
 
 ---
 
