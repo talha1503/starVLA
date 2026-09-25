@@ -9,7 +9,11 @@ fi
 cd "$ROOT"
 
 FAIL=0
-RG_COMMON=(--hidden --glob '!.git/**' --glob '!scripts/verify_anonymization.sh')
+IN_GIT_REPO=0
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  IN_GIT_REPO=1
+fi
+RG_COMMON=(--hidden --no-ignore --glob '!.git/**' --glob '!*.zip' --glob '!*.tar' --glob '!*.tar.gz' --glob '!scripts/verify_anonymization.sh')
 
 check_no_matches() {
   local label="$1"
@@ -73,7 +77,9 @@ fi
 
 echo
 echo "== Git whitespace check =="
-if git diff --check; then
+if [[ "$IN_GIT_REPO" -eq 0 ]]; then
+  echo "OK: skipped outside a git repository."
+elif git diff --check; then
   echo "OK: git diff --check passed."
 else
   echo "FAIL: git diff --check found issues."

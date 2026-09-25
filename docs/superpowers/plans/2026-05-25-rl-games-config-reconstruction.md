@@ -114,7 +114,7 @@ SUPPORTED_COMPOSITIONS: tuple[ExpectedComposition, ...] = (
         action_carrier="native",
         latency_values=(0,),
         data_mix="flappy_train",
-        source_hf="talha1503/flappy_bird_zero_latency_parquet",
+        source_hf="placeholder/flappy_bird_zero_latency_parquet",
         action_env_dim=2,
         base_model_repo_id="StarVLA/Qwen3-VL-4B-Instruct-Action",
         initialization_hf_repo_id=None,
@@ -130,7 +130,7 @@ SUPPORTED_COMPOSITIONS: tuple[ExpectedComposition, ...] = (
         action_carrier="bridge",
         latency_values=(0,),
         data_mix="flappy_train",
-        source_hf="talha1503/flappy_bird_zero_latency_parquet",
+        source_hf="placeholder/flappy_bird_zero_latency_parquet",
         action_env_dim=2,
         base_model_repo_id="Qwen/Qwen3-VL-4B-Instruct",
         initialization_hf_repo_id="StarVLA/Qwen3VL-OFT-Bridge-RT-1",
@@ -146,7 +146,7 @@ SUPPORTED_COMPOSITIONS: tuple[ExpectedComposition, ...] = (
         action_carrier="bridge",
         latency_values=(0,),
         data_mix="demon_attack_train",
-        source_hf="talha1503/demon_attack_zero_latency_parquet",
+        source_hf="placeholder/demon_attack_zero_latency_parquet",
         action_env_dim=6,
         base_model_repo_id="StarVLA/Qwen2.5-VL-3B-Instruct-Action",
         initialization_hf_repo_id="StarVLA/Qwen-PI-Bridge-RT-1",
@@ -162,7 +162,7 @@ SUPPORTED_COMPOSITIONS: tuple[ExpectedComposition, ...] = (
         action_carrier="bridge",
         latency_values=(0, 1, 2, 3, 4, 5),
         data_mix="deadly_corridor_mixed_latency_train",
-        source_hf="latency-sensitive-bench/deadly_corridor_mixed_latency_parquet",
+        source_hf="placeholder/deadly_corridor_mixed_latency_parquet",
         action_env_dim=7,
         base_model_repo_id="Qwen/Qwen3-VL-4B-Instruct",
         initialization_hf_repo_id="StarVLA/Qwen3VL-PI_v3-Bridge-RT_1",
@@ -178,7 +178,7 @@ SUPPORTED_COMPOSITIONS: tuple[ExpectedComposition, ...] = (
         action_carrier="native",
         latency_values=(0, 1, 2, 3, 4, 5),
         data_mix="deadly_corridor_mixed_latency_train",
-        source_hf="latency-sensitive-bench/deadly_corridor_mixed_latency_parquet",
+        source_hf="placeholder/deadly_corridor_mixed_latency_parquet",
         action_env_dim=7,
         base_model_repo_id="StarVLA/Qwen3-VL-4B-Instruct-Action",
         initialization_hf_repo_id=None,
@@ -486,8 +486,8 @@ rl_games:
     task_description: ""
 
 dataset:
-  single_source_hf: talha1503/flappy_bird_zero_latency_parquet
-  mixed_source_hf: talha1503/flappy_bird_mixed_latency_parquet
+  single_source_hf: placeholder/flappy_bird_zero_latency_parquet
+  mixed_source_hf: placeholder/flappy_bird_mixed_latency_parquet
   single_converted_name: flappy_train
   mixed_converted_name: flappy_mixed_latency_train
   single_latency_filter: null
@@ -513,8 +513,8 @@ rl_games:
     task_description: "You are playing Demon Attack from a single game image. Choose exactly one action from: NOOP, FIRE, RIGHT, LEFT, RIGHTFIRE, LEFTFIRE."
 
 dataset:
-  single_source_hf: talha1503/demon_attack_zero_latency_parquet
-  mixed_source_hf: talha1503/demon_attack_mixed_latency_parquet
+  single_source_hf: placeholder/demon_attack_zero_latency_parquet
+  mixed_source_hf: placeholder/demon_attack_mixed_latency_parquet
   single_converted_name: demon_attack_train
   mixed_converted_name: demon_attack_mixed_latency_train
   single_latency_filter: null
@@ -542,8 +542,8 @@ rl_games:
       action_layout: multibinary_7
 
 dataset:
-  single_source_hf: latency-sensitive-bench/deadly_corridor_mixed_latency_parquet
-  mixed_source_hf: latency-sensitive-bench/deadly_corridor_mixed_latency_parquet
+  single_source_hf: placeholder/deadly_corridor_mixed_latency_parquet
+  mixed_source_hf: placeholder/deadly_corridor_mixed_latency_parquet
   single_converted_name: deadly_corridor_train
   mixed_converted_name: deadly_corridor_mixed_latency_train
   single_latency_filter: [0]
@@ -1036,7 +1036,7 @@ def test_launch_train_setup_namespace_uses_composed_hydra_config(tmp_path: Path)
             "base_model_dir": "playground/Pretrained_models/Qwen3-VL-4B-Instruct",
         },
         "dataset": {
-            "source_hf": "talha1503/flappy_bird_zero_latency_parquet",
+            "source_hf": "placeholder/flappy_bird_zero_latency_parquet",
             "converted_name": "flappy_train",
             "force_download": False,
             "setup_force": False,
