@@ -133,6 +133,7 @@ def decode_rl_games_actions(
     decoder = {
         "flappy": lambda: (_decode_discrete(raw_scores, 2), "rl_games_discrete_id"),
         "demon_attack": lambda: (_decode_discrete(raw_scores, 6), "rl_games_discrete_id"),
+        "air_raid": lambda: (_decode_discrete(raw_scores, 6), "rl_games_discrete_id"),
         "defend_the_line": lambda: (_decode_discrete(raw_scores, 6), "rl_games_defend_the_line_joint_6"),
         "asterix": lambda: decode_asterix_actions(raw_scores, action_layout=asterix_action_layout),
         "atlantis": lambda: (_decode_discrete(raw_scores, 4), "rl_games_discrete_id"),
