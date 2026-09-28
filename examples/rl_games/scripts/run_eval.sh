@@ -128,18 +128,26 @@ fi
 if [[ -n "$MAX_STEPS_PER_EPISODE" ]]; then
   CMD+=(--max-steps-per-episode "$MAX_STEPS_PER_EPISODE")
 fi
-for item in "${TASK_LATENCIES[@]}"; do
-  CMD+=(--task-latencies "$item")
-done
-for item in "${TASK_NUM_EPISODES[@]}"; do
-  CMD+=(--task-num-episodes "$item")
-done
-for item in "${TASK_MAX_STEPS_PER_EPISODE[@]}"; do
-  CMD+=(--task-max-steps-per-episode "$item")
-done
-for item in "${OVERRIDES[@]}"; do
-  CMD+=(--override "$item")
-done
+if [[ ${#TASK_LATENCIES[@]} -gt 0 ]]; then
+  for item in "${TASK_LATENCIES[@]}"; do
+    CMD+=(--task-latencies "$item")
+  done
+fi
+if [[ ${#TASK_NUM_EPISODES[@]} -gt 0 ]]; then
+  for item in "${TASK_NUM_EPISODES[@]}"; do
+    CMD+=(--task-num-episodes "$item")
+  done
+fi
+if [[ ${#TASK_MAX_STEPS_PER_EPISODE[@]} -gt 0 ]]; then
+  for item in "${TASK_MAX_STEPS_PER_EPISODE[@]}"; do
+    CMD+=(--task-max-steps-per-episode "$item")
+  done
+fi
+if [[ ${#OVERRIDES[@]} -gt 0 ]]; then
+  for item in "${OVERRIDES[@]}"; do
+    CMD+=(--override "$item")
+  done
+fi
 if [[ "$PRINT_PLAN_ONLY" == "true" ]]; then
   CMD+=(--print-plan-only)
 fi

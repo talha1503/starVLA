@@ -393,9 +393,19 @@ def main():
         base_model_repo_override=args.base_model_repo_id,
     )
 
-    from starVLA.model.framework.share_tools import apply_config_compat
+    try:
+        from starVLA.model.framework.share_tools import apply_config_compat
 
-    cfg = apply_config_compat(cfg)
+        cfg = apply_config_compat(cfg)
+    except Exception as exc:
+        missing_runtime_dep = isinstance(exc, (ImportError, ModuleNotFoundError)) or "No module named" in str(exc)
+        if not args.print_plan_only or not missing_runtime_dep:
+            raise
+        print(
+            "[warn] skipping config compatibility normalization in print-plan-only "
+            f"because the local environment is missing a runtime dependency: {exc}",
+            file=sys.stderr,
+        )
     _print_eval_plan(cfg, args.stage)
     if args.print_plan_only:
         return

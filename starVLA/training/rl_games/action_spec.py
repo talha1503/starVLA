@@ -54,6 +54,8 @@ def _env_action_dim(cfg):
         return 2
     if task == "demon_attack":
         return 6
+    if task == "air_raid":
+        return 6
     if task == "defend_the_line":
         return 6
     if task == "asterix":

@@ -119,6 +119,17 @@ def test_task_evaluator_uses_shared_deadly_multibinary_decode():
     assert action == [1, 0, 1, 0, 1, 0, 1]
 
 
+def test_task_evaluator_decodes_air_raid_six_action_space():
+    evaluator = object.__new__(_TaskEvaluator)
+    evaluator.task = "air_raid"
+
+    action = evaluator._decode_action(
+        np.asarray([0.1, 0.2, 0.3, 0.9, 0.4, 0.5, 99.0], dtype=np.float32)
+    )
+
+    assert action == 3
+
+
 def test_action_latency_queue():
     queue = ActionLatencyQueue(latency=2, default_action=0)
     queue.reset()
@@ -195,8 +206,8 @@ def test_task_evaluator_latency_neutral_prompt_mode_strips_prompt_map_prompts(tm
         }
     )
 
-    evaluator = _TaskEvaluator(task="flappy", cfg=cfg)
-    assert evaluator._resolve_prompt(latency=0, mapping={0: {"prompt": "zero Current action latency is 0 raw frames (0.00 ms)."}}, task="flappy") == "zero"
+    runner = RlGamesEvalRunner(cfg=cfg, output_dir=str(tmp_path))
+    assert runner._resolve_prompt(latency=0, mapping={0: {"prompt": "zero Current action latency is 0 raw frames (0.00 ms)."}}, task="flappy") == "zero"
 
 
 def test_cross_task_prompt_resolution_uses_task_description_for_unmapped_latency(tmp_path):
@@ -232,9 +243,9 @@ def test_cross_task_prompt_resolution_uses_task_description_for_unmapped_latency
         }
     )
 
-    evaluator = _TaskEvaluator(task="defend_the_line", cfg=cfg)
+    runner = RlGamesEvalRunner(cfg=cfg, output_dir=str(tmp_path))
 
-    assert evaluator._resolve_prompt(latency=2, mapping={0: {"prompt": "zero latency prompt"}}, task="defend_the_line") == "Defend the line fallback prompt."
+    assert runner._resolve_prompt(latency=2, mapping={0: {"prompt": "zero latency prompt"}}, task="defend_the_line") == "Defend the line fallback prompt."
 
 
 def test_task_evaluator_reuses_episode_seeds_across_tasks_and_latencies_by_default():
@@ -356,6 +367,24 @@ class _FakeDemonAttackEnv:
         return "noop_obs", 0.0, False, False, {"noop": True}
 
 
+class _FakeAirRaidEnv:
+    def __init__(self):
+        self.np_random = _FixedRng(value=2)
+        self.reset_calls = []
+        self.step_actions = []
+
+    def reset(self, **kwargs):
+        self.reset_calls.append(kwargs)
+        return np.zeros((250, 160, 3), dtype=np.uint8), {"reset": True}
+
+    def step(self, action):
+        self.step_actions.append(action)
+        return np.zeros((250, 160, 3), dtype=np.uint8), 0.0, False, False, {"action": action}
+
+    def render(self):
+        return np.zeros((250, 160, 3), dtype=np.uint8)
+
+
 def test_demon_attack_env_uses_noop_reset_max_30_by_default(monkeypatch):
     fake_env = _FakeDemonAttackEnv()
     fake_gym = types.SimpleNamespace(make=lambda *args, **kwargs: fake_env)
@@ -384,6 +413,114 @@ def test_demon_attack_env_uses_noop_reset_max_30_by_default(monkeypatch):
     assert info == {"noop": True}
     assert fake_env.reset_calls == [{"seed": 42}]
     assert fake_env.step_actions == [0] * 30
+
+
+def test_air_raid_env_uses_pal_native_frameskip_and_fire_reset(monkeypatch):
+    fake_env = _FakeAirRaidEnv()
+    captured = {}
+
+    def fake_make(env_id, **kwargs):
+        captured["env_id"] = env_id
+        captured["kwargs"] = kwargs
+        return fake_env
+
+    fake_gym = types.SimpleNamespace(make=fake_make)
+    monkeypatch.setitem(sys.modules, "gymnasium", fake_gym)
+    monkeypatch.setitem(sys.modules, "ale_py", types.SimpleNamespace())
+    cfg = OmegaConf.create(
+        {
+            "rl_games": {
+                "env_eval": {
+                    "frameskip": 4,
+                    "atari": {
+                        "env_id": "ALE/AirRaid-v5",
+                        "gym_frameskip": 1,
+                        "noop_max": 30,
+                        "fire_reset": True,
+                        "mode": 1,
+                        "difficulty": 0,
+                        "repeat_action_probability": 0.0,
+                        "full_action_space": False,
+                        "max_num_frames_per_episode": 108000,
+                    },
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+    evaluator = _TaskEvaluator(task="air_raid", cfg=cfg)
+    env = evaluator._make_env()
+    env.reset(seed=7)
+
+    assert captured["env_id"] == "ALE/AirRaid-v5"
+    assert captured["kwargs"] == {
+        "obs_type": "rgb",
+        "frameskip": 1,
+        "repeat_action_probability": 0.0,
+        "full_action_space": False,
+        "mode": 1,
+        "difficulty": 0,
+        "render_mode": "rgb_array",
+        "max_num_frames_per_episode": 108000,
+    }
+    assert fake_env.reset_calls == [{"seed": 7}]
+    assert fake_env.step_actions == [0, 0, 1, 2]
+
+
+def test_air_raid_eval_steps_four_raw_frames_per_policy_decision():
+    fake_env = _FakeAirRaidEnv()
+    cfg = OmegaConf.create(
+        {
+            "rl_games": {
+                "env_eval": {
+                    "frameskip": 4,
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+    evaluator = _TaskEvaluator(task="air_raid", cfg=cfg)
+
+    evaluator._step_env_once(fake_env, action=5)
+
+    assert fake_env.step_actions == [5, 5, 5, 5]
+
+
+def test_air_raid_prompt_fallback_matches_latency_bench_contract():
+    cfg = OmegaConf.create(
+        {
+            "rl_games": {
+                "task": "air_raid",
+                "env_eval": {
+                    "prompt_mode": "default",
+                    "latency": {
+                        "prompt_map_path": None,
+                    },
+                },
+            },
+            "framework": {
+                "action_model": {
+                    "state_dim": 1,
+                },
+            },
+        }
+    )
+
+    runner = RlGamesEvalRunner(cfg=cfg, output_dir="/tmp/air_raid_eval_test")
+
+    assert runner._resolve_prompt(latency=0, mapping={}, task="air_raid") == (
+        "Protect both buildings from flying saucers. Choose exactly one action from: "
+        "noop, fire, right, left, rightfire, leftfire."
+    )
 
 
 class _OneStepEnv:

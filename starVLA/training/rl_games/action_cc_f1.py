@@ -179,6 +179,17 @@ def get_spec(task: str, deadly_layout: str = DEADLY_FACTORIZED_11) -> CCF1Spec:
             cc_key="demon_cc_f1",
             default_k=1,
         )
+    if task == "air_raid":
+        return CCF1Spec(
+            task="air_raid",
+            comp_fn=_comp_demon,
+            labels={"fire": "air_raid_fire", "left": "air_raid_left", "right": "air_raid_right"},
+            groups={"fire": ["fire"], "move": ["left", "right"]},
+            group_labels={"fire": "air_raid_fire", "move": "air_raid_move"},
+            group_weights={"fire": 0.7, "move": 0.3},
+            cc_key="air_raid_cc_f1",
+            default_k=1,
+        )
     if task == "deadly_corridor":
         if deadly_layout == DEADLY_MULTIBINARY_7:
             comp_fn = _comp_deadly_multibinary
@@ -227,7 +238,7 @@ def get_spec(task: str, deadly_layout: str = DEADLY_FACTORIZED_11) -> CCF1Spec:
     raise ValueError(f"No CC-F1 spec for task {task!r}")
 
 
-SUPPORTED_TASKS = ("flappy", "demon_attack", "defend_the_line", "deadly_corridor")
+SUPPORTED_TASKS = ("flappy", "demon_attack", "air_raid", "defend_the_line", "deadly_corridor")
 
 
 # --------------------------------------------------------------------------- #

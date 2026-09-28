@@ -16,6 +16,7 @@ from tqdm import tqdm
 from starVLA.training.rl_games.action_decode import (
     DEADLY_CORRIDOR_SEMANTIC_BUTTON_ORDER,
     decode_defend_the_line_multibinary,
+    decode_defend_the_line_tuple,
     deadly_tuple_to_semantic_buttons,
     decode_deadly_factorized_11,
     decode_deadly_multibinary_7,
@@ -32,6 +33,7 @@ TASK_SEED_INDEX = {
     "defend_the_line": 3,
     "asterix": 4,
     "atlantis": 5,
+    "air_raid": 6,
 }
 
 DEFAULT_VIDEO_FPS = 30
@@ -63,25 +65,31 @@ class ActionLatencyQueue:
         return self.current_action
 
 
-class DemonAttackNoopResetWrapper:
-    def __init__(self, env: Any, noop_max: int):
+class AtariResetWrapper:
+    def __init__(self, env: Any, noop_max: int, *, fire_reset: bool = False):
         self.env = env
         self.noop_max = int(noop_max)
+        self.fire_reset = bool(fire_reset)
 
     def reset(self, **kwargs: Any) -> tuple[Any, Dict[str, Any]]:
         obs, info = self.env.reset(**kwargs)
         if self.noop_max <= 0:
-            return obs, info
+            pass
+        else:
+            np_random = getattr(self.env, "np_random", None)
+            if np_random is None or not hasattr(np_random, "integers"):
+                raise RuntimeError("Atari no-op reset requires env.np_random with an integers method")
 
-        np_random = getattr(self.env, "np_random", None)
-        if np_random is None or not hasattr(np_random, "integers"):
-            raise RuntimeError("Demon Attack no-op reset requires env.np_random with an integers method")
-
-        noops = int(np_random.integers(1, self.noop_max + 1))
-        for _ in range(noops):
-            obs, _, terminated, truncated, info = self.env.step(0)
-            if terminated or truncated:
-                obs, info = self.env.reset(**kwargs)
+            noops = int(np_random.integers(1, self.noop_max + 1))
+            for _ in range(noops):
+                obs, _, terminated, truncated, info = self.env.step(0)
+                if terminated or truncated:
+                    obs, info = self.env.reset(**kwargs)
+        if self.fire_reset:
+            for fire_action in (1, 2):
+                obs, _, terminated, truncated, info = self.env.step(fire_action)
+                if terminated or truncated:
+                    obs, info = self.env.reset(**kwargs)
         return obs, info
 
     def step(self, action: Any) -> tuple[Any, float, bool, bool, Dict[str, Any]]:
@@ -95,6 +103,10 @@ class DemonAttackNoopResetWrapper:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.env, name)
+
+
+# Backward-compatible name used by downstream alignment tests.
+DemonAttackNoopResetWrapper = AtariResetWrapper
 
 
 @dataclass
@@ -464,17 +476,29 @@ class _TaskEvaluator:
         atari_cfg = getattr(self.env_eval_cfg, "atari", None)
         env_id = str(getattr(atari_cfg, "env_id", None) or default_env_id)
         noop_max = _as_int(getattr(atari_cfg, "noop_max", None), 30)
+        gym_frameskip = _as_int(getattr(atari_cfg, "gym_frameskip", None), self.frameskip)
+        mode = _as_int(getattr(atari_cfg, "mode", None), 0)
+        difficulty = _as_int(getattr(atari_cfg, "difficulty", None), 0)
+        repeat_action_probability = float(getattr(atari_cfg, "repeat_action_probability", 0.0))
+        full_action_space = _as_bool(getattr(atari_cfg, "full_action_space", False), default=False)
+        fire_reset = _as_bool(getattr(atari_cfg, "fire_reset", False), default=False)
+        gym_kwargs = {
+            "obs_type": "rgb",
+            "frameskip": gym_frameskip,
+            "repeat_action_probability": repeat_action_probability,
+            "full_action_space": full_action_space,
+            "mode": mode,
+            "difficulty": difficulty,
+            "render_mode": "rgb_array",
+        }
+        max_episode_frames = getattr(atari_cfg, "max_num_frames_per_episode", None)
+        if max_episode_frames not in (None, ""):
+            gym_kwargs["max_num_frames_per_episode"] = int(max_episode_frames)
         env = gym.make(
             env_id,
-            obs_type="rgb",
-            frameskip=self.frameskip,
-            repeat_action_probability=0.0,
-            full_action_space=False,
-            mode=0,
-            difficulty=0,
-            render_mode="rgb_array",
+            **gym_kwargs,
         )
-        return DemonAttackNoopResetWrapper(env=env, noop_max=noop_max)
+        return AtariResetWrapper(env=env, noop_max=noop_max, fire_reset=fire_reset)
 
     def _make_env(self):
         if self.task == "flappy":
@@ -503,7 +527,7 @@ class _TaskEvaluator:
                         repeat_action_probability=0.0,
                         render_mode="rgb_array",
                     )
-                    return DemonAttackNoopResetWrapper(env=env, noop_max=noop_max)
+                    return AtariResetWrapper(env=env, noop_max=noop_max)
                 except Exception as exc:
                     last_exc = exc
             raise RuntimeError(f"Failed to create DemonAttack env: {last_exc}")
@@ -560,6 +584,9 @@ class _TaskEvaluator:
         if self.task == "atlantis":
             return self._make_atari_env("ALE/Atlantis-v5")
 
+        if self.task == "air_raid":
+            return self._make_atari_env("ALE/AirRaid-v5")
+
         raise ValueError(f"Unsupported task: {self.task}")
 
     def _is_demon_ghost_trail(self) -> bool:
@@ -582,7 +609,7 @@ class _TaskEvaluator:
             if frame is None:
                 return obs
             return frame
-        if self.task in {"asterix", "atlantis"}:
+        if self.task in {"asterix", "atlantis", "air_raid"}:
             frame = env.render()
             if frame is None:
                 frame = obs
@@ -593,6 +620,8 @@ class _TaskEvaluator:
         if self.task == "flappy":
             return decode_discrete_argmax(raw_action, 2)
         if self.task == "demon_attack":
+            return decode_discrete_argmax(raw_action, 6)
+        if self.task == "air_raid":
             return decode_discrete_argmax(raw_action, 6)
         if self.task == "asterix":
             asterix_cfg = getattr(self.env_eval_cfg, "asterix", None)
@@ -1267,6 +1296,11 @@ class RlGamesEvalRunner:
         if task == "demon_attack":
             return _apply_prompt_mode(
                 "You are playing Demon Attack from a single game image. Choose exactly one action from: NOOP, FIRE, RIGHT, LEFT, RIGHTFIRE, LEFTFIRE.",
+                self.prompt_mode,
+            )
+        if task == "air_raid":
+            return _apply_prompt_mode(
+                "Protect both buildings from flying saucers. Choose exactly one action from: noop, fire, right, left, rightfire, leftfire.",
                 self.prompt_mode,
             )
         if task == "deadly_corridor":
