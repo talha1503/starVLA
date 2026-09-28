@@ -182,6 +182,7 @@ add_common_eval_args() {
     --override "rl_games.env_eval.mid_train.enabled=false"
     --override "rl_games.env_eval.post_train.enabled=true"
     --override "rl_games.env_eval.frameskip=4"
+    --override "rl_games.env_eval.latency.prompt_map_path=null"
   )
   if [[ -n "${GPUS}" ]]; then
     EVAL_ARGS+=(--gpus "${GPUS}")
