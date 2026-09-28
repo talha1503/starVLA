@@ -133,7 +133,6 @@ class WanOFTDefaultConfig:
             "past_action_window_size": 0,
             "loss_type": "l1",
             "state_encoding": "discretized_text",
-            "task_objective": None,
             "class_weights": None,
             "future_loss_weight": None,
             "action_query_source": "mean",
@@ -178,13 +177,6 @@ class Wan_OFT(baseframework):
                 self.config.framework.action_model.state_dim,
                 wm_hidden,
             )
-        task_objective_config = self.config.framework.action_model.task_objective
-        if task_objective_config is None:
-            self.task_objective = None
-        else:
-            from latency_bench.policy.starvla_task_objective import TaskActionObjective
-
-            self.task_objective = TaskActionObjective(task_objective_config)
         self.action_query_source = str(self.config.framework.action_model.action_query_source).strip().lower()
 
         self.action_query_proj = nn.Linear(wm_hidden, self.chunk_len * wm_hidden)  # Project into a two-layer MLP
@@ -415,8 +407,6 @@ class Wan_OFT(baseframework):
             actions_target = actions[:, -self.action_horizon :, :]
 
             action_loss = self._compute_action_loss(pred_actions, actions_target)
-            if self.task_objective is not None:
-                action_loss = action_loss + self.task_objective(pred_actions, examples)
 
         return {"action_loss": action_loss, "loss_weight": float(len(examples))}
 

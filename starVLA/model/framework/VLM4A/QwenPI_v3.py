@@ -110,7 +110,6 @@ class QwenPI_v3DefaultConfig:
             # Keep the released text-bin path as the default; task configs can
             # use the action head's native continuous state encoder instead.
             "state_encoding": "discretized_text",
-            "task_objective": None,
             # Canonical chunk length (number of action steps the head predicts).
             # Legacy YAMLs may use future_action_window_size = action_horizon - 1;
             # apply_config_compat normalises both directions.
@@ -239,13 +238,6 @@ class Qwen_PI_v3(baseframework):
         # only ever read `action_horizon` here.
         self.action_horizon = int(self.config.framework.action_model.action_horizon)
         self.state_encoding = self.config.framework.action_model.state_encoding
-        task_objective_config = self.config.framework.action_model.task_objective
-        if task_objective_config is None:
-            self.task_objective = None
-        else:
-            from latency_bench.policy.starvla_task_objective import TaskActionObjective
-
-            self.task_objective = TaskActionObjective(task_objective_config)
 
     def _project_vl_hidden_for_action(self, vl_embs_list: List[torch.Tensor]) -> List[torch.Tensor]:
         """Project layer-wise VL hidden states to the hidden space expected by Action DiT."""
@@ -343,22 +335,13 @@ class Qwen_PI_v3(baseframework):
                 state = torch.tensor(np.array(state), device=base_hidden.device, dtype=base_hidden.dtype)
                 state_repeated = state.repeat(repeated_diffusion_steps, 1, 1)
 
-            action_result = self.action_model(
+            action_loss = self.action_model(
                 vl_embs_list_repeated,
                 actions_target_repeated,
                 state_repeated,
-                return_clean_actions=self.task_objective is not None,
                 action_prefix_mask=action_prefix_mask,
                 action_loss_mask=action_loss_mask,
             )
-            if self.task_objective is None:
-                action_loss = action_result
-            else:
-                action_loss, clean_actions = action_result
-                action_loss = action_loss + self.task_objective(
-                    clean_actions,
-                    examples * repeated_diffusion_steps,
-                )
 
         return {"action_loss": action_loss, "loss_weight": float(len(examples))}
 

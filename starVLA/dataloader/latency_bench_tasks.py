@@ -81,7 +81,6 @@ def _configured_data_cfg(data_cfg: Any) -> Any:
     contract = json.loads(Path(cfg["task_contract_path"]).expanduser().read_text(encoding="utf-8"))
     _register_contract(contract)
     cfg.include_state = True
-    cfg.include_action_target = True
     cfg.auxiliary_fields = {
         name: value["column"]
         for name, value in contract["auxiliary"].items()

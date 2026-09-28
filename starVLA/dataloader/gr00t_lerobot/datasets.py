@@ -1402,15 +1402,8 @@ class LeRobotSingleDataset(Dataset):
         """
         trajectory_id, base_index = self.all_steps[index]
         raw_data = self.get_step_data(trajectory_id, base_index)
-        raw_action_target = None
-        if self.data_cfg is not None and self.data_cfg.get("include_action_target", False):
-            raw_action_target = _concatenate_action_fields(
-                raw_data, self.modality_keys["action"]
-            ).astype(np.float32)
         data = self.transforms(raw_data)
         sample = self._pack_sample(data, trajectory_id=trajectory_id, base_index=base_index)
-        if raw_action_target is not None:
-            sample["action_target"] = raw_action_target
         self._attach_rl_games_metadata(sample, base_index)
         return sample
 
@@ -2927,15 +2920,8 @@ class LeRobotMixtureDataset(Dataset):
                     index = random.randint(0, len(self) - 1)
                     
                 raw_data = dataset.get_step_data(trajectory_id, step)
-                raw_action_target = None
-                if dataset.data_cfg is not None and dataset.data_cfg.get("include_action_target", False):
-                    raw_action_target = _concatenate_action_fields(
-                        raw_data, dataset.modality_keys["action"]
-                    ).astype(np.float32)
                 data = dataset.transforms(raw_data)
                 sample = dataset._pack_sample(data, trajectory_id=trajectory_id, base_index=step)
-                if raw_action_target is not None:
-                    sample["action_target"] = raw_action_target
                 dataset._attach_rl_games_metadata(sample, step)
                 
                 return sample

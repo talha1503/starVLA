@@ -290,7 +290,6 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
         vl_embs_list: list,
         actions: torch.Tensor,
         state: torch.Tensor = None,
-        return_clean_actions: bool = False,
         action_prefix_mask: torch.Tensor = None,
         action_loss_mask: torch.Tensor = None,
     ):
@@ -358,9 +357,6 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
         pred_loss = pred_actions[..., :effective_dim]
         target_loss = velocity[..., :effective_dim]
         loss = masked_action_loss(pred_loss, target_loss, action_loss_mask)
-        if return_clean_actions:
-            clean_actions = noisy_trajectory + (1 - action_time[..., None]) * pred_actions
-            return loss, clean_actions
         return loss
 
     @torch.no_grad()
