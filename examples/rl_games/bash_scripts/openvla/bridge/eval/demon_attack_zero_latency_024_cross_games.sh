@@ -119,7 +119,7 @@ add_common_eval_args() {
     --wandb-enabled "${WANDB_ENABLED}"
     --workspace-dir "${WORKSPACE_DIR}"
     --base-model-repo-id "Qwen/Qwen3-VL-4B-Instruct"
-    --override "rl_games.env_eval.eval_backend=eval_core"
+    --override "rl_games.env_eval.eval_backend=latency_bench"
     --override "rl_games.env_eval.mid_train.enabled=false"
     --override "rl_games.env_eval.post_train.enabled=true"
     --override "rl_games.env_eval.frameskip=4"

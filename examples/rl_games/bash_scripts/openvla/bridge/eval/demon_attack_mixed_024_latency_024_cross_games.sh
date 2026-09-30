@@ -127,7 +127,7 @@ overrides = [
     "datasets.vla_data.shuffle=true",
     "trainer.per_latency_eval_num_batches=5",
     "dataset.episodes_per_latency=40",
-    "rl_games.env_eval.eval_backend=eval_core",
+    "rl_games.env_eval.eval_backend=latency_bench",
     "checkpoint.local.keep_last_n=1",
     "trainer.max_train_steps=5000",
     "trainer.num_warmup_steps=0",
@@ -178,7 +178,7 @@ add_common_eval_args() {
     --wandb-enabled "${WANDB_ENABLED}"
     --workspace-dir "${WORKSPACE_DIR}"
     --base-model-repo-id "Qwen/Qwen3-VL-4B-Instruct"
-    --override "rl_games.env_eval.eval_backend=eval_core"
+    --override "rl_games.env_eval.eval_backend=latency_bench"
     --override "rl_games.env_eval.mid_train.enabled=false"
     --override "rl_games.env_eval.post_train.enabled=true"
     --override "rl_games.env_eval.frameskip=4"
