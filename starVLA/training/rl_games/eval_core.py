@@ -357,7 +357,10 @@ class _LiveImageTransform:
         if not self._frames:
             # demon_attack_ghost_trail at step 0: no raw frames yet, return raw reset frame
             return self._reset_frame if self._reset_frame is not None else fallback_obs
-        from latency_bench.data.ghost_trail import GhostTrailConfig
+        # latency_bench is optional for standalone StarVLA evaluation without this feature.
+        from latency_bench.data.ghost_trail import (
+            GhostTrailConfig, build_flappy_ghost_trail_window, build_demon_attack_ghost_trail_window,
+        )
 
         config = GhostTrailConfig(
             image_transform=self.name,
@@ -368,10 +371,7 @@ class _LiveImageTransform:
             scroll_px_per_step=float(self.config.get("scroll_px_per_step", 4.0)),
         )
         if self.name == "demon_attack_ghost_trail":
-            from latency_bench.data.ghost_trail_demon import build_demon_attack_ghost_trail_window
-            steps_arg = list(range(len(self._frames)))
-            return build_demon_attack_ghost_trail_window(self._frames, steps_arg, config=config)
-        from latency_bench.data.ghost_trail import build_flappy_ghost_trail_window
+            return build_demon_attack_ghost_trail_window(self._frames)
         return build_flappy_ghost_trail_window(self._frames, self._steps, config=config)
 
 

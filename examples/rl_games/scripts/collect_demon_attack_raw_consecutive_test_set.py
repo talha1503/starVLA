@@ -39,10 +39,10 @@ from examples.rl_games.scripts.image_patching import DEMON_ATTACK_SHIP_RGB
 from latency_bench.data.rollout_image_io import frames_from_env_raw_rgb_info
 from latency_bench.data.sf_teacher_config import load_rollout_training_config
 from latency_bench.data.sf_teacher_drivers import BatchedTeacherRolloutDriver, SerialTeacherRolloutDriver
-from latency_bench.data.sf_teacher_rollout import (
-    _build_rollout_driver_runtime,
-    _rollout_step_flags,
-    _step_teacher_policy,
+from latency_bench.data.sf_teacher_runtime import (
+    build_rollout_driver_runtime,
+    rollout_step_flags,
+    step_teacher_policy,
 )
 
 SCRIPT_DIR = Path(__file__).parent
@@ -165,7 +165,7 @@ def collect_raw_rollouts(
         flat_cfg = dict(config.get("flat_cfg", {}))
         flat_cfg["frame_stack"] = int(raw_stack_frames)
         config["flat_cfg"] = flat_cfg
-    cfg, runtime, driver, checkpoint_frame_stack = _build_rollout_driver_runtime(
+    cfg, runtime, driver, checkpoint_frame_stack = build_rollout_driver_runtime(
         config,
         output_dir=scratch_dir,
         num_envs=1,
@@ -194,7 +194,7 @@ def collect_raw_rollouts(
             episode_raw_return = 0.0
             terminated = False
             while decision_step < int(max_decision_steps):
-                raw_actions, new_rnn_states, step_results = _step_teacher_policy(
+                raw_actions, new_rnn_states, step_results = step_teacher_policy(
                     runtime,
                     driver,
                     active_slots=[0],
@@ -217,7 +217,7 @@ def collect_raw_rollouts(
                 )
                 rnn_states[0] = new_rnn_states[0]
                 next_decision_step = decision_step + 1
-                life_loss_boundary, episode_done = _rollout_step_flags(
+                life_loss_boundary, episode_done = rollout_step_flags(
                     env_name,
                     step_result,
                     next_decision_step=next_decision_step,
