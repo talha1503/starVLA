@@ -240,7 +240,8 @@ if ! is_print_plan_only; then
   require_file "${CHECKPOINT_PATH}"
 fi
 
-IFS=',' read -r -a TASK_ARRAY <<< "${TASKS}"
+TASKS_NORMALIZED="${TASKS//,/ }"
+read -r -a TASK_ARRAY <<< "${TASKS_NORMALIZED}"
 add_common_eval_args
 
 for raw_task in "${TASK_ARRAY[@]}"; do
