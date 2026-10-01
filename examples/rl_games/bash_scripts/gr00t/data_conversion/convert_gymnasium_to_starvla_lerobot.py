@@ -300,6 +300,8 @@ def convert_dataset(
         latency_rows: list[dict[str, Any]] = []
         episode_lengths: list[int] = []
         image_shape: list[int] | None = None
+        state_min: np.ndarray | None = None
+        state_max: np.ndarray | None = None
 
         for new_episode_idx, original_episode_idx in enumerate(
             tqdm(original_episode_ids, desc=f"Writing Gymnasium {split} LeRobot episodes")
@@ -336,9 +338,13 @@ def convert_dataset(
                 if image_shape is None:
                     image_shape = _image_shape(image_bytes)
                 latency_id = int(latency) if latency is not None else int(default_latency or 0)
+                state = _row_state(row, state_dim=state_dim)
+                state_array = np.asarray(state, dtype=np.float32)
+                state_min = state_array if state_min is None else np.minimum(state_min, state_array)
+                state_max = state_array if state_max is None else np.maximum(state_max, state_array)
                 out_rows.append({
                     "image_bytes": image_bytes,
-                    "state": _row_state(row, state_dim=state_dim),
+                    "state": state,
                     "action": _one_hot(
                         int(row["action_id"]),
                         active_action_dim=active_action_dim,
@@ -447,6 +453,11 @@ def convert_dataset(
             "state_dim": state_dim,
             "active_state_dim": state_dim,
             "state_labels": state_labels,
+            "state_normalization": {
+                "type": "min_max",
+                "min": state_min.tolist() if state_min is not None else [0.0] * state_dim,
+                "max": state_max.tolist() if state_max is not None else [1.0] * state_dim,
+            },
             "state_carrier": "native",
             "episodes": len(episode_lengths),
             "frames": int(sum(episode_lengths)),
