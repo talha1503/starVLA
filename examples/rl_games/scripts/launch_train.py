@@ -231,6 +231,30 @@ def _optional_int_list(value: Any) -> list[int] | None:
     return [int(item) for item in value]
 
 
+def _optional_latency_episode_map(value: Any) -> dict[int, int] | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, DictConfig):
+        value = OmegaConf.to_container(value, resolve=True)
+    if isinstance(value, dict):
+        return {int(k): int(v) for k, v in value.items()}
+    if isinstance(value, str):
+        pairs: dict[int, int] = {}
+        for item in value.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            if ":" not in item:
+                raise ValueError(
+                    "dataset.episodes_per_latency_by_latency must use 'latency:episodes' items, "
+                    f"got {value!r}"
+                )
+            latency, episodes = item.split(":", 1)
+            pairs[int(latency.strip())] = int(episodes.strip())
+        return pairs or None
+    raise TypeError(f"Unsupported dataset.episodes_per_latency_by_latency={value!r}")
+
+
 def _setup_eval_latencies(cfg: Any) -> list[int] | None:
     if not _as_bool_default(_cfg_get(cfg, "rl_games.env_eval.enabled"), True):
         return None
@@ -336,6 +360,9 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
             None
             if _cfg_get(cfg, "dataset.episodes_per_latency") in (None, "")
             else int(_cfg_get(cfg, "dataset.episodes_per_latency"))
+        ),
+        episodes_per_latency_by_latency=_optional_latency_episode_map(
+            _cfg_get(cfg, "dataset.episodes_per_latency_by_latency")
         ),
         latency_filter=_optional_int_list(_cfg_get(cfg, "dataset.latency_filter")),
         base_model_dir=_resolve_path(_cfg_get(cfg, "paths.base_model_dir"), workspace_dir),

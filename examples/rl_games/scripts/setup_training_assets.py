@@ -39,6 +39,34 @@ def _safe_path_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_") or "checkpoint"
 
 
+def _parse_latency_episode_map(value: Any) -> dict[int, int] | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, dict):
+        return {int(k): int(v) for k, v in value.items()}
+    if isinstance(value, str):
+        pairs: dict[int, int] = {}
+        for item in value.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            if ":" not in item:
+                raise ValueError(
+                    "--episodes-per-latency-by-latency must use 'latency:episodes' items, "
+                    f"got {value!r}"
+                )
+            latency, episodes = item.split(":", 1)
+            pairs[int(latency.strip())] = int(episodes.strip())
+        return pairs or None
+    raise TypeError(f"Unsupported episodes_per_latency_by_latency={value!r}")
+
+
+def _format_latency_episode_map(value: dict[int, int] | None) -> str | None:
+    if not value:
+        return None
+    return ",".join(f"{int(latency)}:{int(value[latency])}" for latency in sorted(value))
+
+
 def _safe_token(value: Any) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", str(value)).strip("_") or "value"
 
@@ -699,6 +727,9 @@ def _ensure_rl_games_lerobot_dataset(
     target_latency_unit = args.target_latency_unit
     obs_stride_raw_frames = round(env_fps / obs_fps)
     prompt_map = dataset_dir / "latency_prompt_map.json"
+    episodes_per_latency_by_latency = _parse_latency_episode_map(
+        getattr(args, "episodes_per_latency_by_latency", None)
+    )
 
     def _manifest_mismatch_reasons(dataset_path: Path) -> list[str]:
         from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import resolve_latency_subdirs
@@ -762,6 +793,13 @@ def _ensure_rl_games_lerobot_dataset(
                 reasons.append(
                     f"episodes_per_latency mismatch: manifest={manifest.get('episodes_per_latency')!r} "
                     f"expected={int(expected_episodes_per_latency)!r}"
+                )
+        if episodes_per_latency_by_latency is not None:
+            expected_map = {str(k): int(v) for k, v in sorted(episodes_per_latency_by_latency.items())}
+            if manifest.get("episodes_per_latency_by_latency") != expected_map:
+                reasons.append(
+                    "episodes_per_latency_by_latency mismatch: "
+                    f"manifest={manifest.get('episodes_per_latency_by_latency')!r} expected={expected_map!r}"
                 )
         expected_max_episodes = getattr(args, "max_episodes", None)
         if expected_max_episodes is not None:
@@ -927,6 +965,8 @@ def _ensure_rl_games_lerobot_dataset(
             convert_kwargs["latency_filter"] = getattr(args, "latency_filter", None)
         if "episodes_per_latency" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["episodes_per_latency"] = getattr(args, "episodes_per_latency", None)
+        if "episodes_per_latency_by_latency" in inspect.signature(convert_dataset).parameters:
+            convert_kwargs["episodes_per_latency_by_latency"] = episodes_per_latency_by_latency
         if "action_carrier" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["action_carrier"] = action_carrier
         if action_layout and "action_layout" in inspect.signature(convert_dataset).parameters:
@@ -1593,6 +1633,7 @@ def main() -> int:
     parser.add_argument("--verify-rows", type=int, default=200)
     parser.add_argument("--max-episodes", type=int, default=None)
     parser.add_argument("--episodes-per-latency", type=int, default=None)
+    parser.add_argument("--episodes-per-latency-by-latency", default=None)
     parser.add_argument("--latency-filter", default=None)
     parser.add_argument("--base-model-dir", required=True)
     parser.add_argument("--base-model-repo-id", default=None)
@@ -1616,6 +1657,7 @@ def main() -> int:
         args.latency_filter = [int(item) for item in args.latency_filter.split(",") if item.strip()]
     elif args.latency_filter == "":
         args.latency_filter = None
+    args.episodes_per_latency_by_latency = _parse_latency_episode_map(args.episodes_per_latency_by_latency)
 
     with contextlib.redirect_stdout(sys.stderr):
         result = setup_assets(args)

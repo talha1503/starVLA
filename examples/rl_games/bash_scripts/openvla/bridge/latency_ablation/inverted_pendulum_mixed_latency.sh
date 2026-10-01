@@ -28,6 +28,7 @@ python examples/rl_games/scripts/launch_train.py \
     "dataset.source_subdir='inverted_pendulum_fixed_latency_0_200ep_7k2steps,inverted_pendulum_fixed_latency_2_1000ep_7k2steps,inverted_pendulum_fixed_latency_4_1000ep_7k2steps'" \
     dataset.converted_name=inverted_pendulum_mixed_latency_train \
     dataset.latency_filter=[0,2,4] \
+    "dataset.episodes_per_latency_by_latency='0:200,2:1000,4:1000'" \
     dataset.target_latency_unit=raw_frames \
     datasets.vla_data.sequential_step_sampling=true \
     datasets.vla_data.shuffle=true \
