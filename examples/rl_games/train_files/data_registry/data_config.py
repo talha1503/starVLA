@@ -151,5 +151,17 @@ DATASET_NAMED_MIXTURES = {
     "atlantis_mixed_latency_train__bridge": [
         ("atlantis_mixed_latency_train__bridge", 1.0, "rl_games_atlantis")
     ],
+    "inverted_pendulum_mixed_latency_train": [
+        ("inverted_pendulum_mixed_latency_train", 1.0, "rl_games_gymnasium_discrete")
+    ],
+    "inverted_pendulum_mixed_latency_train__bridge": [
+        ("inverted_pendulum_mixed_latency_train__bridge", 1.0, "rl_games_gymnasium_discrete")
+    ],
+    "inverted_pendulum_mixed_latency_train_no_latency_prompt": [
+        ("inverted_pendulum_mixed_latency_train_no_latency_prompt", 1.0, "rl_games_gymnasium_discrete")
+    ],
+    "inverted_pendulum_mixed_latency_train_no_latency_prompt__bridge": [
+        ("inverted_pendulum_mixed_latency_train_no_latency_prompt__bridge", 1.0, "rl_games_gymnasium_discrete")
+    ],
     "h1hand_balance_hard": [("h1hand_balance_hard", 1.0, "rl_games_gymnasium_native")],
 }
