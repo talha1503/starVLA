@@ -12,23 +12,28 @@ bash /home/ubuntu/talha/starVLA/examples/rl_games/bash_scripts/install/latency_d
 
 export PYTHONPATH="/home/ubuntu/talha/latency-sensitive-bench:/home/ubuntu/talha/starVLA:${PYTHONPATH:-}"
 
+TRAIN_LATENCIES="${TRAIN_LATENCIES:-0,2,4}"
+TRAIN_EPISODE_MIX="${TRAIN_EPISODE_MIX:-0:50,2:300,4:600}"
+RUN_ID="${RUN_ID:-openvla_inverted_pendulum_mixed_latency_024_native_exp1}"
+DATASET_NAME="${DATASET_NAME:-inverted_pendulum_mixed_latency_train_native}"
+
 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
     env=gymnasium \
     init=scratch \
     mode=mixed_latency \
-    run_id="openvla_inverted_pendulum_mixed_latency_024_native_exp1" \
+    run_id="${RUN_ID}" \
     trainer.distributed_backend=none \
     workspace_dir="/home/ubuntu/talha" \
     wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_inverted_pendulum_mixed_latency_024_native_exp1" \
+    checkpoint.hf_repo_id="talha15032/${RUN_ID}" \
     checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_inverted_pendulum_mixed_latency_024_native_exp1" \
+    checkpoint.sync.repo_id="talha15032/${RUN_ID}" \
     dataset.source_hf="latency-sensitive-bench/inverted_pendulum_200ep" \
     "dataset.source_subdir='inverted_pendulum_fixed_latency_0_200ep_7k2steps,inverted_pendulum_fixed_latency_2_1000ep_7k2steps,inverted_pendulum_fixed_latency_4_1000ep_7k2steps'" \
-    dataset.converted_name=inverted_pendulum_mixed_latency_train_native \
-    dataset.latency_filter=[0,2,4] \
-    "dataset.episodes_per_latency_by_latency='0:50,2:300,4:600'" \
+    dataset.converted_name="${DATASET_NAME}" \
+    "dataset.latency_filter=[${TRAIN_LATENCIES}]" \
+    "dataset.episodes_per_latency_by_latency='${TRAIN_EPISODE_MIX}'" \
     dataset.setup_force=true \
     dataset.target_latency_unit=raw_frames \
     datasets.vla_data.sequential_step_sampling=true \
