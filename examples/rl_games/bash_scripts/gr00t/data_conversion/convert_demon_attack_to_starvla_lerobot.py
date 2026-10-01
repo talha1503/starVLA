@@ -83,6 +83,16 @@ def _local_parquet_files(dataset_name: str, split: str, dataset_source_subdir: s
 
 
 def _local_parquet_columns(dataset_name: str, split: str, dataset_source_subdir: str | None = None) -> set[str] | None:
+    if dataset_source_subdir not in (None, "") and "," in str(dataset_source_subdir):
+        columns: set[str] = set()
+        for subdir in str(dataset_source_subdir).split(","):
+            subdir = subdir.strip()
+            if not subdir:
+                continue
+            subdir_columns = _local_parquet_columns(dataset_name, split, subdir)
+            if subdir_columns is not None:
+                columns.update(subdir_columns)
+        return columns or None
     local_files = _local_parquet_files(dataset_name, split, dataset_source_subdir)
     if local_files is None:
         return None

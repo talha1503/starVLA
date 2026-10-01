@@ -638,15 +638,20 @@ def _materialize_starvla_runtime_cache(data_root_dir: Path, data_mix: str) -> di
     total_trajectories = 0
     first_stats: dict[str, Any] | None = None
     for dataset_name, _, robot_type in mixture:
+        data_cfg = {
+            "include_state": False,
+            "video_backend": "torchvision_av",
+            "lerobot_version": "v2.0",
+        }
+        if str(robot_type) in {"rl_games_gymnasium", "rl_games_gymnasium_discrete", "rl_games_gymnasium_native"}:
+            manifest = json.loads((data_root_dir / dataset_name / "manifest.json").read_text(encoding="utf-8"))
+            data_cfg["gymnasium_task_contract"] = manifest["gymnasium_task"]
+            data_cfg["active_action_dim"] = manifest["active_action_dim"]
         dataset = make_LeRobotSingleDataset(
             data_root_dir=data_root_dir,
             data_name=dataset_name,
             robot_type=robot_type,
-            data_cfg={
-                "include_state": False,
-                "video_backend": "torchvision_av",
-                "lerobot_version": "v2.0",
-            },
+            data_cfg=data_cfg,
         )
         stats_path = data_root_dir / dataset_name / "dataset_statistics.json"
         dataset._save_dataset_statistics_(stats_path)
@@ -695,6 +700,17 @@ def _carrier_dataset_name(data_mix: str, action_carrier: str) -> str:
     if match:
         return f"{match.group('base')}__bridge{match.group('debug')}"
     return f"{data_mix}__bridge"
+
+
+def _gymnasium_task_contract(args) -> dict[str, Any] | None:
+    value = getattr(args, "gymnasium_task_contract", None)
+    if value in (None, ""):
+        return None
+    if isinstance(value, dict):
+        return json.loads(json.dumps(value))
+    if isinstance(value, str):
+        return json.loads(value)
+    return dict(value)
 
 
 def _single_task_robot_type(env_name: str) -> str:
@@ -843,6 +859,9 @@ def _ensure_rl_games_lerobot_dataset(
                     "episodes_per_latency_by_latency mismatch: "
                     f"manifest={manifest.get('episodes_per_latency_by_latency')!r} expected={expected_map!r}"
                 )
+        expected_gymnasium_task = _gymnasium_task_contract(args)
+        if expected_gymnasium_task is not None and manifest.get("gymnasium_task") != expected_gymnasium_task:
+            reasons.append("gymnasium_task contract mismatch")
         expected_max_episodes = getattr(args, "max_episodes", None)
         if expected_max_episodes is not None:
             if manifest.get("max_episodes") != int(expected_max_episodes):
@@ -987,6 +1006,8 @@ def _ensure_rl_games_lerobot_dataset(
                 verify_kwargs["action_layout"] = action_layout
             if "latencies" in inspect.signature(verify_dataset).parameters:
                 verify_kwargs["latencies"] = getattr(args, "latency_filter", None)
+            if "gymnasium_task_contract" in inspect.signature(verify_dataset).parameters:
+                verify_kwargs["gymnasium_task_contract"] = _gymnasium_task_contract(args)
             verify_dataset(args.source_dataset_hf, **verify_kwargs)
         convert_kwargs = {
             "cache_dir": args.dataset_cache_dir,
@@ -1013,6 +1034,8 @@ def _ensure_rl_games_lerobot_dataset(
             convert_kwargs["action_carrier"] = action_carrier
         if action_layout and "action_layout" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["action_layout"] = action_layout
+        if "gymnasium_task_contract" in inspect.signature(convert_dataset).parameters:
+            convert_kwargs["gymnasium_task_contract"] = _gymnasium_task_contract(args)
         convert_dataset(args.source_dataset_hf, dataset_dir, **convert_kwargs)
         converted = True
         if mixed_latency and not _mixed_prompt_map_ready():
@@ -1123,6 +1146,25 @@ def _ensure_atlantis_dataset(args) -> dict[str, Any]:
         env_name="atlantis",
         env_fps=60.0,
         obs_fps=15.0,
+    )
+
+
+def _ensure_gymnasium_dataset(args) -> dict[str, Any]:
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_gymnasium_to_starvla_lerobot import convert_dataset
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_gymnasium_dataset import verify_dataset
+
+    contract = _gymnasium_task_contract(args)
+    if contract is None:
+        raise ValueError("rl_games.gymnasium.task_contract is required to setup a Gymnasium StarVLA dataset")
+    env_fps = float(contract.get("env_fps", 25.0))
+    obs_fps = float(contract.get("obs_fps", env_fps))
+    return _ensure_rl_games_lerobot_dataset(
+        args,
+        convert_dataset=convert_dataset,
+        verify_dataset=verify_dataset,
+        env_name="gymnasium",
+        env_fps=env_fps,
+        obs_fps=obs_fps,
     )
 
 
@@ -1470,6 +1512,8 @@ def setup_assets(args) -> dict[str, Any]:
         result.update(_ensure_atlantis_dataset(args))
     elif args.model in supported_models and args.env == "deadly_corridor":
         result.update(_ensure_deadly_corridor_dataset(args))
+    elif args.model in supported_models and args.env == "gymnasium":
+        result.update(_ensure_gymnasium_dataset(args))
     else:
         data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
         result.update({
@@ -1662,6 +1706,7 @@ def main() -> int:
     parser.add_argument("--latency-mode", default="")
     parser.add_argument("--source-dataset-hf", default="")
     parser.add_argument("--source-dataset-config-name", default=None)
+    parser.add_argument("--source-dataset-subdir", default=None)
     parser.add_argument("--dataset-local-dir", required=True)
     parser.add_argument("--converted-dataset-name", default="flappy_train")
     parser.add_argument("--dataset-cache-dir", default=None)
@@ -1688,6 +1733,7 @@ def main() -> int:
     parser.add_argument("--initialization-local-dir", default="")
     parser.add_argument("--initialization-hf-repo-id", default="")
     parser.add_argument("--initialization-checkpoint-filename", default="")
+    parser.add_argument("--gymnasium-task-contract", default=None)
     parser.add_argument("--checkpoint-sync-enabled", default="false")
     parser.add_argument("--checkpoint-sync-repo-id", default="")
     parser.add_argument("--hf-repo-id", default="")
