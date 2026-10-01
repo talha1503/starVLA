@@ -26,9 +26,10 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.sync.repo_id="talha15032/openvla_bridge_inverted_pendulum_mixed_latency_024_no_latency_prompt_exp1" \
     dataset.source_hf="latency-sensitive-bench/inverted_pendulum_200ep" \
     "dataset.source_subdir='inverted_pendulum_fixed_latency_0_200ep_7k2steps,inverted_pendulum_fixed_latency_2_1000ep_7k2steps,inverted_pendulum_fixed_latency_4_1000ep_7k2steps'" \
-    dataset.converted_name=inverted_pendulum_mixed_latency_train_no_latency_prompt \
+    dataset.converted_name=inverted_pendulum_mixed_latency_train_no_latency_prompt__bridge \
     dataset.latency_filter=[0,2,4] \
     "dataset.episodes_per_latency_by_latency='0:50,2:300,4:600'" \
+    dataset.setup_force=true \
     dataset.target_latency_unit=raw_frames \
     datasets.vla_data.sequential_step_sampling=true \
     datasets.vla_data.shuffle=true \
