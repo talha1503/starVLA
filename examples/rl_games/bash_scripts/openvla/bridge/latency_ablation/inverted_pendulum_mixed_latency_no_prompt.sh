@@ -1,6 +1,6 @@
-bash /workspace/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh
+bash /home/ubuntu/talha/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh
 
-cd /workspace/starVLA
+cd /home/ubuntu/talha/starVLA
 
 bash examples/rl_games/install/install_stack.sh openvla gymnasium
 
@@ -8,9 +8,9 @@ conda activate starvla_rl_games_openvla
 
 bash examples/rl_games/install/flash_attn.sh --check >/dev/null 2>&1 || bash examples/rl_games/install/flash_attn.sh
 
-bash /workspace/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh
+bash /home/ubuntu/talha/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh
 
-export PYTHONPATH="/workspace/latency-sensitive-bench:/workspace/starVLA:${PYTHONPATH:-}"
+export PYTHONPATH="/home/ubuntu/talha/latency-sensitive-bench:/home/ubuntu/talha/starVLA:${PYTHONPATH:-}"
 
 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
@@ -19,7 +19,7 @@ python examples/rl_games/scripts/launch_train.py \
     mode=mixed_latency \
     run_id="openvla_bridge_inverted_pendulum_mixed_latency_024_no_latency_prompt_exp1" \
     trainer.distributed_backend=none \
-    workspace_dir="/workspace" \
+    workspace_dir="/home/ubuntu/talha" \
     wandb_entity="talha1503" \
     checkpoint.hf_repo_id="talha15032/openvla_bridge_inverted_pendulum_mixed_latency_024_no_latency_prompt_exp1" \
     checkpoint.sync.enabled=true \
