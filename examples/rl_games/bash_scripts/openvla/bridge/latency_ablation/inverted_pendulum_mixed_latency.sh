@@ -1,9 +1,70 @@
-#!/usr/bin/env bash
-set -euo pipefail
+bash /workspace/starVLA/examples/rl_games/bash_scripts/install/pre_launch.sh
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=inverted_pendulum_common.sh
-source "${SCRIPT_DIR}/inverted_pendulum_common.sh"
+cd /workspace/starVLA
 
-RUN_ID="${RUN_ID:-openvla_bridge_inverted_pendulum_mixed_latency_024_exp1}"
-ip_run_openvla_training "${RUN_ID}" raw
+bash examples/rl_games/install/install_stack.sh openvla gymnasium
+
+conda activate starvla_rl_games_openvla
+
+bash examples/rl_games/install/flash_attn.sh --check >/dev/null 2>&1 || bash examples/rl_games/install/flash_attn.sh
+
+bash /workspace/starVLA/examples/rl_games/bash_scripts/install/latency_deps.sh
+
+export PYTHONPATH="/workspace/latency-sensitive-bench:/workspace/starVLA:${PYTHONPATH:-}"
+
+python examples/rl_games/scripts/launch_train.py \
+    model=openvla \
+    env=gymnasium \
+    init=bridge \
+    mode=mixed_latency \
+    run_id="openvla_bridge_inverted_pendulum_mixed_latency_024_exp1" \
+    trainer.distributed_backend=none \
+    workspace_dir="/workspace" \
+    wandb_entity="talha1503" \
+    checkpoint.hf_repo_id="talha15032/openvla_bridge_inverted_pendulum_mixed_latency_024_exp1" \
+    checkpoint.sync.enabled=true \
+    checkpoint.sync.repo_id="talha15032/openvla_bridge_inverted_pendulum_mixed_latency_024_exp1" \
+    dataset.source_hf="latency-sensitive-bench/inverted_pendulum_200ep" \
+    "dataset.source_subdir='inverted_pendulum_fixed_latency_0_200ep_7k2steps,inverted_pendulum_fixed_latency_2_1000ep_7k2steps,inverted_pendulum_fixed_latency_4_1000ep_7k2steps'" \
+    dataset.converted_name=inverted_pendulum_mixed_latency_train \
+    dataset.latency_filter=[0,2,4] \
+    dataset.target_latency_unit=raw_frames \
+    datasets.vla_data.sequential_step_sampling=true \
+    datasets.vla_data.shuffle=true \
+    datasets.vla_data.prompt_mode=raw \
+    datasets.vla_data.include_state=true \
+    datasets.vla_data.action_type=discrete \
+    datasets.vla_data.active_action_dim=5 \
+    trainer.per_latency_eval_num_batches=5 \
+    checkpoint.local.keep_last_n=1 \
+    checkpoint.save_final_model=true \
+    checkpoint.save_best_model=false \
+    trainer.max_train_steps=5000 \
+    trainer.num_warmup_steps=0 \
+    trainer.eval_interval=5000 \
+    trainer.save_interval=5000 \
+    trainer.logging_frequency=1 \
+    trainer.gradient_accumulation_steps=2 \
+    datasets.vla_data.per_device_batch_size=8 \
+    framework.action_model.action_env_dim=5 \
+    framework.action_model.state_dim=4 \
+    framework.action_model.loss_type=discrete_ce \
+    framework.action_model.action_horizon=1 \
+    framework.action_model.future_action_window_size=0 \
+    framework.action_model.past_action_window_size=0 \
+    ++rl_games.gymnasium.task_contract.task_name=inverted_pendulum \
+    ++rl_games.gymnasium.task_contract.env_id=LatencyBench/InvertedPendulumDiscrete-v0 \
+    ++rl_games.gymnasium.task_contract.registration_imports=[latency_bench.envs.gymnasium_mujoco] \
+    ++rl_games.gymnasium.task_contract.env_fps=25.0 \
+    ++rl_games.gymnasium.task_contract.obs_fps=25.0 \
+    ++rl_games.gymnasium.task_contract.frame_stack=1 \
+    "++rl_games.gymnasium.task_contract.base_prompt='Keep the pole upright by applying horizontal cart forces. Choose exactly one action from: push_left_hard, push_left_soft, zero_force, push_right_soft, push_right_hard.'" \
+    ++rl_games.gymnasium.task_contract.action_labels=[push_left_hard,push_left_soft,zero_force,push_right_soft,push_right_hard] \
+    ++rl_games.gymnasium.task_contract.action_values=[0,1,2,3,4] \
+    ++rl_games.gymnasium.task_contract.noop_action_id=2 \
+    ++rl_games.gymnasium.task_contract.make_kwargs.base_env_id=InvertedPendulum-v4 \
+    ++rl_games.gymnasium.task_contract.make_kwargs.render_mode=rgb_array \
+    ++rl_games.gymnasium.task_contract.make_kwargs.force_values=[-3.0,-1.5,0.0,1.5,3.0] \
+    ++rl_games.gymnasium.task_contract.make_kwargs.base_make_kwargs={} \
+    ++rl_games.gymnasium.task_contract.state_space.labels=[cart_position,pole_angle,cart_velocity,pole_angular_velocity] \
+    rl_games.env_eval.enabled=false
