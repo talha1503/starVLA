@@ -697,6 +697,42 @@ def _carrier_dataset_name(data_mix: str, action_carrier: str) -> str:
     return f"{data_mix}__bridge"
 
 
+def _single_task_robot_type(env_name: str) -> str:
+    mapping = {
+        "flappy": "rl_games_flappy",
+        "demon_attack": "rl_games_demon_attack",
+        "defend_the_line": "rl_games_defend_the_line",
+        "deadly_corridor": "rl_games_deadly_corridor",
+        "asterix": "rl_games_asterix",
+        "atlantis": "rl_games_atlantis",
+        "gymnasium": "rl_games_gymnasium_discrete",
+    }
+    if env_name not in mapping:
+        raise ValueError(f"Unsupported single-task env for generated mixture registration: {env_name!r}")
+    return mapping[env_name]
+
+
+def _write_single_task_mixture_file(
+    *,
+    data_root_dir: Path,
+    data_mix: str,
+    eval_data_mix: str,
+    robot_type: str,
+) -> Path:
+    from starVLA.dataloader.gr00t_lerobot.registry import load_custom_mixtures
+
+    payload = {
+        data_mix: [[data_mix, 1.0, robot_type]],
+        eval_data_mix: [[eval_data_mix, 1.0, robot_type]],
+    }
+    digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    custom_mixtures_path = data_root_dir / "_generated_mixtures" / f"single_{digest}.json"
+    custom_mixtures_path.parent.mkdir(parents=True, exist_ok=True)
+    custom_mixtures_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    load_custom_mixtures(custom_mixtures_path)
+    return custom_mixtures_path
+
+
 def _ensure_rl_games_lerobot_dataset(
     args,
     *,
@@ -721,6 +757,12 @@ def _ensure_rl_games_lerobot_dataset(
     dataset_dir = data_root_dir / data_mix
     eval_data_mix = f"{data_mix}__val"
     eval_dataset_dir = data_root_dir / eval_data_mix
+    custom_mixtures_path = _write_single_task_mixture_file(
+        data_root_dir=data_root_dir,
+        data_mix=data_mix,
+        eval_data_mix=eval_data_mix,
+        robot_type=_single_task_robot_type(env_name),
+    )
     force = _str2bool(args.setup_force) or _str2bool(args.dataset_force_download)
     mixed_latency = args.mode == "mixed_latency" or str(args.latency_mode or "").lower() == "mixed"
     source_latency_column = "latency_raw_frames"
@@ -1003,6 +1045,7 @@ def _ensure_rl_games_lerobot_dataset(
         "dataset_dir": str(dataset_dir),
         "data_mix": data_mix,
         "eval_data_mix": eval_data_mix,
+        "custom_mixtures_path": str(custom_mixtures_path),
         "eval_dataset_dir": str(eval_dataset_dir),
         "action_carrier": action_carrier,
         "latency_prompt_map_path": str(prompt_map) if prompt_map.exists() else None,
