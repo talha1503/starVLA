@@ -64,9 +64,7 @@ python examples/rl_games/scripts/launch_train.py \
     trainer.gradient_accumulation_steps=2 \
     framework.qwenvl.attn_implementation=flash_attention_2 \
     framework.qwenvl.enable_gradient_checkpointing=true \
-    framework.action_model.action_model_type=MLP \
     framework.action_model.action_dim=5 \
-    framework.action_model.action_hidden_dim=2560 \
     framework.action_model.action_env_dim=5 \
     framework.action_model.state_dim=4 \
     framework.action_model.loss_type=discrete_ce \
