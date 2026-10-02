@@ -15,8 +15,10 @@ bash /home/ubuntu/talha/starVLA/examples/rl_games/bash_scripts/install/latency_d
 
 export PYTHONPATH="/home/ubuntu/talha/latency-sensitive-bench:/home/ubuntu/talha/starVLA:${PYTHONPATH:-}"
 
-RUN_ID="${RUN_ID:-openvla_inverted_pendulum_l0_og_data_native_og_hparams_exp1}"
-DATASET_NAME="${DATASET_NAME:-inverted_pendulum_rgb_state_l0_return_gt900_100ep}"
+# Keep these fixed so stale exported variables from other latency runs cannot
+# silently write/evaluate under the wrong run or dataset name.
+RUN_ID="openvla_inverted_pendulum_l0_og_data_native_og_hparams_exp1"
+DATASET_NAME="inverted_pendulum_rgb_state_l0_return_gt900_100ep"
 OG_SOURCE_REVISION="${OG_SOURCE_REVISION:-7d088338043f96511df41c74bc540e62d27aa417}"
 
 python examples/rl_games/scripts/launch_train.py \
@@ -28,6 +30,8 @@ python examples/rl_games/scripts/launch_train.py \
     trainer.distributed_backend=none \
     workspace_dir="/home/ubuntu/talha" \
     wandb_entity="talha1503" \
+    base_model.repo_id=Qwen/Qwen3-VL-4B-Instruct \
+    paths.base_model_dir=/home/ubuntu/talha/playground/Pretrained_models/Qwen3-VL-4B-Instruct \
     checkpoint.load=none \
     checkpoint.hf_repo_id="talha15032/${RUN_ID}" \
     checkpoint.sync.enabled=true \
@@ -46,7 +50,7 @@ python examples/rl_games/scripts/launch_train.py \
     dataset.converted_name="${DATASET_NAME}" \
     dataset.latency_filter=[0] \
     dataset.setup_force=true \
-    dataset.target_latency_unit=raw_frames \
+    dataset.target_latency_unit=observation_steps \
     datasets.vla_data.sequential_step_sampling=false \
     datasets.vla_data.shuffle=true \
     datasets.vla_data.prompt_mode=raw \
