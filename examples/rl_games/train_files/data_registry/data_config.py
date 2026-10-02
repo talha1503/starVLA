@@ -53,7 +53,26 @@ class AtlantisDataConfig(FlappyDataConfig):
 
 
 class GymnasiumDataConfig(FlappyDataConfig):
-    pass
+    """Discrete Gymnasium data: normalize state, keep action one-hot intact."""
+
+    def transform(self):
+        from starVLA.dataloader.gr00t_lerobot.transform.base import ComposedModalityTransform
+        from starVLA.dataloader.gr00t_lerobot.transform.state_action import (
+            StateActionToTensor,
+            StateActionTransform,
+        )
+
+        return ComposedModalityTransform(
+            transforms=[
+                StateActionToTensor(apply_to=[*self.state_keys, *self.action_keys]),
+                StateActionTransform(
+                    apply_to=self.state_keys,
+                    normalization_modes={
+                        "state.game_state": "min_max",
+                    },
+                ),
+            ]
+        )
 
 
 class GymnasiumNativeDataConfig(FlappyDataConfig):

@@ -721,7 +721,7 @@ def _single_task_robot_type(env_name: str) -> str:
         "deadly_corridor": "rl_games_deadly_corridor",
         "asterix": "rl_games_asterix",
         "atlantis": "rl_games_atlantis",
-        "gymnasium": "rl_games_gymnasium_discrete",
+        "gymnasium": "rl_games_gymnasium",
     }
     if env_name not in mapping:
         raise ValueError(f"Unsupported single-task env for generated mixture registration: {env_name!r}")
