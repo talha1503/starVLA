@@ -17,8 +17,8 @@ export PYTHONPATH="/home/ubuntu/talha/latency-sensitive-bench:/home/ubuntu/talha
 
 # Keep these fixed so stale exported variables from other latency runs cannot
 # silently write/evaluate under the wrong run or dataset name.
-RUN_ID="openvla_inverted_pendulum_l0_og_data_native_og_hparams_exp2"
-DATASET_NAME="inverted_pendulum_rgb_state_l0_return_gt900_100ep_exp2"
+RUN_ID="openvla_inverted_pendulum_l0_og_data_native_og_hparams_exp3"
+DATASET_NAME="inverted_pendulum_rgb_state_l0_return_gt900_100ep_exp3"
 OG_SOURCE_REVISION="${OG_SOURCE_REVISION:-7d088338043f96511df41c74bc540e62d27aa417}"
 
 python examples/rl_games/scripts/launch_train.py \
@@ -27,7 +27,7 @@ python examples/rl_games/scripts/launch_train.py \
     init=scratch \
     mode=single \
     run_id="${RUN_ID}" \
-    trainer.distributed_backend=deepspeed \
+    trainer.distributed_backend=none \
     workspace_dir="/home/ubuntu/talha" \
     wandb_entity="talha1503" \
     wandb_project=latency-sensitive-bench \
