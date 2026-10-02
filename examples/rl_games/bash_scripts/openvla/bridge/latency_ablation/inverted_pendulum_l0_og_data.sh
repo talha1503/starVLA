@@ -17,8 +17,8 @@ export PYTHONPATH="/home/ubuntu/talha/latency-sensitive-bench:/home/ubuntu/talha
 
 # Keep these fixed so stale exported variables from other latency runs cannot
 # silently write/evaluate under the wrong run or dataset name.
-RUN_ID="openvla_inverted_pendulum_l0_og_data_native_og_hparams_exp1"
-DATASET_NAME="inverted_pendulum_rgb_state_l0_return_gt900_100ep"
+RUN_ID="openvla_inverted_pendulum_l0_og_data_native_og_hparams_exp2"
+DATASET_NAME="inverted_pendulum_rgb_state_l0_return_gt900_100ep_exp2"
 OG_SOURCE_REVISION="${OG_SOURCE_REVISION:-7d088338043f96511df41c74bc540e62d27aa417}"
 
 python examples/rl_games/scripts/launch_train.py \
@@ -27,9 +27,10 @@ python examples/rl_games/scripts/launch_train.py \
     init=scratch \
     mode=single \
     run_id="${RUN_ID}" \
-    trainer.distributed_backend=none \
+    trainer.distributed_backend=deepspeed \
     workspace_dir="/home/ubuntu/talha" \
     wandb_entity="talha1503" \
+    wandb_project=latency-sensitive-bench \
     base_model.repo_id=Qwen/Qwen3-VL-4B-Instruct \
     paths.base_model_dir=/home/ubuntu/talha/playground/Pretrained_models/Qwen3-VL-4B-Instruct \
     checkpoint.load=none \
@@ -68,8 +69,11 @@ python examples/rl_games/scripts/launch_train.py \
     trainer.gradient_accumulation_steps=2 \
     framework.qwenvl.attn_implementation=flash_attention_2 \
     framework.qwenvl.enable_gradient_checkpointing=true \
+    framework.action_model.state_encoding=discretized_text \
+    ++framework.action_model.action_model_type=MLP \
     framework.action_model.action_dim=5 \
     framework.action_model.action_env_dim=5 \
+    ++framework.action_model.action_hidden_dim=2560 \
     framework.action_model.state_dim=4 \
     framework.action_model.loss_type=discrete_ce \
     framework.action_model.action_horizon=1 \
