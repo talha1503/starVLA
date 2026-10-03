@@ -54,6 +54,7 @@ python examples/rl_games/scripts/launch_train.py \
     "dataset.latency_filter=[${TRAIN_LATENCIES}]" \
     "dataset.episodes_per_latency_by_latency='${TRAIN_EPISODE_MIX}'" \
     dataset.setup_force=true \
+    dataset.skip_verification=true \
     dataset.target_latency_unit=observation_steps \
     dataset.max_steps_per_episode=1000 \
     datasets.vla_data.sequential_step_sampling=false \
