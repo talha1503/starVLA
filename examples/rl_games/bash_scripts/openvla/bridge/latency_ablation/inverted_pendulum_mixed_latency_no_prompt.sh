@@ -36,6 +36,7 @@ python examples/rl_games/scripts/launch_train.py \
     "dataset.episodes_per_latency_by_latency='${TRAIN_EPISODE_MIX}'" \
     dataset.setup_force=true \
     dataset.target_latency_unit=raw_frames \
+    dataset.max_steps_per_episode=1000 \
     datasets.vla_data.sequential_step_sampling=true \
     datasets.vla_data.shuffle=true \
     datasets.vla_data.prompt_mode=latency_neutral \

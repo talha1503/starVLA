@@ -362,6 +362,11 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         target_latency_unit=_cfg_get(cfg, "dataset.target_latency_unit"),
         verify_rows=int(_cfg_get(cfg, "dataset.verify_rows") or 200),
         max_episodes=max_episodes,
+        max_steps_per_episode=(
+            None
+            if _cfg_get(cfg, "dataset.max_steps_per_episode") in (None, "")
+            else int(_cfg_get(cfg, "dataset.max_steps_per_episode"))
+        ),
         episodes_per_latency=(
             None
             if _cfg_get(cfg, "dataset.episodes_per_latency") in (None, "")

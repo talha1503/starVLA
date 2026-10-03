@@ -155,6 +155,7 @@ def convert_dataset(
     dataset_config_name: str | None = None,
     dataset_source_subdir: str | None = None,
     max_episodes: int | None = None,
+    max_steps_per_episode: int | None = None,
     force: bool = False,
     require_latency_prompt_map: bool = False,
     latency_filter: list[int] | None = None,
@@ -201,6 +202,11 @@ def convert_dataset(
         train_episodes_per_latency_by_latency = episodes_per_latency_by_latency
     if eval_episodes_per_latency_by_latency is None:
         eval_episodes_per_latency_by_latency = episodes_per_latency_by_latency
+    if max_steps_per_episode is not None and int(max_steps_per_episode) <= 0:
+        raise ValueError(f"max_steps_per_episode must be positive, got {max_steps_per_episode!r}")
+    max_steps_per_episode = (
+        int(max_steps_per_episode) if max_steps_per_episode is not None else None
+    )
 
     output_dir = Path(output_dir)
     val_output_dir = output_dir.with_name(f"{output_dir.name}__val")
@@ -307,6 +313,10 @@ def convert_dataset(
             tqdm(original_episode_ids, desc=f"Writing Gymnasium {split} LeRobot episodes")
         ):
             row_indices = [row_idx for _, row_idx in episode_indices[original_episode_idx]]
+            truncated_episode = False
+            if max_steps_per_episode is not None and len(row_indices) > max_steps_per_episode:
+                row_indices = row_indices[:max_steps_per_episode]
+                truncated_episode = True
             episode = ds_full.select(row_indices)
             out_rows: list[dict[str, Any]] = []
             for frame_idx, row in enumerate(episode):
@@ -360,11 +370,14 @@ def convert_dataset(
                         if "latency_raw_frames" in row and row["latency_raw_frames"] is not None
                         else latency_id * int(obs_stride_raw_frames)
                     ),
-                    "done": _row_done(
-                        row,
-                        source_columns.done,
-                        frame_idx=frame_idx,
-                        episode_length=len(episode),
+                    "done": (
+                        _row_done(
+                            row,
+                            source_columns.done,
+                            frame_idx=frame_idx,
+                            episode_length=len(episode),
+                        )
+                        or (truncated_episode and frame_idx == len(episode) - 1)
                     ),
                     "reward": float(row[source_columns.reward]),
                     "action_id": int(row["action_id"]),
@@ -447,6 +460,9 @@ def convert_dataset(
                 else None
             ),
             "max_episodes": int(max_episodes) if max_episodes is not None else None,
+            "max_steps_per_episode": (
+                int(max_steps_per_episode) if max_steps_per_episode is not None else None
+            ),
             "prompt_override": bool(prompt_map_override),
             "default_latency": default_latency,
             "uses_state": True,
@@ -498,6 +514,7 @@ def main() -> int:
     parser.add_argument("--output-dir", "--output_dir", required=True)
     parser.add_argument("--cache-dir", "--cache_dir", default=None)
     parser.add_argument("--max-episodes", "--max_episodes", type=int, default=None)
+    parser.add_argument("--max-steps-per-episode", "--max_steps_per_episode", type=int, default=None)
     parser.add_argument("--latency-filter", "--latency_filter", default=None)
     parser.add_argument("--episodes-per-latency", "--episodes_per_latency", type=int, default=None)
     parser.add_argument("--episodes-per-latency-by-latency", "--episodes_per_latency_by_latency", default=None)
@@ -530,6 +547,7 @@ def main() -> int:
         dataset_config_name=args.dataset_config_name,
         dataset_source_subdir=args.dataset_source_subdir,
         max_episodes=args.max_episodes,
+        max_steps_per_episode=args.max_steps_per_episode,
         force=args.force,
         require_latency_prompt_map=True,
         latency_filter=latency_filter,

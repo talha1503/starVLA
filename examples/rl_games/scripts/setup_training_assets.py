@@ -868,6 +868,17 @@ def _ensure_rl_games_lerobot_dataset(
                 reasons.append(
                     f"max_episodes mismatch: manifest={manifest.get('max_episodes')!r} expected={int(expected_max_episodes)!r}"
                 )
+        expected_max_steps_per_episode = getattr(args, "max_steps_per_episode", None)
+        expected_max_steps_value = (
+            int(expected_max_steps_per_episode)
+            if expected_max_steps_per_episode not in (None, "")
+            else None
+        )
+        if manifest.get("max_steps_per_episode") != expected_max_steps_value:
+            reasons.append(
+                "max_steps_per_episode mismatch: "
+                f"manifest={manifest.get('max_steps_per_episode')!r} expected={expected_max_steps_value!r}"
+            )
         return reasons
 
     def _manifest_matches(dataset_path: Path) -> bool:
@@ -1030,6 +1041,8 @@ def _ensure_rl_games_lerobot_dataset(
             convert_kwargs["episodes_per_latency"] = getattr(args, "episodes_per_latency", None)
         if "episodes_per_latency_by_latency" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["episodes_per_latency_by_latency"] = episodes_per_latency_by_latency
+        if "max_steps_per_episode" in inspect.signature(convert_dataset).parameters:
+            convert_kwargs["max_steps_per_episode"] = getattr(args, "max_steps_per_episode", None)
         if "action_carrier" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["action_carrier"] = action_carrier
         if action_layout and "action_layout" in inspect.signature(convert_dataset).parameters:
@@ -1720,6 +1733,7 @@ def main() -> int:
     )
     parser.add_argument("--verify-rows", type=int, default=200)
     parser.add_argument("--max-episodes", type=int, default=None)
+    parser.add_argument("--max-steps-per-episode", type=int, default=None)
     parser.add_argument("--episodes-per-latency", type=int, default=None)
     parser.add_argument("--episodes-per-latency-by-latency", default=None)
     parser.add_argument("--latency-filter", default=None)
