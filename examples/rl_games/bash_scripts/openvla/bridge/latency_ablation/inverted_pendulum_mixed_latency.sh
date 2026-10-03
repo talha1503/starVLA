@@ -18,9 +18,10 @@ export PYTHONPATH="/home/ubuntu/talha/latency-sensitive-bench:/home/ubuntu/talha
 # Keep these fixed so stale exported variables from other latency runs cannot
 # silently write/evaluate under the wrong run or dataset name.
 TRAIN_LATENCIES="0,2,4"
-TRAIN_EPISODE_MIX="0:50,2:300,4:600"
-RUN_ID="openvla_inverted_pendulum_mixed_latency_024_native_statefix_exp1"
-DATASET_NAME="inverted_pendulum_mixed_latency_024_native_statefix_exp1"
+# L0 comes from the OG zero-latency dataset, which has 90 train episodes.
+TRAIN_EPISODE_MIX="0:90,2:1000,4:1000"
+RUN_ID="openvla_inverted_pendulum_mixed_latency_024_og_l0_native_exp2"
+DATASET_NAME="openvla_inverted_pendulum_mixed_latency_024_og_l0_native_exp2"
 
 python examples/rl_games/scripts/launch_train.py \
     model=openvla \
@@ -47,8 +48,8 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.save_pt_file=true \
     checkpoint.save_training_state=false \
     checkpoint.save_safetensors_file=false \
-    dataset.source_hf="latency-sensitive-bench/inverted_pendulum_200ep" \
-    "dataset.source_subdir='inverted_pendulum_fixed_latency_0_200ep_7k2steps,inverted_pendulum_fixed_latency_2_1000ep_7k2steps,inverted_pendulum_fixed_latency_4_1000ep_7k2steps'" \
+    dataset.source_hf="latency-sensitive-bench/inverted_pendulum_200ep_2" \
+    "dataset.source_subdir='inverted_pendulum_fixed_latency_0_100ep_1ksteps_og,inverted_pendulum_fixed_latency_2_1000ep_7k2steps,inverted_pendulum_fixed_latency_4_1000ep_7k2steps'" \
     dataset.converted_name="${DATASET_NAME}" \
     "dataset.latency_filter=[${TRAIN_LATENCIES}]" \
     "dataset.episodes_per_latency_by_latency='${TRAIN_EPISODE_MIX}'" \
