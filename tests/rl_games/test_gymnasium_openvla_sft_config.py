@@ -301,7 +301,7 @@ def test_generic_gymnasium_openvla_command_accepts_continuous_bridge_contract(
         "task_name": "walker2d_continuous_torque",
         "env_id": "LatencyBench/Walker2dContinuous-v0",
         "make_kwargs": {"render_mode": "rgb_array"},
-        "registration_imports": ["latency_bench.envs.gymnasium_walker2d"],
+        "registration_imports": ["latency_bench.envs.tasks.walker2d"],
         "action_space": {
             "type": "box",
             "labels": [f"torque_{index}" for index in range(6)],

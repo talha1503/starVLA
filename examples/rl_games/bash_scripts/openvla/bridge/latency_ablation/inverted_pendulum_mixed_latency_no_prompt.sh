@@ -63,7 +63,7 @@ python examples/rl_games/scripts/launch_train.py \
     framework.action_model.past_action_window_size=0 \
     ++rl_games.gymnasium.task_contract.task_name=inverted_pendulum \
     ++rl_games.gymnasium.task_contract.env_id=LatencyBench/InvertedPendulumDiscrete-v0 \
-    ++rl_games.gymnasium.task_contract.registration_imports=[latency_bench.envs.gymnasium_mujoco] \
+    ++rl_games.gymnasium.task_contract.registration_imports=[latency_bench.envs.tasks.inverted_pendulum] \
     ++rl_games.gymnasium.task_contract.env_fps=25.0 \
     ++rl_games.gymnasium.task_contract.obs_fps=25.0 \
     ++rl_games.gymnasium.task_contract.frame_stack=1 \
