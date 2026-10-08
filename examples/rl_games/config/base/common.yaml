@@ -95,7 +95,9 @@ dataset:
   target_latency_unit: observation_steps
   verify_rows: 200
   max_episodes: null
+  max_steps_per_episode: null
   episodes_per_latency: null
+  episodes_per_latency_by_latency: null
   latency_filter: null
   debug_subset:
     enabled: false

@@ -39,6 +39,34 @@ def _safe_path_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_") or "checkpoint"
 
 
+def _parse_latency_episode_map(value: Any) -> dict[int, int] | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, dict):
+        return {int(k): int(v) for k, v in value.items()}
+    if isinstance(value, str):
+        pairs: dict[int, int] = {}
+        for item in value.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            if ":" not in item:
+                raise ValueError(
+                    "--episodes-per-latency-by-latency must use 'latency:episodes' items, "
+                    f"got {value!r}"
+                )
+            latency, episodes = item.split(":", 1)
+            pairs[int(latency.strip())] = int(episodes.strip())
+        return pairs or None
+    raise TypeError(f"Unsupported episodes_per_latency_by_latency={value!r}")
+
+
+def _format_latency_episode_map(value: dict[int, int] | None) -> str | None:
+    if not value:
+        return None
+    return ",".join(f"{int(latency)}:{int(value[latency])}" for latency in sorted(value))
+
+
 def _safe_token(value: Any) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", str(value)).strip("_") or "value"
 
@@ -624,15 +652,20 @@ def _materialize_starvla_runtime_cache(data_root_dir: Path, data_mix: str) -> di
     total_trajectories = 0
     first_stats: dict[str, Any] | None = None
     for dataset_name, _, robot_type in mixture:
+        data_cfg = {
+            "include_state": False,
+            "video_backend": "torchvision_av",
+            "lerobot_version": "v2.0",
+        }
+        if str(robot_type) in {"rl_games_gymnasium", "rl_games_gymnasium_discrete", "rl_games_gymnasium_native"}:
+            manifest = json.loads((data_root_dir / dataset_name / "manifest.json").read_text(encoding="utf-8"))
+            data_cfg["gymnasium_task_contract"] = manifest["gymnasium_task"]
+            data_cfg["active_action_dim"] = manifest["active_action_dim"]
         dataset = make_LeRobotSingleDataset(
             data_root_dir=data_root_dir,
             data_name=dataset_name,
             robot_type=robot_type,
-            data_cfg={
-                "include_state": False,
-                "video_backend": "torchvision_av",
-                "lerobot_version": "v2.0",
-            },
+            data_cfg=data_cfg,
         )
         stats_path = data_root_dir / dataset_name / "dataset_statistics.json"
         dataset._save_dataset_statistics_(stats_path)
@@ -683,6 +716,53 @@ def _carrier_dataset_name(data_mix: str, action_carrier: str) -> str:
     return f"{data_mix}__bridge"
 
 
+def _gymnasium_task_contract(args) -> dict[str, Any] | None:
+    value = getattr(args, "gymnasium_task_contract", None)
+    if value in (None, ""):
+        return None
+    if isinstance(value, dict):
+        return json.loads(json.dumps(value))
+    if isinstance(value, str):
+        return json.loads(value)
+    return dict(value)
+
+
+def _single_task_robot_type(env_name: str) -> str:
+    mapping = {
+        "flappy": "rl_games_flappy",
+        "demon_attack": "rl_games_demon_attack",
+        "defend_the_line": "rl_games_defend_the_line",
+        "deadly_corridor": "rl_games_deadly_corridor",
+        "asterix": "rl_games_asterix",
+        "atlantis": "rl_games_atlantis",
+        "gymnasium": "rl_games_gymnasium",
+    }
+    if env_name not in mapping:
+        raise ValueError(f"Unsupported single-task env for generated mixture registration: {env_name!r}")
+    return mapping[env_name]
+
+
+def _write_single_task_mixture_file(
+    *,
+    data_root_dir: Path,
+    data_mix: str,
+    eval_data_mix: str,
+    robot_type: str,
+) -> Path:
+    from starVLA.dataloader.gr00t_lerobot.registry import load_custom_mixtures
+
+    payload = {
+        data_mix: [[data_mix, 1.0, robot_type]],
+        eval_data_mix: [[eval_data_mix, 1.0, robot_type]],
+    }
+    digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    custom_mixtures_path = data_root_dir / "_generated_mixtures" / f"single_{digest}.json"
+    custom_mixtures_path.parent.mkdir(parents=True, exist_ok=True)
+    custom_mixtures_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    load_custom_mixtures(custom_mixtures_path)
+    return custom_mixtures_path
+
+
 def _ensure_rl_games_lerobot_dataset(
     args,
     *,
@@ -712,12 +792,21 @@ def _ensure_rl_games_lerobot_dataset(
     dataset_dir = data_root_dir / data_mix
     eval_data_mix = f"{data_mix}__val"
     eval_dataset_dir = data_root_dir / eval_data_mix
+    custom_mixtures_path = _write_single_task_mixture_file(
+        data_root_dir=data_root_dir,
+        data_mix=data_mix,
+        eval_data_mix=eval_data_mix,
+        robot_type=_single_task_robot_type(env_name),
+    )
     force = _str2bool(args.setup_force) or _str2bool(args.dataset_force_download)
     mixed_latency = args.mode == "mixed_latency" or str(args.latency_mode or "").lower() == "mixed"
     source_latency_column = "latency_raw_frames"
     target_latency_unit = args.target_latency_unit
     obs_stride_raw_frames = round(env_fps / obs_fps)
     prompt_map = dataset_dir / "latency_prompt_map.json"
+    episodes_per_latency_by_latency = _parse_latency_episode_map(
+        getattr(args, "episodes_per_latency_by_latency", None)
+    )
 
     def _manifest_mismatch_reasons(dataset_path: Path) -> list[str]:
 
@@ -783,12 +872,33 @@ def _ensure_rl_games_lerobot_dataset(
                     f"episodes_per_latency mismatch: manifest={manifest.get('episodes_per_latency')!r} "
                     f"expected={int(expected_episodes_per_latency)!r}"
                 )
+        if episodes_per_latency_by_latency is not None:
+            expected_map = {str(k): int(v) for k, v in sorted(episodes_per_latency_by_latency.items())}
+            if manifest.get("episodes_per_latency_by_latency") != expected_map:
+                reasons.append(
+                    "episodes_per_latency_by_latency mismatch: "
+                    f"manifest={manifest.get('episodes_per_latency_by_latency')!r} expected={expected_map!r}"
+                )
+        expected_gymnasium_task = _gymnasium_task_contract(args)
+        if expected_gymnasium_task is not None and manifest.get("gymnasium_task") != expected_gymnasium_task:
+            reasons.append("gymnasium_task contract mismatch")
         expected_max_episodes = getattr(args, "max_episodes", None)
         if expected_max_episodes is not None:
             if manifest.get("max_episodes") != int(expected_max_episodes):
                 reasons.append(
                     f"max_episodes mismatch: manifest={manifest.get('max_episodes')!r} expected={int(expected_max_episodes)!r}"
                 )
+        expected_max_steps_per_episode = getattr(args, "max_steps_per_episode", None)
+        expected_max_steps_value = (
+            int(expected_max_steps_per_episode)
+            if expected_max_steps_per_episode not in (None, "")
+            else None
+        )
+        if manifest.get("max_steps_per_episode") != expected_max_steps_value:
+            reasons.append(
+                "max_steps_per_episode mismatch: "
+                f"manifest={manifest.get('max_steps_per_episode')!r} expected={expected_max_steps_value!r}"
+            )
         return reasons
 
     def _manifest_matches(dataset_path: Path) -> bool:
@@ -930,6 +1040,8 @@ def _ensure_rl_games_lerobot_dataset(
                 verify_kwargs["action_layout"] = action_layout
             if "latencies" in inspect.signature(verify_dataset).parameters:
                 verify_kwargs["latencies"] = getattr(args, "latency_filter", None)
+            if "gymnasium_task_contract" in inspect.signature(verify_dataset).parameters:
+                verify_kwargs["gymnasium_task_contract"] = _gymnasium_task_contract(args)
             verify_dataset(source_for_reading, **verify_kwargs)
         convert_kwargs = {
             "cache_dir": args.dataset_cache_dir,
@@ -950,10 +1062,16 @@ def _ensure_rl_games_lerobot_dataset(
             convert_kwargs["latency_filter"] = getattr(args, "latency_filter", None)
         if "episodes_per_latency" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["episodes_per_latency"] = getattr(args, "episodes_per_latency", None)
+        if "episodes_per_latency_by_latency" in inspect.signature(convert_dataset).parameters:
+            convert_kwargs["episodes_per_latency_by_latency"] = episodes_per_latency_by_latency
+        if "max_steps_per_episode" in inspect.signature(convert_dataset).parameters:
+            convert_kwargs["max_steps_per_episode"] = getattr(args, "max_steps_per_episode", None)
         if "action_carrier" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["action_carrier"] = action_carrier
         if action_layout and "action_layout" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["action_layout"] = action_layout
+        if "gymnasium_task_contract" in inspect.signature(convert_dataset).parameters:
+            convert_kwargs["gymnasium_task_contract"] = _gymnasium_task_contract(args)
         convert_dataset(source_for_reading, dataset_dir, **convert_kwargs)
         _record_fixed_dataset_source(dataset_dir, source_dataset, source_revision)
         _record_fixed_dataset_source(eval_dataset_dir, source_dataset, source_revision)
@@ -988,6 +1106,7 @@ def _ensure_rl_games_lerobot_dataset(
         "dataset_dir": str(dataset_dir),
         "data_mix": data_mix,
         "eval_data_mix": eval_data_mix,
+        "custom_mixtures_path": str(custom_mixtures_path),
         "eval_dataset_dir": str(eval_dataset_dir),
         "action_carrier": action_carrier,
         "latency_prompt_map_path": str(prompt_map) if prompt_map.exists() else None,
@@ -1065,6 +1184,25 @@ def _ensure_atlantis_dataset(args) -> dict[str, Any]:
         env_name="atlantis",
         env_fps=60.0,
         obs_fps=15.0,
+    )
+
+
+def _ensure_gymnasium_dataset(args) -> dict[str, Any]:
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.convert_gymnasium_to_starvla_lerobot import convert_dataset
+    from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_gymnasium_dataset import verify_dataset
+
+    contract = _gymnasium_task_contract(args)
+    if contract is None:
+        raise ValueError("rl_games.gymnasium.task_contract is required to setup a Gymnasium StarVLA dataset")
+    env_fps = float(contract.get("env_fps", 25.0))
+    obs_fps = float(contract.get("obs_fps", env_fps))
+    return _ensure_rl_games_lerobot_dataset(
+        args,
+        convert_dataset=convert_dataset,
+        verify_dataset=verify_dataset,
+        env_name="gymnasium",
+        env_fps=env_fps,
+        obs_fps=obs_fps,
     )
 
 
@@ -1424,6 +1562,8 @@ def setup_assets(args) -> dict[str, Any]:
         result.update(_ensure_atlantis_dataset(args))
     elif args.model in supported_models and args.env == "deadly_corridor":
         result.update(_ensure_deadly_corridor_dataset(args))
+    elif args.model in supported_models and args.env == "gymnasium":
+        result.update(_ensure_gymnasium_dataset(args))
     else:
         data_root_dir = Path(args.dataset_local_dir).expanduser().resolve()
         result.update({
@@ -1617,6 +1757,7 @@ def main() -> int:
     parser.add_argument("--source-dataset-hf", default="")
     parser.add_argument("--source-dataset-revision", default=None)
     parser.add_argument("--source-dataset-config-name", default=None)
+    parser.add_argument("--source-dataset-subdir", default=None)
     parser.add_argument("--dataset-local-dir", required=True)
     parser.add_argument("--converted-dataset-name", default="flappy_train")
     parser.add_argument("--dataset-cache-dir", default=None)
@@ -1630,7 +1771,9 @@ def main() -> int:
     )
     parser.add_argument("--verify-rows", type=int, default=200)
     parser.add_argument("--max-episodes", type=int, default=None)
+    parser.add_argument("--max-steps-per-episode", type=int, default=None)
     parser.add_argument("--episodes-per-latency", type=int, default=None)
+    parser.add_argument("--episodes-per-latency-by-latency", default=None)
     parser.add_argument("--latency-filter", default=None)
     parser.add_argument("--base-model-dir", required=True)
     parser.add_argument("--base-model-repo-id", default=None)
@@ -1642,6 +1785,7 @@ def main() -> int:
     parser.add_argument("--initialization-local-dir", default="")
     parser.add_argument("--initialization-hf-repo-id", default="")
     parser.add_argument("--initialization-checkpoint-filename", default="")
+    parser.add_argument("--gymnasium-task-contract", default=None)
     parser.add_argument("--checkpoint-sync-enabled", default="false")
     parser.add_argument("--checkpoint-sync-repo-id", default="")
     parser.add_argument("--hf-repo-id", default="")
@@ -1654,6 +1798,7 @@ def main() -> int:
         args.latency_filter = [int(item) for item in args.latency_filter.split(",") if item.strip()]
     elif args.latency_filter == "":
         args.latency_filter = None
+    args.episodes_per_latency_by_latency = _parse_latency_episode_map(args.episodes_per_latency_by_latency)
 
     with contextlib.redirect_stdout(sys.stderr):
         result = setup_assets(args)

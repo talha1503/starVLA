@@ -33,6 +33,8 @@ def latency_subdir_for(template: str, latency: int) -> str | None:
 def resolve_latency_subdirs(template: str | None, latencies: Iterable[int] | None) -> list[str | None]:
     if template is None or not latencies:
         return [template]
+    if "," in str(template):
+        return [item.strip() for item in str(template).split(",") if item.strip()]
     unique_latencies = sorted({int(value) for value in latencies})
     resolved = [latency_subdir_for(template, latency) for latency in unique_latencies]
     if any(value is None for value in resolved):

@@ -83,6 +83,16 @@ def _local_parquet_files(dataset_name: str, split: str, dataset_source_subdir: s
 
 
 def _local_parquet_columns(dataset_name: str, split: str, dataset_source_subdir: str | None = None) -> set[str] | None:
+    if dataset_source_subdir not in (None, "") and "," in str(dataset_source_subdir):
+        columns: set[str] = set()
+        for subdir in str(dataset_source_subdir).split(","):
+            subdir = subdir.strip()
+            if not subdir:
+                continue
+            subdir_columns = _local_parquet_columns(dataset_name, split, subdir)
+            if subdir_columns is not None:
+                columns.update(subdir_columns)
+        return columns or None
     local_files = _local_parquet_files(dataset_name, split, dataset_source_subdir)
     if local_files is None:
         return None
@@ -385,7 +395,18 @@ def _select_episode_ids(
     max_episodes: int | None,
     require_latency_prompt_map: bool,
     episodes_per_latency: int | None = None,
+    episodes_per_latency_by_latency: dict[int, int] | None = None,
 ) -> list[EpisodeKey]:
+    if episodes_per_latency_by_latency is not None:
+        if not episode_latencies:
+            raise ValueError("episodes_per_latency_by_latency was requested, but no episode latency metadata is available")
+        quotas = {int(latency): int(count) for latency, count in episodes_per_latency_by_latency.items()}
+        selected: list[EpisodeKey] = []
+        for latency in sorted(quotas):
+            latency_episode_ids = [episode_id for episode_id in episode_ids if episode_latencies.get(episode_id) == latency]
+            selected.extend(latency_episode_ids[: quotas[latency]])
+        return selected
+
     if episodes_per_latency is not None:
         if not episode_latencies:
             raise ValueError("episodes_per_latency was requested, but no episode latency metadata is available")
@@ -760,6 +781,9 @@ def convert_dataset(
     episodes_per_latency: int | None = None,
     train_episodes_per_latency: int | None = None,
     eval_episodes_per_latency: int | None = None,
+    episodes_per_latency_by_latency: dict[int, int] | None = None,
+    train_episodes_per_latency_by_latency: dict[int, int] | None = None,
+    eval_episodes_per_latency_by_latency: dict[int, int] | None = None,
     prompt_map_override: dict[str, Any] | dict[int, Any] | None = None,
     default_latency: int | None = None,
     action_carrier: str = "native",
@@ -788,6 +812,10 @@ def convert_dataset(
         train_episodes_per_latency = episodes_per_latency
     if eval_episodes_per_latency is None:
         eval_episodes_per_latency = episodes_per_latency
+    if train_episodes_per_latency_by_latency is None:
+        train_episodes_per_latency_by_latency = episodes_per_latency_by_latency
+    if eval_episodes_per_latency_by_latency is None:
+        eval_episodes_per_latency_by_latency = episodes_per_latency_by_latency
     val_output_dir = output_dir.with_name(f"{output_dir.name}__val")
     if output_dir.exists() and force:
         shutil.rmtree(output_dir)
@@ -800,6 +828,7 @@ def convert_dataset(
         *,
         split_latency_filter: list[int] | None,
         split_episodes_per_latency: int | None,
+        split_episodes_per_latency_by_latency: dict[int, int] | None,
     ) -> dict[str, Any]:
         split_output_dir.mkdir(parents=True, exist_ok=True)
         want_latency = bool(
@@ -808,6 +837,7 @@ def convert_dataset(
             or split_latency_filter
             or prompt_map_override
             or split_episodes_per_latency is not None
+            or split_episodes_per_latency_by_latency is not None
         )
         ds_meta, demon_attack_columns = _load_index_split(
             dataset_name,
@@ -859,6 +889,7 @@ def convert_dataset(
             max_episodes=max_episodes,
             require_latency_prompt_map=require_latency_prompt_map,
             episodes_per_latency=split_episodes_per_latency,
+            episodes_per_latency_by_latency=split_episodes_per_latency_by_latency,
         )
         for episode_id in original_episode_ids:
             episode_indices[episode_id].sort(key=lambda item: item[0])
@@ -997,6 +1028,11 @@ def convert_dataset(
             "fps": fps,
             "latency_filter": [int(value) for value in split_latency_filter] if split_latency_filter else None,
             "episodes_per_latency": int(split_episodes_per_latency) if split_episodes_per_latency is not None else None,
+            "episodes_per_latency_by_latency": (
+                {str(k): int(v) for k, v in sorted(split_episodes_per_latency_by_latency.items())}
+                if split_episodes_per_latency_by_latency is not None
+                else None
+            ),
             "max_episodes": int(max_episodes) if max_episodes is not None else None,
             "prompt_override": bool(prompt_map_override),
             "default_latency": default_latency,
@@ -1018,18 +1054,21 @@ def convert_dataset(
         output_dir,
         split_latency_filter=train_latency_filter,
         split_episodes_per_latency=train_episodes_per_latency,
+        split_episodes_per_latency_by_latency=train_episodes_per_latency_by_latency,
     )
     val_manifest = _convert_split(
         "validation",
         val_output_dir,
         split_latency_filter=eval_latency_filter,
         split_episodes_per_latency=eval_episodes_per_latency,
+        split_episodes_per_latency_by_latency=eval_episodes_per_latency_by_latency,
     )
     train_manifest["validation_dataset_name"] = val_output_dir.name
     train_manifest["validation_episodes"] = val_manifest["episodes"]
     train_manifest["validation_frames"] = val_manifest["frames"]
     train_manifest["validation_latency_filter"] = val_manifest["latency_filter"]
     train_manifest["validation_episodes_per_latency"] = val_manifest["episodes_per_latency"]
+    train_manifest["validation_episodes_per_latency_by_latency"] = val_manifest["episodes_per_latency_by_latency"]
     (output_dir / "manifest.json").write_text(json.dumps(train_manifest, indent=2), encoding="utf-8")
     return train_manifest
 
@@ -1044,6 +1083,7 @@ def main() -> int:
     parser.add_argument("--max-episodes", "--max_episodes", type=int, default=None)
     parser.add_argument("--latency-filter", "--latency_filter", default=None)
     parser.add_argument("--episodes-per-latency", "--episodes_per_latency", type=int, default=None)
+    parser.add_argument("--episodes-per-latency-by-latency", "--episodes_per_latency_by_latency", default=None)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--action-carrier", "--action_carrier", choices=["native", "bridge"], default="native")
     parser.add_argument("--context-images-column", "--context_images_column", default=None)
@@ -1067,6 +1107,20 @@ def main() -> int:
     latency_filter = None
     if args.latency_filter:
         latency_filter = [int(item.strip()) for item in str(args.latency_filter).split(",") if item.strip()]
+    episodes_per_latency_by_latency = None
+    if args.episodes_per_latency_by_latency:
+        episodes_per_latency_by_latency = {}
+        for item in str(args.episodes_per_latency_by_latency).split(","):
+            item = item.strip()
+            if not item:
+                continue
+            if ":" not in item:
+                raise ValueError(
+                    "--episodes-per-latency-by-latency must use 'latency:episodes' items, "
+                    f"got {args.episodes_per_latency_by_latency!r}"
+                )
+            latency, episodes = item.split(":", 1)
+            episodes_per_latency_by_latency[int(latency.strip())] = int(episodes.strip())
 
     manifest = convert_dataset(
         args.dataset_name,
@@ -1079,6 +1133,7 @@ def main() -> int:
         require_latency_prompt_map=False,
         latency_filter=latency_filter,
         episodes_per_latency=args.episodes_per_latency,
+        episodes_per_latency_by_latency=episodes_per_latency_by_latency,
         action_carrier=args.action_carrier,
         context_images_column=args.context_images_column,
         context_images_output_column=args.context_images_output_column,

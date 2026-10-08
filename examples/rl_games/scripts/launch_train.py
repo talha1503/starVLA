@@ -231,6 +231,30 @@ def _optional_int_list(value: Any) -> list[int] | None:
     return [int(item) for item in value]
 
 
+def _optional_latency_episode_map(value: Any) -> dict[int, int] | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, DictConfig):
+        value = OmegaConf.to_container(value, resolve=True)
+    if isinstance(value, dict):
+        return {int(k): int(v) for k, v in value.items()}
+    if isinstance(value, str):
+        pairs: dict[int, int] = {}
+        for item in value.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            if ":" not in item:
+                raise ValueError(
+                    "dataset.episodes_per_latency_by_latency must use 'latency:episodes' items, "
+                    f"got {value!r}"
+                )
+            latency, episodes = item.split(":", 1)
+            pairs[int(latency.strip())] = int(episodes.strip())
+        return pairs or None
+    raise TypeError(f"Unsupported dataset.episodes_per_latency_by_latency={value!r}")
+
+
 def _setup_eval_latencies(cfg: Any) -> list[int] | None:
     if not _as_bool_default(_cfg_get(cfg, "rl_games.env_eval.enabled"), True):
         return None
@@ -297,6 +321,12 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         if OmegaConf.is_config(cross_task_cfg)
         else (cross_task_cfg or {})
     )
+    gymnasium_task_contract_cfg = _cfg_get(cfg, "rl_games.gymnasium.task_contract")
+    gymnasium_task_contract = (
+        OmegaConf.to_container(gymnasium_task_contract_cfg, resolve=True)
+        if OmegaConf.is_config(gymnasium_task_contract_cfg)
+        else gymnasium_task_contract_cfg
+    )
 
     return SimpleNamespace(
         model=str(_cfg_get(cfg, "model")),
@@ -333,10 +363,18 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         target_latency_unit=_cfg_get(cfg, "dataset.target_latency_unit"),
         verify_rows=int(_cfg_get(cfg, "dataset.verify_rows") or 200),
         max_episodes=max_episodes,
+        max_steps_per_episode=(
+            None
+            if _cfg_get(cfg, "dataset.max_steps_per_episode") in (None, "")
+            else int(_cfg_get(cfg, "dataset.max_steps_per_episode"))
+        ),
         episodes_per_latency=(
             None
             if _cfg_get(cfg, "dataset.episodes_per_latency") in (None, "")
             else int(_cfg_get(cfg, "dataset.episodes_per_latency"))
+        ),
+        episodes_per_latency_by_latency=_optional_latency_episode_map(
+            _cfg_get(cfg, "dataset.episodes_per_latency_by_latency")
         ),
         latency_filter=_optional_int_list(_cfg_get(cfg, "dataset.latency_filter")),
         base_model_dir=_resolve_path(_cfg_get(cfg, "paths.base_model_dir"), workspace_dir),
@@ -354,6 +392,7 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         initialization_hf_repo_id=str(_cfg_get(cfg, "initialization.checkpoint_hf_repo_id") or ""),
         initialization_checkpoint_filename=str(_cfg_get(cfg, "initialization.checkpoint_filename") or ""),
         cross_task=cross_task,
+        gymnasium_task_contract=gymnasium_task_contract,
         checkpoint_sync_enabled=str(_as_bool(_cfg_get(cfg, "checkpoint.sync.enabled"))).lower(),
         checkpoint_sync_repo_id=str(_cfg_get(cfg, "checkpoint.sync.repo_id") or ""),
         hf_repo_id="",

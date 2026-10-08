@@ -53,7 +53,26 @@ class AtlantisDataConfig(FlappyDataConfig):
 
 
 class GymnasiumDataConfig(FlappyDataConfig):
-    pass
+    """Discrete Gymnasium data: normalize state, keep action one-hot intact."""
+
+    def transform(self):
+        from starVLA.dataloader.gr00t_lerobot.transform.base import ComposedModalityTransform
+        from starVLA.dataloader.gr00t_lerobot.transform.state_action import (
+            StateActionToTensor,
+            StateActionTransform,
+        )
+
+        return ComposedModalityTransform(
+            transforms=[
+                StateActionToTensor(apply_to=[*self.state_keys, *self.action_keys]),
+                StateActionTransform(
+                    apply_to=self.state_keys,
+                    normalization_modes={
+                        "state.game_state": "min_max",
+                    },
+                ),
+            ]
+        )
 
 
 class GymnasiumNativeDataConfig(FlappyDataConfig):
@@ -150,6 +169,18 @@ DATASET_NAMED_MIXTURES = {
     "atlantis_mixed_latency_train": [("atlantis_mixed_latency_train", 1.0, "rl_games_atlantis")],
     "atlantis_mixed_latency_train__bridge": [
         ("atlantis_mixed_latency_train__bridge", 1.0, "rl_games_atlantis")
+    ],
+    "inverted_pendulum_mixed_latency_train": [
+        ("inverted_pendulum_mixed_latency_train", 1.0, "rl_games_gymnasium_discrete")
+    ],
+    "inverted_pendulum_mixed_latency_train__bridge": [
+        ("inverted_pendulum_mixed_latency_train__bridge", 1.0, "rl_games_gymnasium_discrete")
+    ],
+    "inverted_pendulum_mixed_latency_train_no_latency_prompt": [
+        ("inverted_pendulum_mixed_latency_train_no_latency_prompt", 1.0, "rl_games_gymnasium_discrete")
+    ],
+    "inverted_pendulum_mixed_latency_train_no_latency_prompt__bridge": [
+        ("inverted_pendulum_mixed_latency_train_no_latency_prompt__bridge", 1.0, "rl_games_gymnasium_discrete")
     ],
     "h1hand_balance_hard": [("h1hand_balance_hard", 1.0, "rl_games_gymnasium_native")],
 }

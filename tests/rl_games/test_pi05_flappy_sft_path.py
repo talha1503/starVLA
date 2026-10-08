@@ -475,10 +475,12 @@ def test_validate_starvla_dataset_uses_runtime_cache_without_dataset_instantiati
 
 
 @pytest.mark.parametrize("revision", [None, "fixed-source-revision"])
+@pytest.mark.parametrize("task_contract", [None, {"env_name": "InvertedPendulum-v4"}])
 def test_conversion_path_materializes_train_and_eval_runtime_caches_once(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     revision: str | None,
+    task_contract: dict[str, Any] | None,
 ) -> None:
     data_root_dir = tmp_path / "datasets"
     materialized: list[str] = []
@@ -496,11 +498,18 @@ def test_conversion_path_materializes_train_and_eval_runtime_caches_once(
     def reject_validate(*args: Any, **kwargs: Any) -> dict[str, Any]:
         raise AssertionError("conversion path should reuse materialized summaries")
 
-    def fake_verify_dataset(*args: Any, **kwargs: Any) -> bool:
+    def fake_verify_dataset(
+        source: str, *, gymnasium_task_contract=None, **kwargs: Any
+    ) -> bool:
+        assert source == (str(tmp_path / "snapshot") if revision else "data/flappy_fix_latency_0_parquet")
+        assert gymnasium_task_contract == task_contract
         return True
 
-    def fake_convert_dataset(source: str, destination: Path, **kwargs: Any) -> None:
+    def fake_convert_dataset(
+        source: str, destination: Path, *, gymnasium_task_contract=None, **kwargs: Any
+    ) -> None:
         assert source == (str(tmp_path / "snapshot") if revision else "data/flappy_fix_latency_0_parquet")
+        assert gymnasium_task_contract == task_contract
         for path in [destination, destination.with_name(destination.name + "__val")]:
             path.mkdir(parents=True, exist_ok=True)
             (path / "manifest.json").write_text(json.dumps({"source": source}))
@@ -511,6 +520,11 @@ def test_conversion_path_materializes_train_and_eval_runtime_caches_once(
         return str(tmp_path / "snapshot")
 
     monkeypatch.setattr(setup_training_assets, "snapshot_download", fake_snapshot)
+    monkeypatch.setattr(
+        setup_training_assets,
+        "_write_single_task_mixture_file",
+        lambda **kwargs: data_root_dir / "single_task_mixtures.json",
+    )
 
     monkeypatch.setattr(setup_training_assets, "_materialize_starvla_runtime_cache", fake_materialize)
     monkeypatch.setattr(setup_training_assets, "_validate_starvla_dataset", reject_validate)
@@ -522,6 +536,7 @@ def test_conversion_path_materializes_train_and_eval_runtime_caches_once(
         converted_dataset_name="flappy_train",
         source_dataset_hf="data/flappy_fix_latency_0_parquet",
         source_dataset_revision=revision,
+        gymnasium_task_contract=task_contract,
         source_dataset_config_name=None,
         source_dataset_subdir=None,
         setup_force="true",
