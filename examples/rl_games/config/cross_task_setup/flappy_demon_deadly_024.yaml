@@ -19,8 +19,12 @@ rl_games:
     train_tasks:
       - name: flappy
         role: A
-        train_source_hf: latency-sensitive-bench/flappy_200ep
-        prompt_source_hf: latency-sensitive-bench/flappy_200ep
+        train_source_hf: latency-sensitive-bench/benchmark-datasets
+        train_revision: 8a5af732702f31824156975ed248ce6534e736ee
+        train_source_subdir: zero-latency/flappy/flappy_200ep/flappy_fix_latency_0_200ep
+        prompt_source_hf: latency-sensitive-bench/benchmark-datasets
+        prompt_revision: 8a5af732702f31824156975ed248ce6534e736ee
+        prompt_source_subdir: zero-latency/flappy/flappy_200ep/flappy_fix_latency_0_200ep
         converted_name: flappy_024_200ep_cross_train
         train_latency_filter: [0, 2, 4]
         eval_latency_filter: [0, 2, 4]
@@ -29,8 +33,12 @@ rl_games:
         weight: 1.0
       - name: demon_attack
         role: B
-        train_source_hf: latency-sensitive-bench/demon_attack_200ep
-        prompt_source_hf: latency-sensitive-bench/demon_attack_200ep
+        train_source_hf: latency-sensitive-bench/benchmark-datasets
+        train_revision: 8a5af732702f31824156975ed248ce6534e736ee
+        train_source_subdir: zero-latency/demon-attack/demon_attack_200ep/demon_attack_fix_latency_0_200ep
+        prompt_source_hf: latency-sensitive-bench/benchmark-datasets
+        prompt_revision: 8a5af732702f31824156975ed248ce6534e736ee
+        prompt_source_subdir: zero-latency/demon-attack/demon_attack_200ep/demon_attack_fix_latency_0_200ep
         converted_name: demon_attack_024_200ep_cross_train
         train_latency_filter: [0, 2, 4]
         eval_latency_filter: [0, 2, 4]

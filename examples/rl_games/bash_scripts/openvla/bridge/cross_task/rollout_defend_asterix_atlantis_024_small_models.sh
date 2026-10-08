@@ -9,16 +9,16 @@ set -euo pipefail
 #   3. atlantis        latencies 0,2,4
 #
 # Each latency exports 200 accepted episodes, capped at 7200 raw env frames,
-# then pushes to an env-specific Hugging Face dataset repo as a separate config.
+# then publishes named configurations in benchmark-datasets.
 
 WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
 BENCH_DIR="${BENCH_DIR:-${WORKSPACE_DIR}/latency-sensitive-bench}"
 CONDA_ENV="${CONDA_ENV:-latency}"
 
 HF_MODEL_REPO_ID="${HF_MODEL_REPO_ID:-latency-sensitive-bench/paper-experiment-models}"
-DEFEND_THE_LINE_HF_REPO="${DEFEND_THE_LINE_HF_REPO:-latency-sensitive-bench/defend_the_line_200ep}"
-ASTERIX_HF_REPO="${ASTERIX_HF_REPO:-latency-sensitive-bench/asterix_200ep}"
-ATLANTIS_HF_REPO="${ATLANTIS_HF_REPO:-latency-sensitive-bench/atlantis_200ep}"
+DEFEND_THE_LINE_HF_REPO="${DEFEND_THE_LINE_HF_REPO:-latency-sensitive-bench/benchmark-datasets}"
+ASTERIX_HF_REPO="${ASTERIX_HF_REPO:-latency-sensitive-bench/benchmark-datasets}"
+ATLANTIS_HF_REPO="${ATLANTIS_HF_REPO:-latency-sensitive-bench/benchmark-datasets}"
 HF_PRIVATE="${HF_PRIVATE:-0}"
 HF_MAX_SHARD_SIZE="${HF_MAX_SHARD_SIZE:-500MB}"
 
@@ -70,9 +70,9 @@ Useful overrides:
   ATLANTIS_EPISODE_RETURN_GT=...
   ASTERIX_SEED=11 ATLANTIS_SEED=14
   HF_PRIVATE=1
-  DEFEND_THE_LINE_HF_REPO=latency-sensitive-bench/defend_the_line_200ep
-  ASTERIX_HF_REPO=latency-sensitive-bench/asterix_200ep
-  ATLANTIS_HF_REPO=latency-sensitive-bench/atlantis_200ep
+  DEFEND_THE_LINE_HF_REPO=latency-sensitive-bench/benchmark-datasets
+  ASTERIX_HF_REPO=latency-sensitive-bench/benchmark-datasets
+  ATLANTIS_HF_REPO=latency-sensitive-bench/benchmark-datasets
 EOF
 }
 
@@ -165,7 +165,7 @@ PY
 export_one_latency() {
   local env_name="$1"
   local latency="$2"
-  local seed repo_id manifest repo_path eval_config checkpoint_root output_dir hf_config_name return_gt
+  local seed repo_id manifest repo_path eval_config checkpoint_root output_dir hf_config_name return_gt hf_data_dir condition task_slug
 
   seed="$(seed_for_env "${env_name}")"
   repo_id="$(repo_for_env "${env_name}")"
@@ -176,6 +176,10 @@ export_one_latency() {
   output_dir="${OUTPUT_ROOT}/${env_name}_fixed_latency_${latency}_${EPISODES_PER_LATENCY}ep_7k2steps"
   hf_config_name="${env_name}_fixed_latency_${latency}_${EPISODES_PER_LATENCY}ep_7k2steps"
   return_gt="$(episode_return_gt_for_env "${env_name}")"
+  task_slug="${env_name//_/-}"
+  condition=latency-aware
+  if [[ "${latency}" == "0" ]]; then condition=zero-latency; fi
+  hf_data_dir="${condition}/${task_slug}/${env_name}_200ep/${hf_config_name}"
 
   echo
   echo "==> ${env_name} latency=${latency} seed=${seed}"
@@ -203,7 +207,8 @@ export_one_latency() {
     --filter-preset "${FILTER_PRESET}"
     --push-to-hub
     --hf-repo-id "${repo_id}"
-    --hf-config-name "${hf_config_name}"
+    --hf-config-name "task-transfer--${hf_config_name}"
+    --hf-data-dir "${hf_data_dir}"
     --hf-max-shard-size "${HF_MAX_SHARD_SIZE}"
     --hf-token "${HF_TOKEN:-${HUGGINGFACE_HUB_TOKEN:-}}"
   )

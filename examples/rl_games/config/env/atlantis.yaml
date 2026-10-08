@@ -14,8 +14,10 @@ rl_games:
       noop_max: 30
 
 dataset:
-  single_source_hf: latency-sensitive-bench/memory-rollouts
-  mixed_source_hf: latency-sensitive-bench/memory-rollouts
+  single_source_hf: latency-sensitive-bench/benchmark-datasets
+  mixed_source_hf: latency-sensitive-bench/benchmark-datasets
+  revision: ${oc.env:LATENCY_BENCH_DATASET_REVISION}
+  source_subdir: ${oc.env:LATENCY_BENCH_DATASET_SUBDIR}
   single_converted_name: atlantis_train
   mixed_converted_name: atlantis_mixed_latency_train
   single_latency_filter: null

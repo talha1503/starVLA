@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export HF_ENDPOINT=https://huggingface.co
 
 # Eval-only sweep for the Demon Attack fixed-0-latency OpenVLA bridge policy.
 # Evaluates latency labels, not raw frame skips, on Demon Attack, Asterix,
@@ -11,10 +12,10 @@ WORKSPACE_DIR="${WORKSPACE_DIR:-$(cd "${REPO_ROOT}/.." && pwd)}"
 export WORKSPACE_DIR
 
 MODEL_TAG="demon_attack_zero_latency"
-HF_REPO_ID="${HF_REPO_ID:-latency-sensitive-bench/openvla_demon_attack_200ep}"
-HF_REVISION="${HF_REVISION:-04fece441aa5b6f5a6a015264a6aa5df3dc4c29a}"
-HF_SUBDIR="${HF_SUBDIR:-demon_attack_fix_latency_0_200ep}"
-CHECKPOINT_REL="${CHECKPOINT_REL:-checkpoints/steps_7000_state/model.safetensors}"
+HF_REPO_ID="${HF_REPO_ID:-latency-sensitive-bench/benchmark-models}"
+HF_REVISION="${HF_REVISION:-671e2a7451fda7f7dba5606c6d11183ebd804b6d}"
+HF_SUBDIR="${HF_SUBDIR:-zero-latency/demon-attack/vla/starvla-qwenoft-h1/demon_attack_fix_latency_0_200ep}"
+CHECKPOINT_REL="${CHECKPOINT_REL:-checkpoints/steps_7000_model.safetensors}"
 CHECKPOINT_STEP="${CHECKPOINT_STEP:-7000}"
 
 TASKS="${TASKS:-demon_attack,asterix,atlantis,air_raid}"

@@ -126,8 +126,9 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Extra Hydra override(s) for reconstruction (repeatable), e.g. architecture-affecting launch overrides.",
     )
-    p.add_argument("--dataset-name", default="latency-sensitive-bench/flappy_200ep")
+    p.add_argument("--dataset-name", default="latency-sensitive-bench/benchmark-datasets")
     p.add_argument("--split", default="val")
+    p.add_argument("--dataset-revision", default="5305590625c28a6922e73f46d18d52738762c906")
     p.add_argument("--env-name", default="flappy", choices=sorted(ENV_ACTION_LABELS))
     p.add_argument(
         "--shuffle",
@@ -144,7 +145,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--subdir-template",
-        default="flappy_fix_latency_{latency}_200ep",
+        default="flappy_200ep__flappy_fix_latency_{latency}_200ep",
         help="Dataset subdir per latency. {latency} is substituted.",
     )
     p.add_argument(
@@ -679,7 +680,8 @@ def run_live_eval(framework, torch, args, labels: list[str], latencies: list[int
         subdir = args.subdir_template.format(latency=latency)
         ds = load_dataset(
             args.dataset_name,
-            data_dir=subdir,
+            revision=args.dataset_revision,
+            name=subdir,
             split=args.split,
             cache_dir=args.cache_dir,
             verification_mode="no_checks",
@@ -774,7 +776,8 @@ def main() -> None:
         print(f"\n=== latency {latency}  [{subdir}] split={args.split} ===")
         ds = load_dataset(
             args.dataset_name,
-            data_dir=subdir,
+            revision=args.dataset_revision,
+            name=subdir,
             split=args.split,
             cache_dir=args.cache_dir,
             verification_mode="no_checks",
@@ -841,6 +844,7 @@ def main() -> None:
         "base_vlm_repo": args.base_vlm_repo,
         "base_vlm": args.base_vlm,
         "dataset_name": args.dataset_name,
+        "dataset_revision": args.dataset_revision,
         "split": args.split,
         "env_name": args.env_name,
         "latencies": latencies,

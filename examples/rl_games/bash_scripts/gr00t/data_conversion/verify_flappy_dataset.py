@@ -23,7 +23,10 @@ READ_SCHEMA_EXCEPTIONS = (ValueError, KeyError, FileNotFoundError, pa.ArrowInval
 
 
 def latency_subdir_for(template: str, latency: int) -> str | None:
-    new_value, count = _LATENCY_SUBDIR_RE.subn(rf"\g<1>{int(latency)}\g<2>", template, count=1)
+    new_value, count = _LATENCY_SUBDIR_RE.subn(rf"\g<1>{latency}\g<2>", template, count=1)
+    if count == 1 and new_value.startswith(("zero-latency/", "latency-aware/")):
+        condition = "zero-latency" if latency == 0 else "latency-aware"
+        new_value = condition + "/" + new_value.split("/", 1)[1]
     return new_value if count == 1 else None
 
 

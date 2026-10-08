@@ -37,8 +37,12 @@ python examples/rl_games/scripts/launch_train.py \
     rl_games.cross_task.train_tasks.0.prompt_source_hf=talha1503/flappy_bird_mixed_latency_parquet \
     rl_games.cross_task.train_tasks.0.train_latency_filter=[0,1,2,3,4,5] \
     rl_games.cross_task.train_tasks.0.episodes_per_latency=30 \
-    rl_games.cross_task.train_tasks.1.train_source_hf=latency-sensitive-bench/demon_attack_fix_latency_0 \
-    rl_games.cross_task.train_tasks.1.prompt_source_hf=latency-sensitive-bench/demon_attack_mixed_latency_min_0_max_7 \
+    rl_games.cross_task.train_tasks.1.train_source_hf=latency-sensitive-bench/benchmark-datasets \
+    rl_games.cross_task.train_tasks.1.train_revision=5305590625c28a6922e73f46d18d52738762c906 \
+    rl_games.cross_task.train_tasks.1.train_source_subdir=training/demon_attack_fix_latency_0 \
+    rl_games.cross_task.train_tasks.1.prompt_source_hf=latency-sensitive-bench/benchmark-datasets \
+    rl_games.cross_task.train_tasks.1.prompt_source_subdir=experiments/task-transfer/archive/demon-attack/demon_attack_mixed_latency_min_0_max_7 \
+    rl_games.cross_task.train_tasks.1.prompt_revision=c65ee4c303358dc448022bed9bc25e78984449a8 \
     rl_games.cross_task.train_tasks.1.train_latency_filter=[0] \
     rl_games.cross_task.train_tasks.1.episodes_per_latency=40 \
     rl_games.env_eval.mid_train.interval_steps=500 \

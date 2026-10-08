@@ -107,10 +107,12 @@ def test_flappy_history_converter_downloads_each_source_shard(
         filename: str,
         repo_type: str,
         cache_dir: str | None,
+        revision: str,
     ) -> str:
         assert repo_id == "latency-sensitive-bench/memory-rollouts"
         assert repo_type == "dataset"
         assert cache_dir == "/cache"
+        assert revision == "fixed-memory-data-revision"
         downloaded_paths.append(filename)
         return str(tmp_path / Path(filename).name)
 
@@ -121,6 +123,7 @@ def test_flappy_history_converter_downloads_each_source_shard(
             "latency-sensitive-bench/memory-rollouts",
             repo_paths,
             "/cache",
+            "fixed-memory-data-revision",
         )
     )
 

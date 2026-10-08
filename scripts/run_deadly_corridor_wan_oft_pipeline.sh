@@ -8,7 +8,7 @@ Usage: bash scripts/run_deadly_corridor_wan_oft_pipeline.sh [options]
 Runs the fixed-raw-frame-latency-6 Deadly Corridor WanOFT pipeline:
   1. install/update the starvla_rl_games_wan_oft env
   2. download WanOFT checkpoints
-  3. convert memory-rollouts row history directly into StarVLA LeRobot data
+  3. convert canonical benchmark row history directly into StarVLA LeRobot data
   4. train WanOFT through commands/wanoft/train_deadly_corridor_wan_oft.sh
   5. upload the run directory
 
@@ -43,7 +43,8 @@ GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-32}"
 EFFECTIVE_BATCH_SIZE="${EFFECTIVE_BATCH_SIZE:-$((PER_DEVICE_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS))}"
 WANDB_ENTITY_VALUE="${WANDB_ENTITY:-dongqianyu99-zhejiang-university}"
 WANDB_PROJECT_VALUE="${WANDB_PROJECT:-starVLA_rl_games}"
-DATASET_REPO="latency-sensitive-bench/memory-rollouts"
+DATASET_REPO="latency-sensitive-bench/benchmark-datasets"
+DATASET_REVISION="8a5af732702f31824156975ed248ce6534e736ee"
 DATASET_CONFIG="deadly_corridor_fixed_latency_6_1000ep_7k2steps"
 DATASET_CACHE_DIR="${DATASET_CACHE_DIR:-}"
 BENCHMARK_ROOT="${LATENCY_BENCH_ROOT:-}"
@@ -284,6 +285,7 @@ if [[ "${SKIP_CONVERT}" != "true" ]]; then
     python
     examples/rl_games/bash_scripts/gr00t/data_conversion/convert_deadly_corridor_history_to_starvla_lerobot.py
     --dataset-name "${DATASET_REPO}"
+    --dataset-revision "${DATASET_REVISION}"
     --dataset-config-name "${DATASET_CONFIG}"
     --output-dir "${CONVERTED_DATA_DIR}"
     --max-episodes "${MAX_EPISODES}"

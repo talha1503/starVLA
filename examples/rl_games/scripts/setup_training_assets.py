@@ -13,20 +13,20 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from huggingface_hub import snapshot_download
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import resolve_latency_subdirs
+
+
 STEP_FILE_RE = re.compile(r"steps_(\d+)_(?:pytorch_model\.pt|model\.safetensors)$")
 STEP_STATE_RE = re.compile(r"steps_(\d+)_state$")
 DEBUG_DATASET_RE = re.compile(r"^(?P<base>.+)(?P<debug>__debug(?:_[A-Za-z0-9_-]+)?_\d+ep)$")
 INITIALIZATION_SOURCE_MODES = {"bridge", "pre-trained", "pretrained", "backbone_bridge_factorized11"}
-DEFAULT_DATASET_SOURCE_SUBDIRS = {
-    "latency-sensitive-bench/flappy_200ep": "flappy_fix_latency_0_200ep",
-    "latency-sensitive-bench/demon_attack_200ep": "demon_attack_fix_latency_0_200ep",
-    "latency-sensitive-bench/deadly_1000ep": "deadly_corridor_fix_latency_0_1000ep",
-}
 
 
 def _str2bool(value: str | bool) -> bool:
@@ -43,14 +43,28 @@ def _safe_token(value: Any) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", str(value)).strip("_") or "value"
 
 
-def _default_source_subdir(dataset_name: str | None) -> str | None:
-    return DEFAULT_DATASET_SOURCE_SUBDIRS.get(str(dataset_name or ""))
+def _fixed_dataset_source(dataset_name, revision, source_subdir, latencies, cache_dir):
+    """Materialize one fixed HF dataset revision for existing local converters."""
+    if revision is None:
+        return dataset_name
+
+    subdirs = resolve_latency_subdirs(source_subdir, latencies)
+    patterns = [f"{subdir}/**" for subdir in subdirs] if source_subdir is not None else None
+    return snapshot_download(
+        dataset_name, repo_type="dataset", revision=revision,
+        cache_dir=cache_dir, allow_patterns=patterns, endpoint="https://huggingface.co",
+    )
 
 
-def _resolve_source_subdir(dataset_name: str | None, source_subdir: Any) -> str | None:
-    if source_subdir not in (None, ""):
-        return str(source_subdir)
-    return _default_source_subdir(dataset_name)
+def _record_fixed_dataset_source(dataset_path, source, revision):
+    """Preserve the HF origin when conversion reads its local fixed snapshot."""
+    if revision is None:
+        return
+    path = dataset_path / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["source"] = source
+    manifest["source_revision"] = revision
+    path.write_text(json.dumps(manifest, indent=2))
 
 
 def _latency_suffix(latencies: list[int] | None) -> str:
@@ -688,7 +702,12 @@ def _ensure_rl_games_lerobot_dataset(
     source_dataset = str(getattr(args, "source_dataset_hf", "") or "")
     source_config_name = getattr(args, "source_dataset_config_name", None)
     source_config_name = None if source_config_name in (None, "") else str(source_config_name)
-    source_subdir = _resolve_source_subdir(source_dataset, getattr(args, "source_dataset_subdir", None))
+    source_subdir = args.source_dataset_subdir
+    source_revision = getattr(args, "source_dataset_revision", None)
+    required_latencies = getattr(args, "latency_filter", None)
+    source_for_reading = _fixed_dataset_source(
+        source_dataset, source_revision, source_subdir, required_latencies, args.dataset_cache_dir,
+    )
     data_mix = _carrier_dataset_name(args.converted_dataset_name, action_carrier)
     dataset_dir = data_root_dir / data_mix
     eval_data_mix = f"{data_mix}__val"
@@ -701,7 +720,6 @@ def _ensure_rl_games_lerobot_dataset(
     prompt_map = dataset_dir / "latency_prompt_map.json"
 
     def _manifest_mismatch_reasons(dataset_path: Path) -> list[str]:
-        from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import resolve_latency_subdirs
 
         reasons: list[str] = []
         manifest_path = dataset_path / "manifest.json"
@@ -715,6 +733,8 @@ def _ensure_rl_games_lerobot_dataset(
             reasons.append(
                 f"action_carrier mismatch: manifest={manifest.get('action_carrier', 'native')!r} expected={action_carrier!r}"
             )
+        if source_revision is not None and ("source_revision" not in manifest or manifest["source_revision"] != source_revision):
+            reasons.append("source_revision mismatch")
         if (manifest.get("source_config") or None) != source_config_name:
             reasons.append(
                 f"source_config mismatch: manifest={(manifest.get('source_config') or None)!r} expected={source_config_name!r}"
@@ -790,8 +810,11 @@ def _ensure_rl_games_lerobot_dataset(
     def _source_prompt_map(latencies: list[int] | None = None) -> dict[str, dict[str, Any]]:
         if not source_dataset:
             return {}
+        prompt_source_for_reading = _fixed_dataset_source(
+            source_dataset, source_revision, source_subdir, latencies, args.dataset_cache_dir,
+        )
         return _load_source_latency_prompt_map(
-            source_dataset,
+            prompt_source_for_reading,
             cache_dir=getattr(args, "dataset_cache_dir", None),
             dataset_config_name=source_config_name,
             dataset_source_subdir=source_subdir,
@@ -907,7 +930,7 @@ def _ensure_rl_games_lerobot_dataset(
                 verify_kwargs["action_layout"] = action_layout
             if "latencies" in inspect.signature(verify_dataset).parameters:
                 verify_kwargs["latencies"] = getattr(args, "latency_filter", None)
-            verify_dataset(args.source_dataset_hf, **verify_kwargs)
+            verify_dataset(source_for_reading, **verify_kwargs)
         convert_kwargs = {
             "cache_dir": args.dataset_cache_dir,
             "max_episodes": args.max_episodes,
@@ -931,7 +954,9 @@ def _ensure_rl_games_lerobot_dataset(
             convert_kwargs["action_carrier"] = action_carrier
         if action_layout and "action_layout" in inspect.signature(convert_dataset).parameters:
             convert_kwargs["action_layout"] = action_layout
-        convert_dataset(args.source_dataset_hf, dataset_dir, **convert_kwargs)
+        convert_dataset(source_for_reading, dataset_dir, **convert_kwargs)
+        _record_fixed_dataset_source(dataset_dir, source_dataset, source_revision)
+        _record_fixed_dataset_source(eval_dataset_dir, source_dataset, source_revision)
         converted = True
         if mixed_latency and not _mixed_prompt_map_ready():
             raise ValueError(
@@ -1116,8 +1141,8 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
         prompt_source = str(prompt_source_value or "")
         train_config_name = None if train_config_value in (None, "") else str(train_config_value)
         prompt_config_name = None if prompt_config_value in (None, "") else str(prompt_config_value)
-        train_subdir = _resolve_source_subdir(train_source, train_subdir_value)
-        prompt_subdir = _resolve_source_subdir(prompt_source, prompt_subdir_value)
+        train_subdir = train_subdir_value
+        prompt_subdir = prompt_subdir_value
         if not train_source:
             raise ValueError(f"cross-task train task {task_name} is missing train_source_hf/source_hf")
         if not prompt_source:
@@ -1170,8 +1195,16 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
         eval_data_mix = f"{data_mix}__val"
         eval_dataset_dir = data_root_dir / eval_data_mix
 
+        train_revision = _get_task_value(task_cfg, "train_revision", default=None)
+        prompt_revision = _get_task_value(task_cfg, "prompt_revision", default=None)
+        train_for_reading = _fixed_dataset_source(
+            train_source, train_revision, train_subdir, required_latencies, args.dataset_cache_dir,
+        )
+        prompt_for_reading = _fixed_dataset_source(
+            prompt_source, prompt_revision, prompt_subdir, required_latencies, args.dataset_cache_dir,
+        )
         prompt_map = _load_source_latency_prompt_map(
-            prompt_source,
+            prompt_for_reading,
             cache_dir=args.dataset_cache_dir,
             dataset_config_name=prompt_config_name,
             dataset_source_subdir=prompt_subdir,
@@ -1194,7 +1227,6 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
             expected_latency_filter: list[int] | None,
             expected_episodes_per_latency: int | None,
         ) -> bool:
-            from examples.rl_games.bash_scripts.gr00t.data_conversion.verify_flappy_dataset import resolve_latency_subdirs
 
             manifest_path = dataset_path / "manifest.json"
             if not manifest_path.exists():
@@ -1206,6 +1238,8 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
             expected_subdirs = [str(s) for s in resolve_latency_subdirs(train_subdir, expected_latency_filter)]
             return (
                 str(manifest.get("source", "")) == train_source
+                and (train_revision is None or ("source_revision" in manifest and manifest["source_revision"] == train_revision))
+                and (prompt_revision is None or ("prompt_source_revision" in manifest and manifest["prompt_source_revision"] == prompt_revision))
                 and str(manifest.get("prompt_source", "")) == prompt_source
                 and (manifest.get("source_config") or None) == train_config_name
                 and (manifest.get("prompt_source_config") or None) == prompt_config_name
@@ -1255,7 +1289,7 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 verify_kwargs["action_layout"] = action_layout
             if "latencies" in inspect.signature(verify_dataset).parameters:
                 verify_kwargs["latencies"] = required_latencies
-            verify_dataset(train_source, **verify_kwargs)
+            verify_dataset(train_for_reading, **verify_kwargs)
 
             convert_kwargs = {
                 "cache_dir": args.dataset_cache_dir,
@@ -1287,10 +1321,13 @@ def _ensure_cross_task_datasets(args) -> dict[str, Any]:
                 for key, value in convert_kwargs.items()
                 if key in supported_convert_kwargs
             }
-            convert_dataset(train_source, dataset_dir, **convert_kwargs)
+            convert_dataset(train_for_reading, dataset_dir, **convert_kwargs)
             for manifest_path in (dataset_dir / "manifest.json", eval_dataset_dir / "manifest.json"):
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["source"] = train_source
+                manifest["source_revision"] = train_revision
                 manifest["prompt_source"] = prompt_source
+                manifest["prompt_source_revision"] = prompt_revision
                 manifest["prompt_source_config"] = prompt_config_name
                 manifest["prompt_source_subdir"] = prompt_subdir
                 manifest["eval_prompt_map_path"] = str(eval_prompt_map_path)
@@ -1578,6 +1615,7 @@ def main() -> int:
     parser.add_argument("--deadly-action-layout", default="")
     parser.add_argument("--latency-mode", default="")
     parser.add_argument("--source-dataset-hf", default="")
+    parser.add_argument("--source-dataset-revision", default=None)
     parser.add_argument("--source-dataset-config-name", default=None)
     parser.add_argument("--dataset-local-dir", required=True)
     parser.add_argument("--converted-dataset-name", default="flappy_train")

@@ -83,11 +83,12 @@ python examples/rl_games/scripts/launch_train.py \
     paths.base_model_dir="$DATA_WORKSPACE_DIR/playground/Pretrained_models/Qwen3-VL-4B-Instruct" \
     wandb_entity="talha1503" \
     ++wandb_group=final_profile_training \
-    checkpoint.hf_repo_id="latency-sensitive-bench/openvla_bridge_deadly_corridor_rtx3090_profile_1000ep_7k2steps_final" \
-    checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="latency-sensitive-bench/openvla_bridge_deadly_corridor_rtx3090_profile_1000ep_7k2steps_final" \
-    dataset.source_hf=latency-sensitive-bench/memory-rollouts \
-    dataset.source_subdir=deadly_corridor_openvla_rtx3090_profile_1000ep_7k2steps \
+    checkpoint.hf_repo_id=null \
+    checkpoint.sync.enabled=false \
+    checkpoint.sync.repo_id=null \
+    dataset.source_hf=latency-sensitive-bench/benchmark-datasets \
+    dataset.revision=4d8be25dc6fccfe244c2fa6be4b771ee448f2c2a \
+    dataset.source_subdir=experiments/mean-vs-profile/archive/profile-rollouts-v2/deadly_corridor_openvla_rtx3090_profile_1000ep_7k2steps \
     dataset.target_latency_unit=raw_frames \
     checkpoint.local.keep_last_n=1 \
     checkpoint.save_best_model=False \

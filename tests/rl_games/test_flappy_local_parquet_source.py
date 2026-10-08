@@ -31,6 +31,7 @@ def _optional_dependency_stubs() -> dict[str, ModuleType]:
 
     numpy = ModuleType("numpy")
     pyarrow = ModuleType("pyarrow")
+    pyarrow.ArrowInvalid = ValueError
     pyarrow_parquet = ModuleType("pyarrow.parquet")
     pil = ModuleType("PIL")
     pil_image = ModuleType("PIL.Image")
@@ -63,6 +64,21 @@ def flappy_modules(monkeypatch: pytest.MonkeyPatch) -> tuple[ModuleType, ModuleT
     yield convert_flappy, verify_flappy
     for module_name in module_names:
         sys.modules.pop(module_name, None)
+
+
+@pytest.mark.parametrize(
+    ("template", "latency", "expected"),
+    [
+        ("zero-latency/flappy/flappy_200ep/flappy_fix_latency_0_200ep", 3,
+         "latency-aware/flappy/flappy_200ep/flappy_fix_latency_3_200ep"),
+        ("latency-aware/flappy/flappy_200ep/flappy_fix_latency_3_200ep", 0,
+         "zero-latency/flappy/flappy_200ep/flappy_fix_latency_0_200ep"),
+    ],
+)
+def test_mixed_latency_partitions_use_the_canonical_training_namespace(flappy_modules, template, latency, expected):
+    """Retain the mixed-training contract when L0 and delayed data have different owners' directories."""
+    _, verifier = flappy_modules
+    assert verifier.latency_subdir_for(template, latency) == expected
 
 
 def test_convert_flappy_resolves_local_parquet_directory(
@@ -236,7 +252,7 @@ def test_convert_flappy_hf_loader_passes_dataset_config_name(
     monkeypatch.setattr(convert_flappy, "load_dataset", fake_load_dataset)
 
     result = convert_flappy._load_hf_dataset(
-        "latency-sensitive-bench/dataset-filter-comparison",
+        "example/flappy-configs",
         "flappy_clean_v1",
         None,
         split="train",
@@ -247,7 +263,7 @@ def test_convert_flappy_hf_loader_passes_dataset_config_name(
     assert result == "dataset"
     assert calls == [
         (
-            ("latency-sensitive-bench/dataset-filter-comparison", "flappy_clean_v1"),
+            ("example/flappy-configs", "flappy_clean_v1"),
             {
                 "split": "train",
                 "cache_dir": "/tmp/cache",

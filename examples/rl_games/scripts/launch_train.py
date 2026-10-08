@@ -309,6 +309,7 @@ def setup_namespace_from_cfg(cfg: Any, workspace_dir: Path, run_root_dir: str) -
         latency_mode=str(_cfg_get(cfg, "rl_games.env_eval.latency.mode") or ""),
         eval_latencies=_setup_eval_latencies(cfg),
         source_dataset_hf=str(_cfg_get(cfg, "dataset.source_hf") or ""),
+        source_dataset_revision=_cfg_get(cfg, "dataset.revision"),
         source_dataset_config_name=(
             None
             if _cfg_get(cfg, "dataset.config_name") in (None, "")

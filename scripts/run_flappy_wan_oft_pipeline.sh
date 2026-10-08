@@ -8,7 +8,7 @@ Usage: bash scripts/run_flappy_wan_oft_pipeline.sh [options]
 Runs the fixed-latency-3 Flappy Bird WanOFT pipeline:
   1. install/update the starvla_rl_games_wan_oft env
   2. download WanOFT checkpoints
-  3. convert memory-rollouts row history directly into StarVLA LeRobot data
+  3. convert canonical benchmark row history directly into StarVLA LeRobot data
   4. train WanOFT through commands/wanoft/train_flappy_wan_oft.sh
   5. evaluate only latency 3 and upload the run directory
 
@@ -17,7 +17,7 @@ Options:
   --max-episodes <N>          Maximum source episodes per split (default: 200)
   --max-train-steps <N>       Training steps (default: 2000)
   --dataset-cache-dir <path>  Optional Hugging Face cache directory
-  --upload-repo <repo>        HF model repo for run upload (default: latency-sensitive-bench/wanoft_flappy_200ep)
+  --upload-repo <repo>        HF model repo for run upload (default: latency-sensitive-bench/benchmark-models)
   --upload-path <path>        Path inside the HF repo (default: <run_id>)
   --run-id <id>               Override run id
   --skip-env-setup            Do not run examples/rl_games/install/bootstrap.sh
@@ -39,13 +39,14 @@ EFFECTIVE_BATCH_SIZE="${EFFECTIVE_BATCH_SIZE:-$((PER_DEVICE_BATCH_SIZE * GRADIEN
 POST_TRAIN_NUM_EPISODES="${POST_TRAIN_NUM_EPISODES:-20}"
 WANDB_ENTITY_VALUE="${WANDB_ENTITY:-dongqianyu99-zhejiang-university}"
 WANDB_PROJECT_VALUE="${WANDB_PROJECT:-starVLA_rl_games}"
-DATASET_REPO="latency-sensitive-bench/memory-rollouts"
+DATASET_REPO="latency-sensitive-bench/benchmark-datasets"
+DATASET_REVISION="8a5af732702f31824156975ed248ce6534e736ee"
 DATASET_CONFIG="flappy_fixed_latency_3_200ep_7k2steps"
 DATASET_CACHE_DIR="${DATASET_CACHE_DIR:-}"
 LATENCY=3
 RUN_ROOT_DIR="${RUN_ROOT_DIR:-results/Checkpoints}"
 RUN_ID="${RUN_ID:-}"
-UPLOAD_REPO="${UPLOAD_REPO:-latency-sensitive-bench/wanoft_flappy_200ep}"
+UPLOAD_REPO="${UPLOAD_REPO:-latency-sensitive-bench/benchmark-models}"
 UPLOAD_PATH_IN_REPO="${UPLOAD_PATH_IN_REPO:-}"
 BASE_MODEL_REPO="${BASE_MODEL_REPO:-Wan-AI/Wan2.2-TI2V-5B-Diffusers}"
 BASE_MODEL_DIR="${BASE_MODEL_DIR:-playground/Pretrained_models/Wan-AI/Wan2.2-TI2V-5B-Diffusers}"
@@ -137,7 +138,7 @@ CONVERTED_DATA_DIR="${CONVERTED_DATA_ROOT}/flappy_train__bridge"
 PROMPT_MAP_PATH="${CONVERTED_DATA_DIR}/latency_prompt_map.json"
 MANIFEST_PATH="${CONVERTED_DATA_DIR}/manifest.json"
 RUN_ID="${RUN_ID:-wan_oft_flappy_fix_latency_${LATENCY}_context${CONTEXT_WINDOW}_standard_sft_${MAX_TRAIN_STEPS}_effbs${EFFECTIVE_BATCH_SIZE}_224_currentce}"
-UPLOAD_PATH_IN_REPO="${UPLOAD_PATH_IN_REPO:-${RUN_ID}}"
+UPLOAD_PATH_IN_REPO="${UPLOAD_PATH_IN_REPO:-latency-aware/flappy/vla/starvla-wanoft-h8/${RUN_ID}}"
 RUN_DIR="${RUN_ROOT_DIR}/${RUN_ID}"
 
 ensure_hf_cli() {
@@ -246,6 +247,7 @@ if [[ "${SKIP_CONVERT}" != "true" ]]; then
     python
     examples/rl_games/bash_scripts/gr00t/data_conversion/convert_flappy_history_to_starvla_lerobot.py
     --dataset-name "${DATASET_REPO}"
+    --dataset-revision "${DATASET_REVISION}"
     --dataset-config-name "${DATASET_CONFIG}"
     --output-dir "${CONVERTED_DATA_DIR}"
     --max-episodes "${MAX_EPISODES}"

@@ -17,7 +17,7 @@ from examples.rl_games.bash_scripts.gr00t.data_conversion import (
 )
 
 
-DEFAULT_DATASET_NAME = "latency-sensitive-bench/memory-rollouts"
+DEFAULT_DATASET_NAME = "latency-sensitive-bench/benchmark-datasets"
 DEFAULT_DATASET_CONFIG_NAME = "defend_the_line_fixed_latency_0_1000ep_7k2steps"
 DEFAULT_OUTPUT_DIR = Path(
     "data/defend_the_line_fix_latency_0_1000ep_context5/defend_the_line_train__bridge"
@@ -38,11 +38,16 @@ def convert_hub_dataset(
     image_sequence_length: int,
     context_images_output_column: str,
     batch_size: int,
+    *,
+    dataset_source_prefix: str = "zero-latency/defend-the-line",
+    dataset_revision: str = "4d8be25dc6fccfe244c2fa6be4b771ee448f2c2a",
 ) -> dict[str, object]:
     return history_converter.convert_hub_dataset(
         dataset_name,
         dataset_config_name,
         output_dir,
+        dataset_source_subdir=f"{dataset_source_prefix}/{dataset_config_name}",
+        dataset_revision=dataset_revision,
         source_env_name="defend_the_line",
         display_name="Defend the Line",
         base_converter=defend_converter.base,
@@ -66,6 +71,8 @@ def main() -> int:
     )
     parser.add_argument("--dataset-name", default=DEFAULT_DATASET_NAME)
     parser.add_argument("--dataset-config-name", default=DEFAULT_DATASET_CONFIG_NAME)
+    parser.add_argument("--dataset-source-prefix", default="zero-latency/defend-the-line")
+    parser.add_argument("--dataset-revision", default="4d8be25dc6fccfe244c2fa6be4b771ee448f2c2a")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--cache-dir", default=None)
     parser.add_argument("--max-episodes", type=int, default=None)
@@ -90,6 +97,8 @@ def main() -> int:
         args.image_sequence_length,
         args.context_images_output_column,
         args.batch_size,
+        dataset_source_prefix=args.dataset_source_prefix,
+        dataset_revision=args.dataset_revision,
     )
     print(json.dumps(manifest, indent=2))
     return 0

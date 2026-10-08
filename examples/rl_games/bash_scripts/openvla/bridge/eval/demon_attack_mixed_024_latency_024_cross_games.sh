@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export HF_ENDPOINT=https://huggingface.co
 
 # Eval-only sweep for the Demon Attack mixed-0/2/4-latency OpenVLA bridge policy.
-# Evaluates latency labels, not raw frame skips, on Demon Attack, Asterix,
-# Atlantis, and Air Raid.
+# The script generates a reproduction config. Original training metadata is missing.
+# Evaluation uses latency labels on Demon Attack, Asterix, Atlantis and Air Raid.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../../.." && pwd)"
@@ -11,8 +12,10 @@ WORKSPACE_DIR="${WORKSPACE_DIR:-$(cd "${REPO_ROOT}/.." && pwd)}"
 export WORKSPACE_DIR
 
 MODEL_TAG="demon_attack_mixed_024_latency"
-HF_REPO_ID="${HF_REPO_ID:-talha15032/openvla_bridge_demon_attack_latency_mixed_024_exp1}"
-CHECKPOINT_REL="${CHECKPOINT_REL:-steps_5000_state/model.safetensors}"
+HF_REPO_ID="${HF_REPO_ID:-latency-sensitive-bench/benchmark-models}"
+HF_REVISION="${HF_REVISION:-671e2a7451fda7f7dba5606c6d11183ebd804b6d}"
+HF_SUBDIR="${HF_SUBDIR:-latency-aware/demon-attack/vla/starvla-qwenoft-h1/openvla_bridge_demon_attack_latency_mixed_024_exp1}"
+CHECKPOINT_REL="${CHECKPOINT_REL:-checkpoints/steps_5000_model.safetensors}"
 CHECKPOINT_STEP="${CHECKPOINT_STEP:-5000}"
 
 TASKS="${TASKS:-demon_attack,asterix,atlantis,air_raid}"
@@ -121,7 +124,9 @@ overrides = [
     f"checkpoint.hf_repo_id={hf_repo_id}",
     "checkpoint.sync.enabled=false",
     f"checkpoint.sync.repo_id={hf_repo_id}",
-    "dataset.source_hf=latency-sensitive-bench/demon_attack_200ep",
+    "dataset.source_hf=latency-sensitive-bench/benchmark-datasets",
+    "dataset.revision=15d17287246bd19940c837d6c8a5327564f969c5",
+    "dataset.source_subdir=zero-latency/demon-attack/demon_attack_200ep/demon_attack_fix_latency_0_200ep",
     "dataset.latency_filter=[0,2,4]",
     "datasets.vla_data.sequential_step_sampling=true",
     "datasets.vla_data.shuffle=true",
@@ -277,14 +282,13 @@ HF_LOCAL_DIR="${HF_CACHE_ROOT}/openvla_bridge_demon_attack_latency_mixed_024_exp
 if ! is_print_plan_only; then
   download_hf_snapshot \
     "${HF_REPO_ID}" \
-    "" \
+    "${HF_REVISION}" \
     "${HF_LOCAL_DIR}" \
-    "steps_5000_state/*" \
-    "eval/post_train/step_5000.json"
+    "${HF_SUBDIR}/${CHECKPOINT_REL}"
 fi
 
-CONFIG_PATH="${HF_LOCAL_DIR}/config.full.yaml"
-CHECKPOINT_PATH="${HF_LOCAL_DIR}/${CHECKPOINT_REL}"
+CONFIG_PATH="${HF_LOCAL_DIR}/${HF_SUBDIR}/eval_config.generated.yaml"
+CHECKPOINT_PATH="${HF_LOCAL_DIR}/${HF_SUBDIR}/${CHECKPOINT_REL}"
 write_eval_config "${CONFIG_PATH}"
 require_file "${CONFIG_PATH}"
 if ! is_print_plan_only; then

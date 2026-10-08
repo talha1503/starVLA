@@ -309,6 +309,7 @@ def _setup_namespace(cfg: dict[str, Any], workspace_dir: Path, run_root_dir: str
         action_carrier=str(_get(cfg, "rl_games.action_carrier", "") or ""),
         latency_mode=str(_get(cfg, "rl_games.env_eval.latency.mode", "") or ""),
         source_dataset_hf=str(_get(cfg, "dataset.source_hf", "") or ""),
+        source_dataset_revision=_get(cfg, "dataset.revision"),
         source_dataset_config_name=(
             None
             if _get(cfg, "dataset.config_name") in (None, "")

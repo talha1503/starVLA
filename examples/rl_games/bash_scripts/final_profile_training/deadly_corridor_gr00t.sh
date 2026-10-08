@@ -77,8 +77,9 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.hf_repo_id="latency-sensitive-bench/gr00t_bridge_deadly_corridor_rtx3090_profile_1000ep_7k2steps_final_action_1e-4_backbone_1e-5" \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="latency-sensitive-bench/gr00t_bridge_deadly_corridor_rtx3090_profile_1000ep_7k2steps_final_action_1e-4_backbone_1e-5" \
-    dataset.source_hf=latency-sensitive-bench/memory-rollouts \
-    dataset.source_subdir=deadly_corridor_gr00t_rtx3090_profile_1000ep_7k2steps \
+    dataset.source_hf=latency-sensitive-bench/benchmark-datasets \
+    dataset.revision=4d8be25dc6fccfe244c2fa6be4b771ee448f2c2a \
+    dataset.source_subdir=experiments/mean-vs-profile/archive/profile-rollouts-v2/deadly_corridor_gr00t_rtx3090_profile_1000ep_7k2steps \
     dataset.target_latency_unit=raw_frames \
     checkpoint.local.keep_last_n=1 \
     checkpoint.save_best_model=False \

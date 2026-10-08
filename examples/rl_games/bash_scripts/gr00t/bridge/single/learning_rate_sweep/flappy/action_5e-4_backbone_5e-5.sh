@@ -16,8 +16,9 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.hf_repo_id="talha15032/gr00t_bridge_flappy_single_latency_clean_data_exp2_action_5e-4_backbone_5e-5" \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="talha15032/gr00t_bridge_flappy_single_latency_clean_data_exp2_action_5e-4_backbone_5e-5" \
-    dataset.source_hf="latency-sensitive-bench/flappy_200ep" \
-    dataset.source_subdir=flappy_fix_latency_0_200ep \
+    dataset.source_hf="latency-sensitive-bench/benchmark-datasets" \
+    dataset.revision=15d17287246bd19940c837d6c8a5327564f969c5 \
+    dataset.source_subdir=zero-latency/flappy/flappy_200ep/flappy_fix_latency_0_200ep \
     checkpoint.local.keep_last_n=1 \
     checkpoint.save_best_model=false \
     trainer.max_train_steps=3000 \

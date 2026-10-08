@@ -69,12 +69,13 @@ python examples/rl_games/scripts/launch_train.py \
   mode=mixed_latency
 ```
 
-The `memory-rollouts` Flappy config stores one image per row instead of an
+The archived `benchmark-datasets` Flappy config stores one image per row instead of an
 explicit context-image column. Convert it directly into the existing WanOFT
 LeRobot interface by deriving each row's history inside its episode:
 
 ```bash
 python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_flappy_history_to_starvla_lerobot.py \
+  --dataset-revision 8a5af732702f31824156975ed248ce6534e736ee \
   --image-sequence-length 5
 
 bash commands/wanoft/train_flappy_wan_oft.sh 3
@@ -84,22 +85,21 @@ The converter writes the final `flappy_train__bridge` and validation datasets
 directly. It uses the Hugging Face cache for source parquet shards but does not
 materialize an intermediate dataset with duplicated context images.
 
-The legacy-named pipeline script now runs the same conversion and training path
+The pipeline script runs the same conversion and training path
 for fixed latency 3 only:
 
 ```bash
-bash scripts/run_flappy_wan_oft_curriculum_pipeline.sh
+bash scripts/run_flappy_wan_oft_pipeline.sh
 ```
 
-The current `memory-rollouts` repository exposes only
-`flappy_fixed_latency_3_200ep_7k2steps`. Despite its retained filename, this
-script does not enable curriculum sampling, synthesize missing latency
-conditions, or evaluate other latency values.
+The pipeline selects `flappy_fixed_latency_3_200ep_7k2steps` from the fixed
+`benchmark-datasets` revision shown above.
 
 The corresponding Demon Attack config can be converted in the same way:
 
 ```bash
 python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_demon_attack_history_to_starvla_lerobot.py \
+  --dataset-revision 8a5af732702f31824156975ed248ce6534e736ee \
   --image-sequence-length 5
 ```
 
@@ -111,7 +111,7 @@ frameskip of four, the existing step-based eval queue would turn that into 24
 raw frames. Exact online evaluation for this dataset therefore requires a
 raw-frame latency evaluator instead of relabeling the converted data.
 
-The `memory-rollouts` Deadly Corridor config also stores only the current
+The archived `benchmark-datasets` Deadly Corridor config also stores only the current
 image on each row. Its actions are joint-54 IDs rather than an explicit action
 vector. The history converter derives the previous four images within each
 episode, validates `action_id` against `action_text`, and writes the decoded 7D
@@ -119,6 +119,7 @@ semantic multi-hot action directly:
 
 ```bash
 python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_deadly_corridor_history_to_starvla_lerobot.py \
+  --dataset-revision 8a5af732702f31824156975ed248ce6534e736ee \
   --image-sequence-length 5
 
 MAX_EPISODES=1000 \
@@ -134,20 +135,29 @@ online evaluator accepts integer decision-step latency only, so both core
 environment evaluation and post-train evaluation are disabled by default
 instead of silently changing the latency.
 
-Asterix, Atlantis, and Defend the Line use the same source-preserving WanOFT
-context conversion path. By default these commands convert every episode in the
-selected `memory-rollouts` config and only add previous-frame context images:
+Asterix and Atlantis history conversion requires an explicit dataset config,
+source prefix and fixed revision. Their former 1000-episode release sources
+were retired. Supply data with the timing and action contracts described below.
+The generic training presets accept explicit `dataset.revision` and
+`dataset.source_subdir` overrides. Environment-based launches require
+`LATENCY_BENCH_DATASET_REVISION` and `LATENCY_BENCH_DATASET_SUBDIR`.
 
 ```bash
 python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_asterix_history_to_starvla_lerobot.py \
-  --image-sequence-length 5
+  --dataset-config-name DATASET_CONFIG --dataset-source-prefix DATASET_PREFIX \
+  --dataset-revision DATASET_COMMIT --output-dir OUTPUT_DIR --image-sequence-length 5
 
 python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_atlantis_history_to_starvla_lerobot.py \
-  --image-sequence-length 5
+  --dataset-config-name DATASET_CONFIG --dataset-source-prefix DATASET_PREFIX \
+  --dataset-revision DATASET_COMMIT --output-dir OUTPUT_DIR --image-sequence-length 5
 
 python examples/rl_games/bash_scripts/gr00t/data_conversion/convert_defend_the_line_history_to_starvla_lerobot.py \
   --image-sequence-length 5
 ```
+
+Defend the Line uses its byte-identical retained canonical zero-latency data.
+Fixed-source launchers without retained identical datasets were retired.
+Deadly Corridor profile launchers use their unchanged nested experiment data.
 
 Asterix and Atlantis preserve the Atari timing used by their VLA datasets:
 15 FPS observations, 60 FPS environment frames, and raw-frame frameskip four.

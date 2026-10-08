@@ -17,10 +17,12 @@ python examples/rl_games/scripts/launch_train.py \
     trainer.distributed_backend=none \
     workspace_dir="/workspace" \
     wandb_entity="talha1503" \
-    checkpoint.hf_repo_id="talha15032/openvla_bridge_demon_attack_latency_mixed_024_exp1" \
-    checkpoint.sync.enabled=true \
-    checkpoint.sync.repo_id="talha15032/openvla_bridge_demon_attack_latency_mixed_024_exp1" \
-    dataset.source_hf="latency-sensitive-bench/demon_attack_200ep" \
+    checkpoint.hf_repo_id="latency-sensitive-bench/benchmark-models" \
+    checkpoint.sync.enabled=false \
+    checkpoint.sync.repo_id="latency-sensitive-bench/benchmark-models" \
+    dataset.source_hf="latency-sensitive-bench/benchmark-datasets" \
+    dataset.revision=15d17287246bd19940c837d6c8a5327564f969c5 \
+    dataset.source_subdir=zero-latency/demon-attack/demon_attack_200ep/demon_attack_fix_latency_0_200ep \
     dataset.latency_filter=[0,2,4] \
     datasets.vla_data.sequential_step_sampling=true \
     datasets.vla_data.shuffle=true \

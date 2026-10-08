@@ -27,8 +27,9 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.hf_repo_id="talha15032/openvla_bridge_demon_attack_fixed_latency_6_200ep_7k2steps_ghost15_2_exp3" \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="talha15032/openvla_bridge_demon_attack_fixed_latency_6_200ep_7k2steps_ghost15_2_exp3" \
-    dataset.source_hf="latency-sensitive-bench/memory-rollouts" \
-    dataset.source_subdir="demon_attack_fixed_latency_6_200ep_7k2steps_ghost15_2" \
+    dataset.source_hf="latency-sensitive-bench/benchmark-datasets" \
+    ++dataset.revision="2457e6f0c1ba0f0874e5fe2dec557bdc4c6fe5e4" \
+    dataset.source_subdir="latency-aware/demon-attack/demon_attack_fixed_latency_6_200ep_7k2steps_ghost15_2" \
     dataset.latency_filter=[6] \
     datasets.vla_data.sequential_step_sampling=true \
     datasets.vla_data.shuffle=true \

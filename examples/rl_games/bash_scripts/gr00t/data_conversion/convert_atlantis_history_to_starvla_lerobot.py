@@ -17,11 +17,7 @@ from examples.rl_games.bash_scripts.gr00t.data_conversion import (
 )
 
 
-DEFAULT_DATASET_NAME = "latency-sensitive-bench/memory-rollouts"
-DEFAULT_DATASET_CONFIG_NAME = "atlantis_fixed_latency_0_1000ep_7k2steps"
-DEFAULT_OUTPUT_DIR = Path(
-    "data/atlantis_fix_latency_0_1000ep_context5/atlantis_train__bridge"
-)
+DEFAULT_DATASET_NAME = "latency-sensitive-bench/benchmark-datasets"
 SOURCE_OBSERVATION_FPS = 15.0
 SOURCE_ENV_FPS = 60.0
 SOURCE_ENV_FRAMESKIP = 4
@@ -38,11 +34,16 @@ def convert_hub_dataset(
     image_sequence_length: int,
     context_images_output_column: str,
     batch_size: int,
+    *,
+    dataset_source_prefix: str,
+    dataset_revision: str,
 ) -> dict[str, object]:
     return history_converter.convert_hub_dataset(
         dataset_name,
         dataset_config_name,
         output_dir,
+        dataset_source_subdir=f"{dataset_source_prefix}/{dataset_config_name}",
+        dataset_revision=dataset_revision,
         source_env_name="atlantis",
         display_name="Atlantis",
         base_converter=atlantis_converter.base,
@@ -65,8 +66,10 @@ def main() -> int:
         description="Convert row-history Atlantis rollouts into WanOFT context-image LeRobot format."
     )
     parser.add_argument("--dataset-name", default=DEFAULT_DATASET_NAME)
-    parser.add_argument("--dataset-config-name", default=DEFAULT_DATASET_CONFIG_NAME)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--dataset-config-name", required=True)
+    parser.add_argument("--dataset-source-prefix", required=True)
+    parser.add_argument("--dataset-revision", required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--cache-dir", default=None)
     parser.add_argument("--max-episodes", type=int, default=None)
     parser.add_argument("--force", action="store_true")
@@ -90,6 +93,8 @@ def main() -> int:
         args.image_sequence_length,
         args.context_images_output_column,
         args.batch_size,
+        dataset_source_prefix=args.dataset_source_prefix,
+        dataset_revision=args.dataset_revision,
     )
     print(json.dumps(manifest, indent=2))
     return 0

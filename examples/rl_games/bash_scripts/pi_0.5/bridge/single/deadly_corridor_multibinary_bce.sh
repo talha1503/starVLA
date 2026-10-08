@@ -18,8 +18,9 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.hf_repo_id="talha15032/pi05_bridge_deadly_corridor_single_latency_clean_data_exp2" \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="talha15032/pi05_bridge_deadly_corridor_single_latency_clean_data_exp2" \
-    dataset.source_hf=latency-sensitive-bench/deadly_1000ep \
-    dataset.source_subdir=deadly_corridor_fix_latency_0_1000ep \
+    dataset.source_hf=latency-sensitive-bench/benchmark-datasets \
+    dataset.revision=d6f0ad0995f6e4b095f315920e8de18e04297048 \
+    dataset.source_subdir=zero-latency/deadly-corridor/deadly_1000ep/deadly_corridor_fix_latency_0_1000ep \
     checkpoint.local.keep_last_n=1 \
     checkpoint.save_best_model=false \
     trainer.max_train_steps=500 \

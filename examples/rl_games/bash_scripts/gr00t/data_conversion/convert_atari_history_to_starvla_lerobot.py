@@ -52,12 +52,14 @@ def downloaded_hub_shards(
     cache_dir: str | None,
     *,
     desc: str,
+    revision: str,
 ) -> Iterator[Path]:
     for repo_path in tqdm(repo_paths, desc=desc):
         local_path = hf_hub_download(
             repo_id=dataset_name,
             filename=repo_path,
             repo_type="dataset",
+            revision=revision,
             cache_dir=cache_dir,
         )
         yield Path(local_path)
@@ -400,6 +402,8 @@ def convert_hub_dataset(
     source_env_name: str,
     display_name: str,
     base_converter: Any,
+    dataset_source_subdir: str,
+    dataset_revision: str,
     cache_dir: str | None = None,
     max_episodes: int | None = None,
     force: bool = False,
@@ -435,9 +439,9 @@ def convert_hub_dataset(
     output_dir.mkdir(parents=True, exist_ok=True)
     val_output_dir.mkdir(parents=True, exist_ok=True)
 
-    repo_files = HfApi().list_repo_files(dataset_name, repo_type="dataset")
-    train_repo_paths = source_shard_paths(repo_files, dataset_config_name, "train")
-    val_repo_paths = source_shard_paths(repo_files, dataset_config_name, "val")
+    repo_files = HfApi().list_repo_files(dataset_name, repo_type="dataset", revision=dataset_revision)
+    train_repo_paths = source_shard_paths(repo_files, dataset_source_subdir, "train")
+    val_repo_paths = source_shard_paths(repo_files, dataset_source_subdir, "val")
     context_factory = conversion_context or nullcontext
 
     with context_factory():
@@ -447,6 +451,7 @@ def convert_hub_dataset(
                 train_repo_paths,
                 cache_dir,
                 desc=f"Downloading/caching {display_name} train shards",
+                revision=dataset_revision,
             ),
             output_dir,
             dataset_name=dataset_name,
@@ -471,6 +476,7 @@ def convert_hub_dataset(
                 val_repo_paths,
                 cache_dir,
                 desc=f"Downloading/caching {display_name} val shards",
+                revision=dataset_revision,
             ),
             val_output_dir,
             dataset_name=dataset_name,
@@ -489,6 +495,11 @@ def convert_hub_dataset(
             source_env_frameskip=source_env_frameskip,
             action_layout=action_layout,
         )
+
+    for manifest, directory in [(train_manifest, output_dir), (val_manifest, val_output_dir)]:
+        manifest["source_subdir"] = dataset_source_subdir
+        manifest["source_revision"] = dataset_revision
+        (directory / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     train_manifest["validation_dataset_name"] = val_output_dir.name
     train_manifest["validation_episodes"] = val_manifest["episodes"]

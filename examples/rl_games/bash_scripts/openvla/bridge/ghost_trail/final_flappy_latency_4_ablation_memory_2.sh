@@ -27,8 +27,9 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.hf_repo_id="talha15032/openvla_bridge_flappy_fixed_latency_3_200ep_7k2steps_ghost7_exp3" \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="talha15032/openvla_bridge_flappy_fixed_latency_3_200ep_7k2steps_ghost7_exp3" \
-    dataset.source_hf="latency-sensitive-bench/memory-rollouts" \
-    dataset.source_subdir="flappy_fixed_latency_3_200ep_7k2steps_ghost7" \
+    dataset.source_hf="latency-sensitive-bench/benchmark-datasets" \
+    ++dataset.revision="2457e6f0c1ba0f0874e5fe2dec557bdc4c6fe5e4" \
+    dataset.source_subdir="latency-aware/flappy/flappy_fixed_latency_3_200ep_7k2steps_ghost7" \
     dataset.latency_filter=[3] \
     datasets.vla_data.sequential_step_sampling=true \
     datasets.vla_data.shuffle=true \

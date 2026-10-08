@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import subprocess
+import shlex
+
+import pytest
 from pathlib import Path
 
 from omegaconf import OmegaConf
@@ -507,13 +510,13 @@ def test_wan_oft_flappy_curriculum_commands_enable_sequential_sampling() -> None
         assert "datasets.vla_data.latency_curriculum.eval_at_phase_end=false" in command_text
 
 
-def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path() -> None:
+def test_flappy_wan_oft_fixed_latency_pipeline_uses_archived_memory_history_path() -> None:
     script_path = REPO_ROOT / "scripts" / "run_flappy_wan_oft_pipeline.sh"
     script_text = script_path.read_text(encoding="utf-8")
 
     assert "--mode <" not in script_text
     assert "\n    --mode)" not in script_text
-    assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
+    assert 'DATASET_REPO="latency-sensitive-bench/benchmark-datasets"' in script_text
     assert 'DATASET_CONFIG="flappy_fixed_latency_3_200ep_7k2steps"' in script_text
     assert "LATENCY=3" in script_text
     assert "examples/rl_games/install/bootstrap.sh" in script_text
@@ -540,8 +543,8 @@ def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path
     )
     assert "train_flappy_wan_oft_curriculum_cumulative.sh" not in script_text
     assert "train_flappy_wan_oft_curriculum_exclusive.sh" not in script_text
-    assert "UPLOAD_REPO=\"${UPLOAD_REPO:-latency-sensitive-bench/wanoft_flappy_200ep}\"" in script_text
-    assert "UPLOAD_PATH_IN_REPO=\"${UPLOAD_PATH_IN_REPO:-${RUN_ID}}\"" in script_text
+    assert "UPLOAD_REPO=\"${UPLOAD_REPO:-latency-sensitive-bench/benchmark-models}\"" in script_text
+    assert "UPLOAD_PATH_IN_REPO=\"${UPLOAD_PATH_IN_REPO:-latency-aware/flappy/vla/starvla-wanoft-h8/${RUN_ID}}\"" in script_text
     assert "--image-sequence-length \"${CONTEXT_WINDOW}\"" in script_text
     assert "hf upload \"${UPLOAD_REPO}\" \"${RUN_DIR}\" \"${UPLOAD_PATH_IN_REPO}\"" in script_text
     subprocess.run(["bash", "-n", str(script_path)], check=True, cwd=REPO_ROOT)
@@ -557,7 +560,7 @@ def test_flappy_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path
     assert "--accept-rom-license" not in help_result.stdout
 
 
-def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_history_path() -> None:
+def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_archived_memory_history_path() -> None:
     script_path = REPO_ROOT / "scripts" / "run_demon_attack_wan_oft_pipeline.sh"
     training_command_path = REPO_ROOT / "commands" / "wanoft" / "train_demon_attack_wan_oft.sh"
     script_text = script_path.read_text(encoding="utf-8")
@@ -565,7 +568,7 @@ def test_demon_attack_wan_oft_fixed_latency_pipeline_uses_memory_rollouts_histor
     assert training_command_path.exists()
     assert "--latency <" not in script_text
     assert "\n    --latency)" not in script_text
-    assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
+    assert 'DATASET_REPO="latency-sensitive-bench/benchmark-datasets"' in script_text
     assert 'DATASET_CONFIG="demon_attack_fixed_latency_6_200ep_7k2steps"' in script_text
     assert "LATENCY_RAW_FRAMES=6" in script_text
     assert 'CONDA_ENV_NAME="starvla_rl_games_wan_oft"' in script_text
@@ -618,7 +621,7 @@ def test_deadly_corridor_wan_oft_pipeline_uses_fixed_latency_history_data_withou
     script_text = script_path.read_text(encoding="utf-8")
 
     assert training_command_path.exists()
-    assert 'DATASET_REPO="latency-sensitive-bench/memory-rollouts"' in script_text
+    assert 'DATASET_REPO="latency-sensitive-bench/benchmark-datasets"' in script_text
     assert 'DATASET_CONFIG="deadly_corridor_fixed_latency_6_1000ep_7k2steps"' in script_text
     assert "LATENCY_RAW_FRAMES=6" in script_text
     assert 'CONDA_ENV_NAME="starvla_rl_games_wan_oft"' in script_text
@@ -679,6 +682,24 @@ def test_gr00t_launchers_use_the_gr00t_model_environment_and_run_names() -> None
         assert "conda activate starvla_rl_games_gr00t" in script_text
         assert "model=openvla" not in script_text
         assert "openvla_bridge" not in script_text
+
+
+@pytest.mark.parametrize("latency", [2, 4, 6, 8])
+def test_deadly_fixed_training_preserves_latency_dataset(latency: int, tmp_path: Path) -> None:
+    """Keep each fixed-delay command bound to its original training data selection."""
+    script = REPO_ROOT / "examples/rl_games/bash_scripts/openvla/bridge/fixed/deadly_corridor" / f"latency_{latency}.sh"
+    command = script.read_text().split("python examples/rl_games/scripts/launch_train.py", 1)[1]
+    overrides = shlex.split(command.replace("\\\n", " "))
+    cfg = launch_train.compose_training_config(
+        config_name="train", model="openvla", env="deadly_corridor", init="bridge", mode="single",
+        overrides=overrides,
+    )
+    setup = launch_train.setup_namespace_from_cfg(cfg, tmp_path, "results/Checkpoints")
+
+    assert setup.source_dataset_hf == "latency-sensitive-bench/benchmark-datasets"
+    assert setup.source_dataset_subdir == (
+        f"latency-aware/deadly-corridor/deadly_1000ep/deadly_corridor_fix_latency_{latency}_1000ep"
+    )
 
 
 def test_cross_task_setup_supports_deadly_corridor_converter() -> None:
@@ -750,12 +771,12 @@ def test_openvla_defendtheline_deadly_zero_setup_matches_competitor_budget() -> 
     train_tasks = OmegaConf.to_container(cfg.rl_games.cross_task.train_tasks, resolve=True)
 
     assert [task["name"] for task in train_tasks] == ["defend_the_line", "deadly_corridor"]
-    assert train_tasks[0]["train_source_hf"] == "latency-sensitive-bench/memory-rollouts"
-    assert train_tasks[0]["train_source_subdir"] == "defend_the_line_fixed_latency_0_1000ep_7k2steps"
+    assert train_tasks[0]["train_source_hf"] == "latency-sensitive-bench/benchmark-datasets"
+    assert train_tasks[0]["train_source_subdir"] == "zero-latency/defend-the-line/defend_the_line_fixed_latency_0_1000ep_7k2steps"
     assert train_tasks[0]["train_latency_filter"] == [0]
     assert train_tasks[0]["eval_latency_filter"] == [0]
     assert train_tasks[0]["episodes_per_latency"] == 40
-    assert train_tasks[1]["train_source_hf"] == "latency-sensitive-bench/deadly_1000ep"
+    assert train_tasks[1]["train_source_hf"] == "latency-sensitive-bench/benchmark-datasets"
     assert train_tasks[1]["train_latency_filter"] == [0]
     assert train_tasks[1]["eval_latency_filter"] == [0, 2, 4]
     assert train_tasks[1]["episodes_per_latency"] == 1000
@@ -972,9 +993,11 @@ def test_legacy_run_experiment_setup_namespace_forwards_latency_unit(tmp_path: P
     setup_args = run_experiment._setup_namespace(cfg, tmp_path, "results/Checkpoints")
     assert setup_args.target_latency_unit == "observation_steps"
 
+    cfg["dataset"]["revision"] = "1234567890abcdef"
     cfg["dataset"]["target_latency_unit"] = "raw_frames"
     setup_args = run_experiment._setup_namespace(cfg, tmp_path, "results/Checkpoints")
     assert setup_args.target_latency_unit == "raw_frames"
+    assert setup_args.source_dataset_revision == "1234567890abcdef"
 
 
 def test_launcher_forwards_vit_and_llm_freeze_overrides(tmp_path: Path, monkeypatch) -> None:

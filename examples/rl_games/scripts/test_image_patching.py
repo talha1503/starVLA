@@ -2,7 +2,7 @@
 """Build 5 sanity-check ghost-trail composites for image_patching.py.
 
 For `--num-sets` random positions in a single episode of
-latency-sensitive-bench/flappy_200ep (latency 0), this takes the 8 frames
+latency-sensitive-bench/benchmark-datasets (latency 0), this takes the 8 frames
 ending at that position (the last of which is the "current" frame, the
 preceding 7 are the ghost trail), runs build_ghost_trail_image on them, and
 saves the inputs + composite to disk for visual inspection.
@@ -26,8 +26,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from examples.rl_games.scripts.image_patching import build_ghost_trail_image, select_ghost_frames
 
-DATASET_NAME = "latency-sensitive-bench/flappy_200ep"
-DATASET_SUBDIR = "flappy_fix_latency_0_200ep"
+DATASET_NAME = "latency-sensitive-bench/benchmark-datasets"
+DATASET_SUBDIR = "flappy_200ep__flappy_fix_latency_0_200ep"
+DATASET_REVISION = "5305590625c28a6922e73f46d18d52738762c906"
 TRAIL_LEN = 7  # ghosts
 LOOKBACK = 60  # how far back to search for `TRAIL_LEN` well-separated ghosts
 WINDOW_LEN = LOOKBACK + 1  # lookback buffer + current frame
@@ -37,9 +38,9 @@ def load_episode_rows(episode_idx: int, cache_dir: str | None):
     from datasets import load_dataset
 
     ds = load_dataset(
-        DATASET_NAME,
+        DATASET_NAME, DATASET_SUBDIR,
+        revision=DATASET_REVISION,
         split="train",
-        data_dir=DATASET_SUBDIR,
         verification_mode="no_checks",
         cache_dir=cache_dir,
         columns=["episode_idx", "decision_step", "image"],

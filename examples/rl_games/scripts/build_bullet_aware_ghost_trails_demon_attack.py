@@ -25,8 +25,9 @@ from examples.rl_games.scripts.image_patching import DEMON_ATTACK_SHIP_RGB, _req
 
 import cv2
 
-DATASET_NAME = "latency-sensitive-bench/demon_attack_200ep"
-DATASET_SUBDIR = "demon_attack_fix_latency_0_200ep"
+DATASET_NAME = "latency-sensitive-bench/benchmark-datasets"
+DATASET_SUBDIR = "demon_attack_200ep__demon_attack_fix_latency_0_200ep"
+DATASET_REVISION = "5305590625c28a6922e73f46d18d52738762c906"
 
 SCRIPT_DIR = Path(__file__).parent
 DEFAULT_SAMPLE_DIR = SCRIPT_DIR / "ghost_trail_test_outputs_demon_attack_bidiirection"
@@ -57,9 +58,9 @@ def load_episode_rows(episode_idx: int, cache_dir: str | None):
     from datasets import load_dataset
 
     ds = load_dataset(
-        DATASET_NAME,
+        DATASET_NAME, DATASET_SUBDIR,
+        revision=DATASET_REVISION,
         split="train",
-        data_dir=DATASET_SUBDIR,
         verification_mode="no_checks",
         cache_dir=cache_dir,
         columns=["episode_idx", "decision_step", "image"],

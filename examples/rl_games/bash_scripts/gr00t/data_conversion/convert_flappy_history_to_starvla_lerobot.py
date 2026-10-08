@@ -24,7 +24,7 @@ from examples.rl_games.bash_scripts.gr00t.data_conversion import (
 )
 
 
-DEFAULT_DATASET_NAME = "latency-sensitive-bench/memory-rollouts"
+DEFAULT_DATASET_NAME = "latency-sensitive-bench/benchmark-datasets"
 DEFAULT_DATASET_CONFIG_NAME = "flappy_fixed_latency_3_200ep_7k2steps"
 DEFAULT_OUTPUT_DIR = Path("data/flappy_fix_latency_3_200ep_context5/flappy_train__bridge")
 SOURCE_OBSERVATION_FPS = 30.0
@@ -66,6 +66,7 @@ def _downloaded_hub_shards(
     dataset_name: str,
     repo_paths: list[str],
     cache_dir: str | None,
+    dataset_revision: str,
 ) -> Iterator[Path]:
     for repo_path in tqdm(repo_paths, desc="Downloading/caching Flappy shards"):
         local_path = hf_hub_download(
@@ -73,6 +74,7 @@ def _downloaded_hub_shards(
             filename=repo_path,
             repo_type="dataset",
             cache_dir=cache_dir,
+            revision=dataset_revision,
         )
         yield Path(local_path)
 
@@ -391,6 +393,7 @@ def convert_hub_dataset(
     image_sequence_length: int,
     context_images_output_column: str,
     batch_size: int,
+    dataset_revision: str,
 ) -> dict[str, Any]:
     if image_sequence_length < 2:
         raise ValueError(
@@ -414,7 +417,7 @@ def convert_hub_dataset(
     output_dir.mkdir(parents=True, exist_ok=True)
     val_output_dir.mkdir(parents=True, exist_ok=True)
 
-    repo_files = HfApi().list_repo_files(dataset_name, repo_type="dataset")
+    repo_files = HfApi().list_repo_files(dataset_name, repo_type="dataset", revision=dataset_revision)
     train_repo_paths = _source_shard_paths(
         repo_files,
         dataset_config_name,
@@ -427,7 +430,7 @@ def convert_hub_dataset(
     )
 
     train_manifest = _convert_split(
-        _downloaded_hub_shards(dataset_name, train_repo_paths, cache_dir),
+        _downloaded_hub_shards(dataset_name, train_repo_paths, cache_dir, dataset_revision),
         output_dir,
         dataset_name,
         dataset_config_name,
@@ -439,7 +442,7 @@ def convert_hub_dataset(
         batch_size,
     )
     val_manifest = _convert_split(
-        _downloaded_hub_shards(dataset_name, val_repo_paths, cache_dir),
+        _downloaded_hub_shards(dataset_name, val_repo_paths, cache_dir, dataset_revision),
         val_output_dir,
         dataset_name,
         dataset_config_name,
@@ -449,6 +452,11 @@ def convert_hub_dataset(
         image_sequence_length,
         context_images_output_column,
         batch_size,
+    )
+    train_manifest["source_revision"] = dataset_revision
+    val_manifest["source_revision"] = dataset_revision
+    (val_output_dir / "manifest.json").write_text(
+        json.dumps(val_manifest, indent=2), encoding="utf-8"
     )
     train_manifest["validation_dataset_name"] = val_output_dir.name
     train_manifest["validation_episodes"] = val_manifest["episodes"]
@@ -468,6 +476,7 @@ def main() -> int:
         )
     )
     parser.add_argument("--dataset-name", default=DEFAULT_DATASET_NAME)
+    parser.add_argument("--dataset-revision", required=True)
     parser.add_argument(
         "--dataset-config-name",
         default=DEFAULT_DATASET_CONFIG_NAME,
@@ -500,6 +509,7 @@ def main() -> int:
         args.image_sequence_length,
         args.context_images_output_column,
         args.batch_size,
+        args.dataset_revision,
     )
     print(json.dumps(manifest, indent=2))
     return 0

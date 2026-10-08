@@ -474,9 +474,11 @@ def test_validate_starvla_dataset_uses_runtime_cache_without_dataset_instantiati
     }
 
 
+@pytest.mark.parametrize("revision", [None, "fixed-source-revision"])
 def test_conversion_path_materializes_train_and_eval_runtime_caches_once(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    revision: str | None,
 ) -> None:
     data_root_dir = tmp_path / "datasets"
     materialized: list[str] = []
@@ -497,8 +499,18 @@ def test_conversion_path_materializes_train_and_eval_runtime_caches_once(
     def fake_verify_dataset(*args: Any, **kwargs: Any) -> bool:
         return True
 
-    def fake_convert_dataset(*args: Any, **kwargs: Any) -> None:
-        return None
+    def fake_convert_dataset(source: str, destination: Path, **kwargs: Any) -> None:
+        assert source == (str(tmp_path / "snapshot") if revision else "data/flappy_fix_latency_0_parquet")
+        for path in [destination, destination.with_name(destination.name + "__val")]:
+            path.mkdir(parents=True, exist_ok=True)
+            (path / "manifest.json").write_text(json.dumps({"source": source}))
+
+    def fake_snapshot(repo: str, **kwargs: Any) -> str:
+        assert repo == "data/flappy_fix_latency_0_parquet"
+        assert kwargs["revision"] == revision
+        return str(tmp_path / "snapshot")
+
+    monkeypatch.setattr(setup_training_assets, "snapshot_download", fake_snapshot)
 
     monkeypatch.setattr(setup_training_assets, "_materialize_starvla_runtime_cache", fake_materialize)
     monkeypatch.setattr(setup_training_assets, "_validate_starvla_dataset", reject_validate)
@@ -509,6 +521,7 @@ def test_conversion_path_materializes_train_and_eval_runtime_caches_once(
         action_carrier="bridge",
         converted_dataset_name="flappy_train",
         source_dataset_hf="data/flappy_fix_latency_0_parquet",
+        source_dataset_revision=revision,
         source_dataset_config_name=None,
         source_dataset_subdir=None,
         setup_force="true",
@@ -538,6 +551,12 @@ def test_conversion_path_materializes_train_and_eval_runtime_caches_once(
     assert result["dataset_num_trajectories"] == 2
     assert result["eval_dataset_num_steps"] == 4
     assert result["eval_dataset_num_trajectories"] == 1
+
+    for key in ["dataset_dir", "eval_dataset_dir"]:
+        manifest = json.loads((Path(result[key]) / "manifest.json").read_text())
+        assert manifest["source"] == args.source_dataset_hf
+        if revision is not None:
+            assert manifest["source_revision"] == revision
 
 
 @pytest.mark.parametrize(
@@ -711,12 +730,13 @@ def test_launch_train_setup_namespace_forwards_explicit_dataset_source_hf(tmp_pa
         env="flappy",
         init="bridge",
         mode="single",
-        overrides=["dataset.source_hf=owner/flappy_source"],
+        overrides=["dataset.source_hf=owner/flappy_source", "dataset.revision=1234567890abcdef"],
     )
 
     setup_args = launch_train.setup_namespace_from_cfg(cfg, tmp_path, "results/Checkpoints")
 
     assert setup_args.source_dataset_hf == "owner/flappy_source"
+    assert setup_args.source_dataset_revision == "1234567890abcdef"
 
 
 def test_launch_train_setup_namespace_forwards_dataset_config_name(tmp_path: Path) -> None:
@@ -727,14 +747,14 @@ def test_launch_train_setup_namespace_forwards_dataset_config_name(tmp_path: Pat
         init="bridge",
         mode="single",
         overrides=[
-            "dataset.source_hf=latency-sensitive-bench/dataset-filter-comparison",
+            "dataset.source_hf=example/flappy-configs",
             "dataset.config_name=flappy_clean_v1",
         ],
     )
 
     setup_args = launch_train.setup_namespace_from_cfg(cfg, tmp_path, "results/Checkpoints")
 
-    assert setup_args.source_dataset_hf == "latency-sensitive-bench/dataset-filter-comparison"
+    assert setup_args.source_dataset_hf == "example/flappy-configs"
     assert setup_args.source_dataset_config_name == "flappy_clean_v1"
 
 

@@ -27,8 +27,9 @@ python examples/rl_games/scripts/launch_train.py \
     checkpoint.hf_repo_id="talha15032/pi05_bridge_defend_the_line_single_latency_clean_data_exp1" \
     checkpoint.sync.enabled=true \
     checkpoint.sync.repo_id="talha15032/pi05_bridge_defend_the_line_single_latency_clean_data_exp1" \
-    dataset.source_hf=latency-sensitive-bench/memory-rollouts \
-    dataset.source_subdir=defend_the_line_fixed_latency_0_1000ep_7k2steps \
+    dataset.source_hf=latency-sensitive-bench/benchmark-datasets \
+    dataset.revision=4d8be25dc6fccfe244c2fa6be4b771ee448f2c2a \
+    dataset.source_subdir=zero-latency/defend-the-line/defend_the_line_fixed_latency_0_1000ep_7k2steps \
     dataset.latency_filter=[0] \
     checkpoint.local.keep_last_n=1 \
     trainer.max_train_steps=7000 \
