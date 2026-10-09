@@ -60,7 +60,7 @@ def main(argv=None) -> None:
         },
     }
     cfg = OmegaConf.merge(base, runtime, OmegaConf.from_dotlist(sys.argv[1:] if argv is None else argv))
-    if (cfg.model, cfg.env, cfg.init, cfg.mode) != ("openvla", "mikasa", "scratch", "mixed"):
+    if (cfg.model, cfg.env, cfg.init) != ("openvla", "mikasa", "scratch") or cfg.mode not in {"mixed", "mixed_latency"}:
         raise ValueError("This launcher uses the paper's OpenVLA/QwenOFT MIKASA H1 scratch-initialized mixed recipe")
     if cfg.trainer.distributed_backend != "none" or cfg.launch.num_processes != 1:
         raise ValueError("This launcher runs directly on one GPU with trainer.distributed_backend=none")

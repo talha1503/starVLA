@@ -3,6 +3,7 @@ set -euo pipefail
 
 STARVLA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../../.." && pwd)"
 export WORKSPACE_DIR="${WORKSPACE_DIR:-$(dirname "${STARVLA_ROOT}")}"
+export LATENCY_BENCH_ROOT="${LATENCY_BENCH_ROOT:-${WORKSPACE_DIR}/latency-aware-agents}"
 
 cd "${STARVLA_ROOT}"
 
@@ -22,6 +23,7 @@ python examples/MIKASA/scripts/launch_train.py \
     mode=mixed \
     run_id="openvla_mikasa_mixed_01234_h1_no_latency_prompt_exp1" \
     workspace_dir="${WORKSPACE_DIR}" \
+    mikasa.benchmark_root="${LATENCY_BENCH_ROOT}" \
     wandb_entity="talha1503" \
     wandb_project=starvla_tasks \
     seed=0 \
