@@ -7,6 +7,9 @@ export LATENCY_BENCH_ROOT="${LATENCY_BENCH_ROOT:-${WORKSPACE_DIR}/latency-aware-
 
 cd "${STARVLA_ROOT}"
 
+unset PYTHONPATH PYTHONHOME
+export PYTHONNOUSERSITE=1
+
 bash examples/rl_games/install/install_stack.sh openvla
 
 source "$(conda info --base)/etc/profile.d/conda.sh"

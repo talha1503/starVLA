@@ -147,6 +147,8 @@ run_validation() {
 }
 
 command -v conda >/dev/null
+unset PYTHONPATH PYTHONHOME
+export PYTHONNOUSERSITE=1
 CONDA_BASE="$(conda info --base)"
 # shellcheck source=/dev/null
 source "${CONDA_BASE}/etc/profile.d/conda.sh"
