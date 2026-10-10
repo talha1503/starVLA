@@ -9,6 +9,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import yaml
 from huggingface_hub import HfApi, snapshot_download
@@ -43,13 +45,37 @@ def _statistics(values: np.ndarray) -> dict:
     }
 
 
+def select_episode_subset(target: Path, count: int) -> list[int]:
+    """Keep the first complete LeRobot v3 episodes and their original video offsets."""
+    episode_paths = sorted((target / "meta/episodes").glob("*/*.parquet"))
+    episodes = pd.concat([pd.read_parquet(path) for path in episode_paths]).sort_values("episode_index")
+    selected = episodes.iloc[:count]
+    episode_ids = selected["episode_index"].astype(int).tolist()
+    for paths in (episode_paths, sorted((target / "data").glob("*/*.parquet"))):
+        for path in paths:
+            table = pq.read_table(path)
+            selected_rows = table.filter(pc.is_in(table["episode_index"], value_set=pa.array(episode_ids)))
+            if not selected_rows.num_rows:
+                path.unlink()
+            else:
+                pq.write_table(selected_rows, path)
+    info_path = target / "meta/info.json"
+    info = json.loads(info_path.read_text())
+    info["total_episodes"] = count
+    info["total_frames"] = int(selected["length"].sum())
+    info["splits"] = {"train": f"0:{count}"}
+    info_path.write_text(json.dumps(info, indent=2) + "\n")
+    return episode_ids
+
+
 def prepare_datasets(
     sources: dict[int, Path], output: Path, *, latencies=LATENCIES, train_episodes=250, val_episodes=25
 ) -> dict:
-    """Copy packaged datasets; freeze normalization using the five training splits only."""
+    """Select packaged episodes; freeze normalization using selected training frames only."""
     train_arrays = {"observation.state": [], "action": []}
     mixture = {"train": [], "validation": []}
     splits = []
+    selections = {}
     for latency in latencies:
         for split, directory, episodes in (
             ("train", "lerobot", train_episodes),
@@ -57,13 +83,24 @@ def prepare_datasets(
         ):
             source = sources[latency] / directory
             info = json.loads((source / "meta/info.json").read_text())
-            if info["total_episodes"] != episodes:
-                raise ValueError(f"L{latency} {split} requires {episodes} episodes; found {info['total_episodes']}")
+            if not 0 < episodes <= info["total_episodes"]:
+                raise ValueError(f"L{latency} {split} requests {episodes} episodes; source has {info['total_episodes']}")
             contract = json.loads((source / "task_contract.json").read_text())
             if (contract["action_horizon"], contract["state_dim"], contract["action_dim"]) != (1, 7, 7):
                 raise ValueError(f"L{latency} {split} must use the 7D MIKASA H1 contract")
             target = output / f"fixed_l{latency}" / directory
+            if episodes < info["total_episodes"] and target.exists():
+                raise ValueError("Episode subsets require a fresh dataset.converted_name to preserve existing runs")
             shutil.copytree(source, target, dirs_exist_ok=True)
+            if episodes < info["total_episodes"]:
+                episode_ids = select_episode_subset(target, episodes)
+            else:
+                episode_ids = sorted(
+                    int(index)
+                    for path in (target / "meta/episodes").glob("*/*.parquet")
+                    for index in pd.read_parquet(path)["episode_index"]
+                )
+            selections.setdefault(str(latency), {})[split] = episode_ids
             tasks_path = target / "meta/tasks.parquet"
             tasks = pd.read_parquet(tasks_path)
             # LeRobot v3 stores instruction strings in the dataframe index.
@@ -97,6 +134,7 @@ def prepare_datasets(
         "validation_episodes": len(latencies) * val_episodes,
         "train_frames": len(train_arrays["action"]),
         "normalization": normalization,
+        "selected_episode_indices": selections,
     }
 
 
@@ -188,6 +226,8 @@ def main(argv=None) -> None:
     parser.add_argument("--latencies", type=int, nargs="+", default=list(LATENCIES))
     parser.add_argument("--train-episodes", type=int, default=250)
     parser.add_argument("--val-episodes", type=int, default=25)
+    parser.add_argument("--source-train-episodes", type=int, default=250)
+    parser.add_argument("--source-val-episodes", type=int, default=25)
     parser.add_argument("--backbone-path", type=Path)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--run-root", type=Path, required=True)
@@ -212,7 +252,7 @@ def main(argv=None) -> None:
         prefixes = {
             latency: (
                 f"fixed-latency-l{latency}/mikasa-intercept-grab-fast/teacher-rollouts-h1-success-"
-                f"{args.train_episodes}train-{args.val_episodes}val"
+                f"{args.source_train_episodes}train-{args.source_val_episodes}val"
             )
             for latency in args.latencies
         }

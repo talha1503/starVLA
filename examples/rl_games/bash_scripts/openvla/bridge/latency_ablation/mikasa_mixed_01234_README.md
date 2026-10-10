@@ -65,6 +65,31 @@ The preparer copies the source files into run-specific assets, adds latency
 instructions, and computes one shared normalization from training frames only.
 Both validation and evaluation use that same normalization. Source data is preserved.
 
+## Smaller episode budgets
+
+`dataset.episodes_per_latency` selects the first N complete training episodes
+from each latency's existing source. It does not change the HF source directory.
+Source defaults remain 250 train / 25 validation episodes; alternate uploaded
+source sizes can be specified with `dataset.source_episodes_per_latency` and
+`dataset.source_validation_episodes_per_latency`.
+
+For 50 training episodes per latency, use fresh run and prepared-dataset names:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 bash examples/rl_games/bash_scripts/openvla/bridge/latency_ablation/mikasa_mixed_01234.sh \
+    dataset.episodes_per_latency=50 \
+    run_id=openvla_mikasa_mixed_01234_h1_latency_prompt_50ep_exp1 \
+    dataset.converted_name=mikasa_mixed_01234_h1_latency_prompt_50ep_train \
+    checkpoint.hf_repo_id=talha15032/openvla_mikasa_mixed_01234_h1_latency_prompt_50ep_exp1
+```
+
+This uses 250 training episodes total, retaining 25 validation episodes per
+latency. Episode metadata and frame tables are filtered together; shared video
+files and original timestamps are preserved without re-encoding. Normalization
+is recomputed from only the selected training frames and shared with validation.
+Selected episode IDs are recorded in `provenance.json`. Existing subset output
+folders are rejected to avoid modifying a previous experiment's assets.
+
 ## Resume evaluation
 
 To resume evaluation after training has completed, activate the OpenVLA environment
