@@ -18,6 +18,46 @@ sys.path.insert(0, str(ROOT))
 from examples.MIKASA.scripts.prepare_mixed_latency_h1 import main as prepare  # noqa: E402
 
 
+def finish_run(cfg, benchmark: Path, assets: Path, trained: Path) -> None:
+    post = cfg.rl_games.env_eval.post_train
+    if post.enabled:
+        for latency in post.latencies:
+            eval_path = assets / f"eval_l{latency}.yaml"
+            evaluation = yaml.safe_load(eval_path.read_text())
+            evaluation["policy"]["model_config_path"] = str(trained / "config.full.yaml")
+            evaluation["policy"]["worker_python_executable"] = sys.executable
+            evaluation["evaluation"]["eval_episodes"] = post.num_episodes
+            evaluation["evaluation"]["eval_max_steps"] = post.max_steps_per_episode
+            eval_path.write_text(yaml.safe_dump(evaluation, sort_keys=False))
+            if cfg.launch.dry_run:
+                continue
+            subprocess.run(
+                [
+                    cfg.mikasa.task_python,
+                    str(benchmark / "scripts/mikasa/evaluate.py"),
+                    "latency-eval",
+                    "--eval-config",
+                    str(assets / f"eval_l{latency}.yaml"),
+                ],
+                check=True,
+            )
+    if cfg.checkpoint.sync.enabled and not cfg.launch.dry_run:
+        api = HfApi()
+        api.create_repo(repo_id=cfg.checkpoint.sync.repo_id, repo_type="model", exist_ok=True)
+        api.upload_folder(
+            repo_id=cfg.checkpoint.sync.repo_id,
+            repo_type="model",
+            folder_path=str(trained),
+            allow_patterns=["*.yaml", "dataset_statistics.json", "post_train_eval/**"],
+        )
+        api.upload_file(
+            repo_id=cfg.checkpoint.sync.repo_id,
+            repo_type="model",
+            path_or_fileobj=str(assets / "provenance.json"),
+            path_in_repo="provenance.json",
+        )
+
+
 def main(argv=None) -> None:
     base = OmegaConf.load(ROOT / "examples/MIKASA/train_files/mikasa_mixed_01234_h1.yaml")
     runtime = {
@@ -36,7 +76,7 @@ def main(argv=None) -> None:
             "validation_episodes_per_latency": 25,
         },
         "paths": {"base_model_dir": None, "dataset_local_dir": str(ROOT / "playground/Datasets")},
-        "launch": {"num_processes": 1, "dry_run": False},
+        "launch": {"num_processes": 1, "dry_run": False, "eval_only": False},
         "mikasa": {
             "benchmark_root": "${workspace_dir}/latency-aware-agents",
             "task_python": "${mikasa.benchmark_root}/third_party/MIKASA-Robo/.venv/bin/python",
@@ -79,6 +119,10 @@ def main(argv=None) -> None:
     assets = Path(cfg.paths.dataset_local_dir).expanduser().resolve() / cfg.dataset.converted_name
     run_root = Path(cfg.run_root_dir).expanduser().resolve()
     post = cfg.rl_games.env_eval.post_train
+    if cfg.launch.eval_only:
+        print(f"Reusing trained checkpoint: {run_root / cfg.run_id}")
+        finish_run(cfg, benchmark, assets, run_root / cfg.run_id)
+        return
     command = [
         "--output",
         str(assets),
@@ -157,34 +201,7 @@ def main(argv=None) -> None:
         cwd=ROOT,
         check=True,
     )
-    trained = run_root / cfg.run_id
-    if post.enabled:
-        for latency in post.latencies:
-            subprocess.run(
-                [
-                    cfg.mikasa.task_python,
-                    str(benchmark / "scripts/mikasa/evaluate.py"),
-                    "latency-eval",
-                    "--eval-config",
-                    str(assets / f"eval_l{latency}.yaml"),
-                ],
-                check=True,
-            )
-    if cfg.checkpoint.sync.enabled:
-        api = HfApi()
-        api.create_repo(repo_id=cfg.checkpoint.sync.repo_id, repo_type="model", exist_ok=True)
-        api.upload_folder(
-            repo_id=cfg.checkpoint.sync.repo_id,
-            repo_type="model",
-            folder_path=str(trained),
-            allow_patterns=["*.yaml", "dataset_statistics.json", "post_train_eval/**"],
-        )
-        api.upload_file(
-            repo_id=cfg.checkpoint.sync.repo_id,
-            repo_type="model",
-            path_or_fileobj=str(provenance_path),
-            path_in_repo="provenance.json",
-        )
+    finish_run(cfg, benchmark, assets, run_root / cfg.run_id)
 
 
 if __name__ == "__main__":

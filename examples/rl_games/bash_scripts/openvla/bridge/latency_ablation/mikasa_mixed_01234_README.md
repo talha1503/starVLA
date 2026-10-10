@@ -57,12 +57,28 @@ Useful overrides:
 | `rl_games.env_eval.post_train.enabled` | true; evaluate after training |
 | `rl_games.env_eval.post_train.num_episodes` | 200 per latency |
 | `launch.dry_run` | false; true prepares datasets/configs without training |
+| `launch.eval_only` | false; true reuses existing assets/checkpoint and runs evaluation/publication only |
 
 HF inputs live under
 `fixed-latency-lN/mikasa-intercept-grab-fast/teacher-rollouts-h1-success-250train-25val/{lerobot,lerobot__val}`.
 The preparer copies the source files into run-specific assets, adds latency
 instructions, and computes one shared normalization from training frames only.
 Both validation and evaluation use that same normalization. Source data is preserved.
+
+## Resume evaluation
+
+To resume evaluation after training has completed, activate the OpenVLA environment
+and call the launcher directly. This skips environment installation, downloads,
+dataset preparation and training, and preserves the prompt mode stored in the
+saved evaluation configs:
+
+```bash
+python examples/MIKASA/scripts/launch_train.py \
+    launch.eval_only=true \
+    run_id=openvla_mikasa_mixed_01234_h1_no_latency_prompt_exp1 \
+    dataset.converted_name=mikasa_mixed_01234_h1_no_latency_prompt_train \
+    checkpoint.hf_repo_id=talha15032/openvla_mikasa_mixed_01234_h1_no_latency_prompt_exp1
+```
 
 ## Exact baseline provenance
 
